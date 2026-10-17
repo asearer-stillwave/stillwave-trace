@@ -47,7 +47,11 @@ function basemapLayers(source, zoomPart) {
 function pmtilesStyle(url, manifest) {
   const abs = location.origin + url + '/{z}/{x}/{y}';
   const core = (manifest && manifest.bbox_core) || [-118.75, 33.55, -117.90, 34.30];
-  const att = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> · <a href="https://protomaps.com">Protomaps</a>';
+  // 1.2.1: on the kiosk the credit is plain text (tapping the link navigated the kiosk away and blanked the page);
+  // browsers on other devices keep the links
+  const kioskPage = document.documentElement.classList.contains('kiosk');
+  const att = kioskPage ? '© OpenStreetMap contributors · Protomaps'
+    : '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> · <a href="https://protomaps.com">Protomaps</a>';
   return {
     version: 8,
     glyphs: location.origin + '/maplib/fonts/{fontstack}/{range}.pbf',

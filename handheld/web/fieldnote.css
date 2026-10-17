@@ -1033,6 +1033,7 @@ html, body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
    Every secondary line (page leads, card notes, status lines, list metadata, player notes, Audio / Network / Services
    help) is the same voice as the More rows: JetBrains Mono, Static colour, small size, no red unless it is an error. */
 .lead, .note, .msub, .status, .hint, .hint .sub2, .nmeta, .unotes, .umsg, .spkname .nmeta, .mapnote, #mOpen, .v-start p, .v-start .tiny,
+.pwr-full .pwr-sub, .scr-shut .scr-sub,
 .net .nmeta, .filepick span, .bs-note {
   font-family: var(--mono); letter-spacing: .01em; line-height: 1.5;
 }
@@ -1195,3 +1196,7 @@ button.net.on { background: var(--signal-wash); border-color: var(--signal); }
 #apcard .apform { flex-direction: column; align-items: stretch; } #apcard .apform label { width: 100%; }
 #apcard .apband button.on { background: var(--signal); color: var(--green-ink) !important; border-color: var(--signal); }
 #apcard #apPskShow { min-height: 52px; min-width: 6.5rem; }
+
+/* ===== 1.2.1 ===== */
+.v-gate .v-ico svg { width: 72px; height: 72px; display: inline-block; }   /* START screen aircraft: line icon (same path as the Map tab) */
+html.kiosk .maplibregl-ctrl-attrib a { pointer-events: none; text-decoration: none; cursor: default; }   /* map credit is text only on the kiosk */

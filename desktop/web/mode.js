@@ -37,7 +37,7 @@
     if(!off){ if(gate) gate.hidden = true; return; }
     if(!gate){
       gate = document.createElement('div'); gate.className = 'v-gate'; gate.setAttribute('role', 'region'); gate.setAttribute('aria-label', 'Start ' + m.label);
-      gate.innerHTML = '<div class="card v-start"><div class="v-ico" id="vgI" aria-hidden="true" hidden>✈</div><div class="k" id="vgK"></div><button type="button" class="primary" id="vgGo"></button><p class="tiny" id="vgN"></p></div>';
+      gate.innerHTML = '<div class="card v-start"><div class="v-ico" id="vgI" aria-hidden="true" hidden><svg viewBox="0 0 24 24" focusable="false" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15.5v-1.8l-7.5-4.6V4a1.5 1.5 0 0 0-3 0v5.1L3 13.7v1.8l7.5-2.3v4.6l-2 1.5V21l3.5-1 3.5 1v-1.7l-2-1.5v-4.6z"/></svg></div><div class="k" id="vgK"></div><button type="button" class="primary" id="vgGo"></button><p class="tiny" id="vgN"></p></div>';
       document.body.appendChild(gate);
       gate.querySelector('#vgGo').onclick = () => (state && state.off ? power(true) : set(PAGE_MODE, false, true)).catch(() => {});
       if(PAGE_MODE === 'adsb' && s && !s.adsb_available){ gate.querySelector('#vgGo').disabled = true; }

@@ -153,7 +153,8 @@ html.kiosk .rseg button, html.kiosk .rshead button { min-height:var(--tap-touch)
 <script src="/maplib/pmtiles.js" defer></script>
 <script src="/maplib/basemaps.js" defer></script>
 <script type="module">
-import { AircraftMap, webglOK } from '/maplib/adsb-map.js';
+// 1.2.1: loaded inside boot() (dynamic import) so a missing/broken map library cannot take the whole page down
+let AircraftMap, webglOK;
 const $ = id => document.getElementById(id);
 function setMsg(t, k){ const el = $('msg'); el.className = 'status ' + (k || ''); el.textContent = t || ''; }
 const v = (x, d) => (x === null || x === undefined || x === '') ? '' : (typeof x === 'number' ? x.toFixed(d || 0) : String(x));
@@ -329,6 +330,8 @@ async function boot(){
   try { info = await (await fetch('/api/maps', { cache: 'no-store' })).json(); } catch (e) {}
   if (info && info.receiver) showReceiver(info.receiver);
   if (info && info.rings) rings = cleanRings(info.rings);
+  try { ({ AircraftMap, webglOK } = await import('/maplib/adsb-map.js')); }
+  catch (e) { $('mapnote').textContent = 'The map library could not be loaded (' + e.message + '). The List view still works.'; $('mapnote').classList.remove('hide'); setView('list'); return; }
   if (!webglOK()) {
     $('mapnote').textContent = 'This browser cannot draw the map (no WebGL). The List view still works.';
     $('mapnote').classList.remove('hide'); setView('list'); return;

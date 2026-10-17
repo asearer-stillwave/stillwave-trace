@@ -1,6 +1,6 @@
 # Stillwave Trace DESKTOP edition (1.0.7-desktop)
 
-> Licensed under the Apache License 2.0 (see `LICENSE` and `NOTICE` at the repository root). 1.2.1 (unreleased) removes the per-unit license system.
+> Licensed under the Apache License 2.0 (see `LICENSE` and `NOTICE` at the repository root). 1.2.1 removed the per-unit license system.
 > The offline map file `maps/la.pmtiles` is not stored in this repository (it is a 55 MB build artifact). Create it on the Pi with `sudo sdr-maps fetch` (needs internet once); until then the ADS-B map uses its built-in outline.
 
 Separate build of Trace for an HDMI monitor (first box: Pi 4 "stillwaveradio", 27" 2560x1440, Ubuntu Server 24.04 LTS 64-bit).

@@ -700,8 +700,16 @@ fi
 [[ $UPGRADE -eq 0 ]] && mark_step install
 # ---- 1.2.0 faster boot: turn off cloud-init and (only when nothing needs it) snapd ----
 # cloud-init: its network config was already copied into NetworkManager (see above) and the netplan file stays, so
-# disabling it only skips its boot stages. snapd: on Ubuntu the kiosk browser is the Chromium SNAP, which needs snapd,
-# so snapd is only turned off when no snap apps are installed (bases / snapd itself do not count).
+# disabling it only skips its boot stages.
+# snapd (1.2.1 fix): on Ubuntu the kiosk browser is the Chromium SNAP, which needs snapd. 1.2.0 turned snapd off whenever no
+# snap app was installed YET, so a first run whose display step failed (no internet) left snapd off and every retry
+# could not install Chromium. Now snapd is left alone whenever this box is (or is about to be) a kiosk: --display was
+# asked for, a kiosk is configured, or a display is attached. It is only turned off on a headless box with no snap apps,
+# and it is turned back on when a kiosk box has it off and no Chromium yet.
+wants_kiosk() {
+  [[ ${DO_DISPLAY:-0} -eq 1 ]] || [[ -f /etc/systemd/system/fieldnote-kiosk.service || -f /etc/sdr/display.env ]] \
+    || ls /sys/class/drm/card*-DSI-* >/dev/null 2>&1
+}
 boot_trim() {
   if [[ -d /etc/cloud && ! -e /etc/cloud/cloud-init.disabled ]]; then
     touch /etc/cloud/cloud-init.disabled && echo "Boot: cloud-init turned off (/etc/cloud/cloud-init.disabled; rm it to undo)"
@@ -709,10 +717,18 @@ boot_trim() {
   if command -v snap >/dev/null 2>&1 && systemctl list-unit-files snapd.service >/dev/null 2>&1; then
     local apps
     apps="$(snap list 2>/dev/null | awk 'NR>1 && $1 !~ /^(core[0-9]*|snapd|bare|gtk-common-themes|gnome-[0-9-]+|mesa-[0-9a-z-]+)$/ {print $1}' | xargs)"
-    if [[ -z "$apps" ]] && ! [[ -x /snap/bin/chromium ]]; then
-      systemctl disable snapd.service snapd.socket snapd.seeded.service >/dev/null 2>&1 && echo "Boot: snapd turned off (no snap apps installed)"
+    if wants_kiosk; then
+      if ! [[ -x /snap/bin/chromium ]] && ! systemctl is-enabled --quiet snapd.service 2>/dev/null; then
+        systemctl unmask snapd.service snapd.socket >/dev/null 2>&1 || true
+        systemctl enable --now snapd.socket snapd.service snapd.seeded.service >/dev/null 2>&1 \
+          && echo "Boot: snapd turned back on (the kiosk browser, the Chromium snap, needs it)"
+      else
+        echo "Boot: snapd kept on (kiosk box; the Chromium snap needs it)"
+      fi
+    elif [[ -z "$apps" ]] && ! [[ -x /snap/bin/chromium ]]; then
+      systemctl disable snapd.service snapd.socket snapd.seeded.service >/dev/null 2>&1 && echo "Boot: snapd turned off (headless, no snap apps installed)"
     else
-      echo "Boot: snapd kept on (snap apps in use: ${apps:-chromium}; the kiosk browser needs it)"
+      echo "Boot: snapd kept on (snap apps in use: ${apps:-chromium})"
     fi
   fi
 }

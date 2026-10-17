@@ -1,6 +1,6 @@
 # Stillwave Trace (station package)
 
-> Licensed under the Apache License 2.0 (see `LICENSE` and `NOTICE` at the repository root). 1.2.1 (unreleased) removes the per-unit license system.
+> Licensed under the Apache License 2.0 (see `LICENSE` and `NOTICE` at the repository root). 1.2.1 removed the per-unit license system.
 > The offline map file `maps/la.pmtiles` is not stored in this repository (it is a 55 MB build artifact). Create it on the Pi with `sudo sdr-maps fetch` (needs internet once); until then the ADS-B map uses its built-in outline.
 
 Trace is the Stillwave desk / station radio: a Raspberry Pi 4 with an RTL-SDR (Nooelec NESDR v5) that tunes FM to Icecast, shows a live spectrum + waterfall, runs RF detection, or shows ADS-B aircraft on an offline live map. Only one of those owns the dongle at a time (see **Dongle modes**).

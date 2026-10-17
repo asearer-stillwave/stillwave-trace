@@ -312,10 +312,23 @@ browser_bin() {
   done
 }
 
+# 1.2.1: the Chromium snap needs snapd running. A box where snapd was turned off (1.2.0 boot trim ran before Chromium
+# was installed) is switched back on and waited for here, so a retry never needs manual snapd fixes.
+ensure_snapd() {
+  command -v snap >/dev/null 2>&1 || return 0
+  if ! systemctl is-active --quiet snapd.socket 2>/dev/null || ! systemctl is-enabled --quiet snapd.service 2>/dev/null; then
+    say "turning snapd on (Chromium is a snap)"
+    systemctl unmask snapd.service snapd.socket snapd.seeded.service >/dev/null 2>&1 || true
+    systemctl enable --now snapd.socket snapd.service snapd.seeded.service >/dev/null 2>&1 || warn "could not start snapd"
+  fi
+  timeout 300 snap wait system seed.loaded >/dev/null 2>&1 || warn "snapd is not fully seeded yet (continuing)"
+}
+
 install_browser() {
   [[ -n "$(browser_bin)" ]] && return 0
   if [[ $IS_UBUNTU -eq 1 ]]; then
     say "installing Chromium (snap)"
+    ensure_snapd
     # 1.0.8: show download progress (Chromium is ~180 MB; it used to look frozen)
     say "downloading snap Chromium (~180 MB); progress below"
     if chg="$(snap install --no-wait chromium 2>/dev/null)"; then

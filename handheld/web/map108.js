@@ -29,7 +29,7 @@
   gv.className = 'm-pill m-gv'; gv.id = 'mGainV'; gv.textContent = '—'; gm.setAttribute('aria-label', 'Less gain'); gp.setAttribute('aria-label', 'More gain');
   gb.append(gm, gv, gp, ga);
   let gainBusy = false;
-  function paintGain(g) { const auto = g === 'auto'; gv.textContent = auto ? 'AUTO' : g + ' dB'; ga.classList.toggle('on', auto); }
+  function paintGain(g) { const auto = g === 'auto'; gv.textContent = auto ? 'AUTO' : g + ' dB'; ga.classList.toggle('on', auto); ga.textContent = auto ? 'Manual' : 'Auto'; }   // 1.2.1: the value pill already says AUTO; the button now offers the other choice
   async function gainCall(body) {
     if (gainBusy) return; gainBusy = true; gb.classList.add('busy');
     try {

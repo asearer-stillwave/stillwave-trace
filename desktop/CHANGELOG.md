@@ -5,11 +5,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
-## [1.2.1] (unreleased): licensing removed, source released under Apache 2.0 - desktop
+## [1.2.1] and [1.2.1-desktop] - 2026-10-16 (PT) - both editions
 ### Removed
-- **The per-unit license system.** The offline license key tool, the key check in the updater, the license endpoints on the web service, and the License card on More > Updates are gone. Updates install regardless of date. Update signature checking (Ed25519, public key in `config/stillwave-update.pub`) is unchanged. Units that already have a key file installed simply ignore it.
+- **The per-unit license system.** The offline license key tool (`sdr-license`), the key check in the updater, the `/api/license` endpoints on the web service, the License card on More > Updates and the bundled license public key are gone. Updates install regardless of date. Update signature checking (Ed25519, public key in `config/stillwave-update.pub`) is unchanged. A key file left on a unit is simply ignored.
 ### Changed
-- **Source released under the Apache License 2.0.** See `LICENSE` and `NOTICE` at the repository root.
+- **Source released under the Apache License 2.0** (public repository `asearer-stillwave/stillwave-trace`). See `LICENSE` and `NOTICE` at the repository root.
+- **Gain stepper no longer says AUTO twice.** The value pill already shows AUTO, so the button beside it now reads "Manual" while Auto is on (tapping it sets 38.6 dB) and "Auto" otherwise.
+- **START screen** shows the line aircraft icon from the Map tab instead of the plane emoji.
+- **Restarting / Rebooting screens**: "Back in about a minute." (and the shutdown line) use the theme mono font.
+- **Map credit on the kiosk** ("OpenStreetMap contributors · Protomaps") is plain text, not a link. Tapping it navigated the kiosk away and blanked the page. Browsers on other devices keep the links.
+### Fixed
+- **Map module hardening.** The map library is loaded by `boot()` with a dynamic import instead of a static one at the top of the page script. A missing or broken map library now shows "The map library could not be loaded (...)" and the List view keeps working; before, the whole ADS-B page stayed on "LOADING...".
+- **snapd is no longer turned off before Chromium is installed.** The 1.2.0 boot trim disabled snapd on a box whose first install had failed at the display step (no internet), so every retry could not install the Chromium snap. The installer now leaves snapd alone on any kiosk box (`--display`, a configured kiosk or an attached display) and turns it back on if it is off and Chromium is missing. `fieldnote-display-setup` also switches snapd on and waits for it to be seeded before `snap install chromium`. The Pi 5 first-boot script does the same.
+- **Desktop: Raspberry Pi 5.** On HDMI the display setup recognises a Pi 5 (Ubuntu 24.04, cage + Chromium snap) instead of warning that it is written for a Pi 4; no manual snapd fixes are needed any more. Pi 4 is unchanged.
 
 ## [1.2.0] and [1.2.0-desktop] - 2026-10-13 (PT) - both editions
 ### Added
@@ -30,7 +38,7 @@ Before 1.0.2 there are no per-version build logs, so those dates are taken from 
 - **Desktop: Bluetooth keyboard Shift (K830).** The kiosk tracks the physical Shift key itself and types the US shifted character whenever the browser delivers the unshifted one with Shift held (capitals and symbols); the launcher also exports the US XKB keymap to the browser.
 - **Desktop: side-rail icons missing on the TV.** The HDMI kiosk no longer forces GPU rasterization (also removed from installed launchers by the OTA), and a short-landscape phone rule that hid tab icons no longer applies to the HDMI kiosk.
 ### Confirmed on hardware (1.1.0 / 1.1.0.1)
-- 720p on the TV, HDMI audio, update address short forms, screenshot viewer (Close / Download / Delete), remote access (Tailscale), More menu returns to the menu, SDR OFF pop-up style, SDR dongles page, "No radio detected" message.
+- 720p on the TV, HDMI audio, license key (handheld serial shown), update address short forms, screenshot viewer (Close / Download / Delete), remote access (Tailscale), More menu returns to the menu, SDR OFF pop-up style, SDR dongles page, "No radio detected" message.
 
 ## [1.1.0.1] and [1.1.0.1-desktop] - 2026-10-12 (PT) - both editions
 Includes everything in 1.1.0.
@@ -44,6 +52,7 @@ Includes everything in 1.1.0.
 
 ## [1.1.0] and [1.1.0-desktop] - 2026-10-12 (PT) - both editions
 ### Fixed
+- **License status shows the Pi's own serial.** `sdr-license status` copied the key's fields over the status, so an R&D key showed serial 0000000000000000. `serial` is now always this Pi's serial. Unit keys report the key's serial separately (`key_serial`), and the Updates page shows "Pi serial … · key for …" or "· R&D key (any unit)".
 - **Phone layout: no white bar on the right (iPhone Safari).** html/body clip horizontal overflow, html has the dark background, embedded pages (iframes) can't grow wider than the screen, and long code, notes and logs wrap.
 - **Desktop: forced 720p on 4K TVs.** `video=` on the cmdline only set the console; cage picked the TV's preferred 3840x2160@30. Trace Desktop now installs a 720p-only EDID (`/lib/firmware/edid/trace-720p.bin`, HDMI audio kept) and adds `drm.edid_firmware=HDMI-A-1:edid/trace-720p.bin,HDMI-A-2:edid/trace-720p.bin` to cmdline.txt (installer, OTA, `sdr-display-res`). Idempotent; previous cmdline saved as `cmdline.txt.trace-pre-edid`. Undo: `sudo sdr-display-res edid-off && sudo reboot`, or remove the `drm.edid_firmware=…` word from cmdline.txt on the SD card's boot partition. Applies at the next reboot.
 - **Bluetooth keyboard Shift (Logitech K830).** The kiosk service now sets an explicit US XKB keymap (`XKB_DEFAULT_LAYOUT=us`, model pc105) via the drop-in `fieldnote-kiosk.service.d/10-xkb.conf`. Both editions; applies at the next reboot.
@@ -53,7 +62,7 @@ Includes everything in 1.1.0.
 - **SDR dongles page:** gap between the serial and "Not labeled"; the Over SSH commands are outlined chips instead of bright green.
 - **Update source accepts short forms.** "192.168.1.50 8000", "192.168.1.50;8000", "192.168.1.50:8000" or an address without http:// are all saved as `http://192.168.1.50:8000/` (page, web API and `sdr-update set-url`).
 ### Confirmed on hardware (from 1.0.9)
-- NOAA weather and airband audio, HDMI audio, SDR power OFF/ON, "No radio detected" message, SDR dongles page.
+- NOAA weather and airband audio, HDMI audio, SDR power OFF/ON, license key install, "No radio detected" message, SDR dongles page.
 ### On hold
 - 978 MHz UAT, GPS (PA1010D), dual-dongle hardware test, demo video.
 
@@ -68,7 +77,7 @@ Handheld 1.0.9 and Trace Desktop 1.0.9-desktop now ship the same helper scripts 
 - **LAX ATIS presets:** arrival 133.8 and departure 135.65, checked against the FAA Chart Supplement effective 1 Oct 2026. Units that already have saved presets get both added once.
 - **SDR power (More > SDR power).** OFF stops Listen, Map, Scan and Spectrum and releases the dongle. Every mode page then shows "SDR is off · safe to swap antenna" and stays off through a reboot. ON resumes the last mode. Over SSH: `sudo sdr-mode off` / `sudo sdr-mode on`.
 - **Screenshots (More > Screenshots).** Capture now or after a 5 s / 10 s delay. Files are saved on the Pi in `/var/lib/sdr/screenshots/` and can be viewed, downloaded and deleted from the web page. Captures use `grim` on the cage kiosk; without grim, Trace falls back to a headless page render. Over SSH: `sudo sdr-shot take 5`.
-- *(Per-unit offline license keys were added here and removed again in 1.2.1.)*
+- **Offline license keys (Updates > License).** Keys are signed by Stillwave and checked on the box. A unit key is tied to the Pi serial; an R&D key unlocks any unit. Each key carries an updates-until date, and an update released after that date is refused. A key never stops the radio. With no key installed, updates still install (set `LICENSE_REQUIRED=1` in `/etc/sdr/license.env` to require one). Over SSH: `sudo sdr-license serial | status | install KEY`.
 - **Dual NESDR Nano 3 support.** A dongle labeled STILLWAVE-ADSB runs the map full time (`sdr-adsb-dual.service`) while STILLWAVE-RADIO handles Listen, Scan and Spectrum. More > SDR dongles lists the dongles and labels one at a time (writes the EEPROM serial with `rtl_eeprom`). With one dongle, or two unlabeled ones, Trace runs exactly as before. Not yet tested on hardware (only one working Nano 3).
 - **"No radio detected."** When no RTL-SDR is on USB, mode pages show a clear message with what to check, the status strip says "No radio", and switching modes reports it instead of failing silently.
 - **Install progress over SSH by default.** `sudo sdr-update apply-file FILE` now follows the update and prints each step with a percentage until it finishes; no flag needed. Ctrl-C stops watching, but the update keeps going. `--no-follow` returns right away. The Updates page shows the percentage on both editions.
