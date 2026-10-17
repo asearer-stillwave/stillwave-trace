@@ -1,0 +1,27 @@
+[Unit]
+Description=RTL-SDR FM receiver -> Icecast and/or the Pi speaker
+After=network-online.target icecast2.service
+Wants=network-online.target
+Requires=icecast2.service
+# One dongle: starting FM stops spectrum / detect / ADS-B (see sdr-mode)
+Conflicts=sdr-spectrum.service sdr-detect.service sdr-adsb.service
+
+[Service]
+Type=simple
+# 1.0.9: RADIO_DEVICE / ADSB_DEVICE (dual dongle, written by sdr-dongles; empty = the only dongle)
+EnvironmentFile=-/etc/sdr/dongles.env
+EnvironmentFile=/etc/sdr/fm.env
+# AUDIO_OUT=phone|speaker|both (sdr-bt output / Audio page)
+EnvironmentFile=-/etc/sdr/audio.env
+# 1.0.8.2: put back any missing stream key before starting (as root)
+ExecStartPre=-+/usr/local/sbin/sdr-fm-env heal
+ExecStartPre=-+/usr/local/sbin/sdr-mode mark fm
+ExecStart=/usr/local/lib/sdr-station/bin/fm_stream.sh
+Restart=always
+RestartSec=1
+TimeoutStopSec=8
+KillMode=mixed
+Nice=-5
+SupplementaryGroups=plugdev
+
+# No [Install]: sdr-mode.service starts the saved dongle mode at boot (default fm).

@@ -1,0 +1,63 @@
+Stillwave Trace
+Copyright 2026 The Stillwave Trace authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Stillwave Trace bundles and uses the following third-party material, each
+under its own license. Their license texts ship in the repository next to the
+files they cover.
+
+Map data
+  OpenStreetMap contributors. Open Database License (ODbL) 1.0.
+  https://www.openstreetmap.org/copyright
+  The ADS-B map shows "© OpenStreetMap contributors (ODbL) · Protomaps".
+  Keep that attribution visible if you redistribute or modify the map.
+
+Protomaps basemap
+  Basemap tiles are cut from the public Protomaps build (OpenStreetMap data,
+  plus Natural Earth). The basemap style code (web/maplib/basemaps.js) is
+  Copyright 2019-2023 Protomaps LLC, Kelso Cartography, BSD 3-Clause.
+  https://github.com/protomaps/basemaps
+  License text: */web/maplib/licenses/protomaps-basemaps-LICENSE.md
+
+MapLibre GL JS (web/maplib/maplibre-gl.mjs, maplibre-gl-worker.mjs, maplibre-gl.css)
+  Copyright (c) 2023, MapLibre contributors. BSD 3-Clause.
+  https://github.com/maplibre/maplibre-gl-js
+  License text: */web/maplib/licenses/maplibre-gl-LICENSE.txt
+
+PMTiles JavaScript reader (web/maplib/pmtiles.js)
+  Copyright Protomaps LLC. BSD 3-Clause. The PMTiles specification is public
+  domain / CC0.
+  https://github.com/protomaps/PMTiles
+  License text: */web/maplib/licenses/pmtiles-LICENSE.txt
+
+Map sprites (web/maplib/sprites/)
+  Icons derived from Mapzen's Tangram icon set (The MIT License, Copyright (c)
+  2017 Mapzen), as shipped with Protomaps basemaps.
+  License text: */web/maplib/licenses/sprites-tangrams-icons-LICENSE.md
+
+Map label fonts (web/maplib/fonts/Noto Sans *)
+  Noto Sans glyph files. Copyright 2022 The Noto Project Authors.
+  SIL Open Font License 1.1.
+  License text: */web/maplib/licenses/noto-fonts-OFL.txt
+
+UI fonts (web/fonts/)
+  Anton (Copyright 2020 The Anton Project Authors) and JetBrains Mono
+  (Copyright 2020 The JetBrains Mono Project Authors). SIL Open Font License 1.1.
+  License texts: */web/fonts/OFL-Anton.txt, */web/fonts/OFL-JetBrainsMono.txt
+
+grim (vendor/grim_1.4.0+ds-2build2_arm64.deb)
+  Unmodified Ubuntu 24.04 (noble) arm64 package of grim 1.4.0, a Wayland
+  screenshot tool. The MIT License. Copyright (c) Simon Ser and contributors.
+  https://git.sr.ht/~emersion/grim
+  Source for the package is available from Ubuntu: https://packages.ubuntu.com/noble/grim
+
+Map outline fallback (web/maplib/fallback/la-lowzoom.geojson)
+  Derived from OpenStreetMap data via Protomaps. ODbL 1.0, © OpenStreetMap contributors.
+
+Packages installed at setup time (not bundled): Ubuntu / Raspberry Pi OS
+packages such as Icecast, rtl-sdr, ffmpeg, readsb or dump1090-mutability,
+Flask, nginx and the Chromium snap are downloaded from their distributors and
+remain under their own licenses.
+
+"*" above means the handheld/ and desktop/ editions, which each carry their own copy.

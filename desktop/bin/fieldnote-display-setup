@@ -1,0 +1,880 @@
+#!/usr/bin/env bash
+# Stillwave Trace DESKTOP edition: HDMI monitor (--hdmi; fixed 720p landscape) on a Pi 4 + full-screen kiosk.
+#   sudo fieldnote-display-setup --hdmi          HDMI: no DSI overlay, vc4-kms-v3d under [all], disable_overscan=1,
+#                                                cage + snap Chromium full screen at the monitor's native mode,
+#                                                pointer VISIBLE, opens /?kiosk=1&display=hdmi (1.0.8: Spectrum; the dashboard is gone),
+#                                                screen off through wlopm (DPMS); no backlight.
+# (The DSI options below are kept from the handheld script for reference.)
+# Stillwave Trace: Raspberry Pi Touch Display 2 (5") on a Pi 4 + full-screen Trace kiosk.
+# (Also installed as trace-display-setup; internal names stay fieldnote-* so existing kiosks keep working.)
+# Works on Raspberry Pi OS (Desktop or Lite) and Ubuntu 24.04 (Server, linux-raspi).
+#
+#   sudo fieldnote-display-setup                 set up display + kiosk (detects the OS)
+#   sudo fieldnote-display-setup --undo          remove everything this script added
+#   options: --user NAME      kiosk user (default: the user who ran sudo)
+#            --url URL        page to open (default http://localhost/?kiosk=1)
+#            --force-overlay  write dtoverlay=vc4-kms-dsi-ili9881-5inch instead of relying on
+#                             auto-detect (always on for Ubuntu)
+#            --rotate DEG     0 (portrait, default) | 90 | 180 | 270  (implies --force-overlay; untested)
+#            --desktop | --lite   override the kiosk type detection
+#            --no-kiosk       only touch config.txt
+#   sudo fieldnote-display-setup --hide-cursor   only hide cage's mouse pointer (nothing else changes)
+#   sudo fieldnote-display-setup --show-cursor   bring the mouse pointer back
+#            --no-restart     with --hide/--show-cursor: do not restart the kiosk now (applies at next start)
+#
+# Facts (https://www.raspberrypi.com/documentation/accessories/touch-display-2.html):
+#  * Pi 4: ribbon goes to the "DISPLAY" connector with the supplied 15-way to 15-way FFC, power from
+#    GPIO pin 2 (5 V, red) and pin 6 (GND, black).
+#  * Native mode is 720x1280 portrait, so no rotation is needed for the Trace portrait UI.
+#  * Raspberry Pi OS: display_auto_detect=1 finds the panel. Ubuntu 24.04: it did not, so the
+#    overlay is written explicitly and display_auto_detect=1 is commented out (Raspberry Pi advises
+#    against using both, the panel could be configured twice).
+#  * config.txt sections ([pi4], [pi3+], [cm4], [all] ...) matter: the vc4-kms-v3d and panel lines
+#    must sit under [all] or [pi4]. Ubuntu ships vc4-kms-v3d only under [pi3+]/[pi02].
+#  * A reboot is required for config.txt changes.
+#
+# Every line this script disables is prefixed "#fieldnote# " and every line it adds sits in one
+# marked block at the end of config.txt, so --undo restores the file byte for byte.
+set -euo pipefail
+
+R="${FN_ROOT:-}"          # test hook: write into a fake root
+DRY="${FN_DRY:-0}"        # test hook: print system commands instead of running them
+OVERLAY=vc4-kms-dsi-ili9881-5inch
+BLOCK_BEGIN="# >>> fieldnote-display >>> (managed by fieldnote-display-setup; remove with --undo)"
+BLOCK_END="# <<< fieldnote-display <<<"
+STATE="$R/etc/sdr/display.env"
+LAUNCHER="$R/usr/local/bin/fieldnote-kiosk"
+UNIT="$R/etc/systemd/system/fieldnote-kiosk.service"
+PAMFILE="$R/etc/pam.d/fieldnote-kiosk"
+CURSOR_THEME_DIR="$R/usr/share/icons/fieldnote-blank"     # fully transparent Xcursor theme
+CURSOR_PATH_DIR="$R/usr/local/share/fieldnote-cursor"     # XCURSOR_PATH for the kiosk only
+CURSOR_DROPIN="$R/etc/systemd/system/fieldnote-kiosk.service.d/fieldnote-cursor.conf"
+TS="$(date +%Y%m%d-%H%M%S)"
+
+say()  { echo "[display] $*"; }
+warn() { echo "[display] WARNING: $*" >&2; }
+run()  { if [[ "$DRY" == "1" ]]; then echo "[dry-run] $*"; else "$@"; fi; }
+
+UNDO=0; KUSER=""; URL="http://localhost/?kiosk=1"; FORCE_OVERLAY=0; ROTATE=0; KIND=""; NO_KIOSK=0
+CURSOR_ONLY=""; NO_RESTART=0; HDMI=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --undo) UNDO=1 ;;
+    --user) KUSER="${2:?}"; shift ;;
+    --url) URL="${2:?}"; shift ;;
+    --force-overlay) FORCE_OVERLAY=1 ;;
+    --rotate) ROTATE="${2:?}"; shift ;;
+    --desktop) KIND=desktop ;;
+    --lite) KIND=lite ;;
+    --no-kiosk) NO_KIOSK=1 ;;
+    --hide-cursor) CURSOR_ONLY=hide ;;
+    --show-cursor) CURSOR_ONLY=show ;;
+    --no-restart) NO_RESTART=1 ;;
+    --hdmi) HDMI=1 ;;
+    --resolution) RES="${2:?}"; shift ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+RES="${RES:-}"
+if [[ $HDMI -eq 1 ]]; then
+  [[ "$URL" == "http://localhost/?kiosk=1" ]] && URL="http://localhost/?kiosk=1&display=hdmi"
+  [[ $ROTATE != 0 || $FORCE_OVERLAY -eq 1 ]] && { echo "--hdmi does not take --rotate / --force-overlay" >&2; exit 2; }
+fi
+case "$ROTATE" in 0) ;; 90|180|270) FORCE_OVERLAY=1 ;; *) echo "--rotate must be 0, 90, 180 or 270" >&2; exit 2 ;; esac
+
+if [[ ${EUID} -ne 0 && "$DRY" != "1" ]]; then
+  echo "Run: sudo fieldnote-display-setup $*" >&2
+  exit 1
+fi
+
+# ---------- who / where / which OS ----------
+if [[ -z "$KUSER" ]]; then
+  if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then KUSER="$SUDO_USER"
+  elif u="$(logname 2>/dev/null)" && [[ -n "$u" && "$u" != "root" ]]; then KUSER="$u"
+  else KUSER="$(getent passwd 1000 | cut -d: -f1 || true)"; KUSER="${KUSER:-neo}"
+  fi
+fi
+KHOME="$(getent passwd "$KUSER" | cut -d: -f6 || true)"
+KHOME="${KHOME:-/home/$KUSER}"
+[[ -n "$R" ]] && KHOME="$R$KHOME"
+
+os_field() { awk -F= -v k="$1" '$1==k{gsub(/"/,"",$2); print $2; exit}' "$R/etc/os-release" 2>/dev/null || true; }
+OS_ID="$(os_field ID)"
+OS_CODENAME="$(os_field VERSION_CODENAME)"
+OS_PRETTY="$(os_field PRETTY_NAME)"
+IS_UBUNTU=0
+[[ "$OS_ID" == "ubuntu" ]] && IS_UBUNTU=1
+[[ $IS_UBUNTU -eq 1 && $HDMI -eq 0 ]] && FORCE_OVERLAY=1   # auto-detect alone did not bring the panel up on Ubuntu
+
+CONFIG="$R/boot/firmware/config.txt"
+CMDLINE="$R/boot/firmware/cmdline.txt"
+if [[ ! -f "$CONFIG" && -f "$R/boot/config.txt" ]]; then
+  CONFIG="$R/boot/config.txt"; CMDLINE="$R/boot/cmdline.txt"
+fi
+
+get_state() { [[ -f "$STATE" ]] && awk -F= -v k="$1" '$1==k{print substr($0,index($0,"=")+1); exit}' "$STATE" || true; }
+set_state() {
+  mkdir -p "$(dirname "$STATE")"
+  touch "$STATE"
+  local tmp; tmp="$(mktemp)"
+  grep -v "^$1=" "$STATE" >"$tmp" || true
+  echo "$1=$2" >>"$tmp"
+  if [[ "$(get_state "$1")" != "$2" ]]; then mv "$tmp" "$STATE"; chmod 644 "$STATE"; else rm -f "$tmp"; fi
+}
+# remember the original value only once, so re-running never records our own changes as "before"
+set_state_once() { [[ -n "$(get_state "$1")" ]] || set_state "$1" "$2"; }
+
+backup() {
+  local f="$1"
+  [[ -f "$f" ]] || return 0
+  cp -a "$f" "$f.fieldnote-$TS"
+  say "backup: $f.fieldnote-$TS"
+}
+
+# Put temp file $2 at $1 only when the content differs. Atomic (new inode), so a running bash
+# executing the old launcher keeps working. Returns 0 if the file changed.
+install_if_changed() {
+  local dest="$1" tmp="$2" mode="${3:-644}"
+  if [[ -f "$dest" ]] && cmp -s "$dest" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mkdir -p "$(dirname "$dest")"
+  chmod "$mode" "$tmp"
+  mv -f "$tmp" "$dest"
+  return 0
+}
+
+# ---------- config.txt (section aware) ----------
+# usage: cfg_edit apply|undo IN OUT FORCE DSI_LINE ROTATE_GIVEN
+# Prints KEY=VALUE results on stdout and what it did on stderr.
+cfg_edit() {
+  python3 - "$@" "$BLOCK_BEGIN" "$BLOCK_END" <<'PY'
+import re, sys
+mode, src, dst, force, dsi_want, rotate_given, BEGIN, END = sys.argv[1:9]
+force = force == "1"; rotate_given = rotate_given == "1"
+PFX = "#fieldnote# "
+text = open(src, newline="").read()
+lines = text.split("\n")
+
+def note(msg): print("[display] config.txt: " + msg, file=sys.stderr)
+
+# 1. back to the original: drop our block (plus the blank separator we added), un-comment our lines
+out, i = [], 0
+while i < len(lines):
+    if lines[i] == BEGIN:
+        j = i
+        while j < len(lines) and lines[j] != END:
+            j += 1
+        if out and out[-1] == "":
+            out.pop()
+        i = j + 1
+        continue
+    out.append(lines[i]); i += 1
+lines = [l[len(PFX):] if l.startswith(PFX) else l for l in out]
+
+if mode == "undo":
+    res = "\n".join(lines)
+    open(dst, "w", newline="").write(res)
+    print("CHANGED=%d" % (res != text))
+    sys.exit(0)
+
+# 2. section of every line: [all] and [pi4] apply to a Pi 4; any other filter does not
+SEC = re.compile(r"^\s*\[([^\]]+)\]\s*(#.*)?$")
+sec, cur = [], "all"
+for l in lines:
+    m = SEC.match(l)
+    if m:
+        cur = m.group(1).strip().lower()
+    sec.append(cur)
+def applies(i): return sec[i] in ("all", "pi4")
+def where(i): return "line %d [%s]" % (i + 1, sec[i])
+
+VC4 = re.compile(r"^\s*dtoverlay=vc4-kms-v3d(-pi4)?\s*(,|$)")
+DSI = re.compile(r"^\s*dtoverlay=vc4-kms-dsi-ili9881-5inch\s*(,|$)")
+AUTO = re.compile(r"^\s*display_auto_detect=1\s*$")
+FKMS = re.compile(r"^\s*dtoverlay=vc4-fkms-v3d")
+disable, block = set(), []
+
+for i, l in enumerate(lines):
+    if FKMS.match(l) and applies(i):
+        note("WARNING legacy vc4-fkms-v3d at %s; Touch Display 2 needs full KMS (vc4-kms-v3d)" % where(i))
+
+# 3. exactly one vc4-kms-v3d that applies to the Pi 4 (options such as cma-128 are kept)
+vc4 = [i for i, l in enumerate(lines) if VC4.match(l)]
+vc4_ok = [i for i in vc4 if applies(i)]
+if vc4_ok:
+    keep = vc4_ok[-1]
+    for i in vc4_ok[:-1]:
+        disable.add(i); note("duplicate %s at %s commented out" % (lines[i].strip(), where(i)))
+    note("keeping %s at %s" % (lines[keep].strip(), where(keep)))
+else:
+    opts = ""
+    if vc4:
+        m = re.match(r"^\s*dtoverlay=vc4-kms-v3d(?:-pi4)?\s*(,\S*)?\s*$", lines[vc4[0]])
+        opts = (m.group(1) or "") if m else ""
+        for i in vc4:   # they only applied to other boards; one line under [all] replaces them
+            disable.add(i); note("%s at %s does not apply to a Pi 4; moved under [all]" % (lines[i].strip(), where(i)))
+    block.append("dtoverlay=vc4-kms-v3d" + opts)
+
+# 4. panel overlay
+dsi_ok = [i for i, l in enumerate(lines) if DSI.match(l) and applies(i)]
+auto_ok = [i for i, l in enumerate(lines) if AUTO.match(l) and applies(i)]
+want_overlay = force or not auto_ok
+HDMI = dsi_want == "hdmi"
+if HDMI:
+    # desktop edition: HDMI monitor. No DSI panel overlay at all (any that applies is commented out);
+    # full-frame picture (no black border) with disable_overscan=1.
+    want_overlay = False
+    ANYDSI = re.compile(r"^\s*dtoverlay=vc4-kms-dsi-")
+    for i, l in enumerate(lines):
+        if ANYDSI.match(l) and applies(i):
+            disable.add(i); note("DSI overlay %s at %s commented out (HDMI monitor)" % (l.strip(), where(i)))
+    OVS = re.compile(r"^\s*disable_overscan=1\s*$")
+    if not [i for i, l in enumerate(lines) if OVS.match(l) and applies(i)]:
+        block.append("disable_overscan=1"); note("adding disable_overscan=1 under [all]")
+elif want_overlay:
+    if dsi_ok:
+        keep = dsi_ok[-1]
+        if rotate_given and lines[keep].strip() != dsi_want:
+            for i in dsi_ok:
+                disable.add(i)
+            block.append(dsi_want); note("replaced %s with %s" % (lines[keep].strip(), dsi_want))
+        else:
+            for i in dsi_ok[:-1]:
+                disable.add(i); note("duplicate panel overlay at %s commented out" % where(i))
+            note("keeping %s at %s" % (lines[keep].strip(), where(keep)))
+    else:
+        block.append(dsi_want); note("adding %s under [all]" % dsi_want)
+    if force:
+        for i in auto_ok:
+            disable.add(i); note("display_auto_detect=1 at %s commented out (explicit overlay in use)" % where(i))
+elif not HDMI:
+    note("display_auto_detect=1 is set; the panel is detected without an overlay line")
+
+for i in disable:
+    lines[i] = PFX + lines[i]
+res = "\n".join(lines)
+if block:
+    if not res.endswith("\n"):
+        res += "\n"
+    # put the lines under the file's final [all]; add our own [all] only if the file ends in
+    # another section (e.g. [cm4]) so they can never land under another board's filter
+    hdr = "" if sec and sec[-1] == "all" else "[all]\n"
+    res += "\n" + BEGIN + "\n" + hdr + "\n".join(block) + "\n" + END + "\n"
+open(dst, "w", newline="").write(res)
+print("CHANGED=%d" % (res != text))
+print("OVERLAY_MODE=%s" % ("hdmi" if HDMI else "manual" if want_overlay else "auto"))
+print("ADDED=%s" % " ".join(block))
+PY
+}
+
+setup_config() {
+  if [[ ! -f "$CONFIG" ]]; then
+    warn "no /boot/firmware/config.txt or /boot/config.txt found; is this a Raspberry Pi?"
+    return 1
+  fi
+  local model=""
+  model="$(tr -d '\0' <"$R/proc/device-tree/model" 2>/dev/null || true)"
+  [[ -n "$model" ]] && say "board: $model"
+  if [[ -n "$model" && "$model" != *"Raspberry Pi 4"* ]]; then
+    warn "this script is written for a Pi 4 (found: $model). Pi 5 needs the 22-way to 15-way cable; Compute Modules need --force-overlay."
+  fi
+  local odir
+  odir="$(dirname "$CONFIG")/overlays"
+  if [[ $HDMI -eq 0 && -d "$odir" && ! -e "$odir/$OVERLAY.dtbo" ]]; then
+    warn "$OVERLAY.dtbo is missing from $odir: the kernel/firmware is older than Touch Display 2."
+    warn "Run: sudo apt update && sudo apt full-upgrade   then reboot and run this again."
+  fi
+
+  local dsi="dtoverlay=$OVERLAY" rot=0
+  case "$ROTATE" in
+    90)  dsi+=",rotation=90,swapxy,invx"; rot=1 ;;
+    180) dsi+=",rotation=180,invx,invy"; rot=1 ;;
+    270) dsi+=",rotation=270,swapxy,invy"; rot=1 ;;
+  esac
+  if [[ $HDMI -eq 1 ]]; then dsi="hdmi"; say "HDMI monitor: no DSI overlay; the monitor's native mode comes from its EDID"
+  else
+  [[ $IS_UBUNTU -eq 1 ]] && say "Ubuntu: panel overlay written explicitly (auto-detect alone does not bring the panel up)"
+  fi
+
+  local tmp out
+  tmp="$(mktemp)"
+  out="$(cfg_edit apply "$CONFIG" "$tmp" "$FORCE_OVERLAY" "$dsi" "$rot")" || { rm -f "$tmp"; warn "could not parse $CONFIG"; return 1; }
+  CFG_MODE="$(sed -n 's/^OVERLAY_MODE=//p' <<<"$out")"
+  if grep -q '^CHANGED=1' <<<"$out"; then
+    backup "$CONFIG"
+    cat "$tmp" >"$CONFIG"      # keeps owner/mode of config.txt
+    say "config.txt updated$(sed -n 's/^ADDED=\(..*\)/ (block: \1)/p' <<<"$out")"
+    CONFIG_CHANGED=1
+  else
+    say "config.txt already correct; not touched"
+  fi
+  rm -f "$tmp"
+  set_state OVERLAY_MODE "$CFG_MODE"
+}
+
+# ---------- kiosk ----------
+detect_kind() {
+  [[ -n "$KIND" ]] && return
+  if [[ -x "$R/usr/sbin/lightdm" ]] && { [[ -x "$R/usr/bin/labwc" ]] || [[ -x "$R/usr/bin/wayfire" ]] || [[ -x "$R/usr/bin/startlxde-pi" ]] || [[ -x "$R/usr/bin/lxsession" ]]; }; then
+    KIND=desktop
+  elif [[ $IS_UBUNTU -eq 1 && -x "$R/usr/sbin/gdm3" ]]; then
+    KIND=unsupported
+  else
+    KIND=lite
+  fi
+}
+
+snap_chromium() { command -v snap >/dev/null 2>&1 && snap list chromium >/dev/null 2>&1; }
+browser_bin() {
+  if snap_chromium; then echo /snap/bin/chromium; return; fi
+  local b
+  for b in chromium chromium-browser; do
+    command -v "$b" >/dev/null 2>&1 || continue
+    # Ubuntu's /usr/bin/chromium-browser is only a wrapper around the snap
+    [[ $IS_UBUNTU -eq 1 && "$b" == chromium-browser ]] && continue
+    command -v "$b"; return
+  done
+}
+
+install_browser() {
+  [[ -n "$(browser_bin)" ]] && return 0
+  if [[ $IS_UBUNTU -eq 1 ]]; then
+    say "installing Chromium (snap)"
+    # 1.0.8: show download progress (Chromium is ~180 MB; it used to look frozen)
+    say "downloading snap Chromium (~180 MB); progress below"
+    if chg="$(snap install --no-wait chromium 2>/dev/null)"; then
+      snap watch "$chg" || { warn "snap install chromium failed (snap change $chg)"; return 1; }
+    else
+      run snap install chromium || { warn "snap install chromium failed"; return 1; }
+    fi
+    return 0
+  fi
+  local -a order=(chromium chromium-browser)
+  [[ "$OS_CODENAME" == "bookworm" ]] && order=(chromium-browser chromium)
+  run apt-get install -y --no-install-recommends "${order[0]}" \
+    || run apt-get install -y --no-install-recommends "${order[1]}" \
+    || { warn "could not install Chromium"; return 1; }
+}
+
+install_cage() {
+  command -v cage >/dev/null 2>&1 && return 0
+  run apt-get update -y || warn "apt-get update failed; trying with the current package lists"
+  if ! run apt-get install -y --no-install-recommends cage; then
+    [[ $IS_UBUNTU -eq 1 ]] && warn "cage is in Ubuntu 'universe': sudo add-apt-repository -y universe && sudo apt-get update"
+    warn "could not install cage"; return 1
+  fi
+}
+
+write_launcher() {
+  local tmp; tmp="$(mktemp)"
+  cat >"$tmp" <<'EOF'
+#!/usr/bin/env bash
+# Quietline Fieldnote kiosk browser. Started by the desktop autostart entry or by
+# fieldnote-kiosk.service (cage) on Lite / Ubuntu Server. Settings: /etc/sdr/display.env (KIOSK_URL=).
+# Browser output: ~/.cache/fieldnote-kiosk/chromium.log (rotated at 1 MB).
+# Launcher messages: journalctl -t fieldnote-kiosk (and journalctl -u fieldnote-kiosk with cage).
+URL="http://localhost/?kiosk=1"
+if [[ -r /etc/sdr/display.env ]]; then
+  u="$(awk -F= '$1=="KIOSK_URL"{print substr($0,index($0,"=")+1); exit}' /etc/sdr/display.env)"
+  [[ -n "$u" ]] && URL="$u"
+fi
+LOGDIR="$HOME/.cache/fieldnote-kiosk"
+LOG="$LOGDIR/chromium.log"
+mkdir -p "$LOGDIR"
+say() {
+  echo "fieldnote-kiosk: $*" >&2
+  logger -t fieldnote-kiosk -- "$*" 2>/dev/null || true
+  echo "$(date -Is) [launcher] $*" >>"$LOG"
+}
+rotate_log() {
+  if [[ -f "$LOG" ]] && (( $(stat -c %s "$LOG" 2>/dev/null || echo 0) > 1048576 )); then
+    mv -f "$LOG" "$LOG.1"
+  fi
+}
+rotate_log
+
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/fieldnote-kiosk.$(id -u).lock"
+flock -n 9 || exit 0          # one kiosk per session even if several autostart paths fire
+
+# wait for the Fieldnote UI (nginx -> Flask); network switching at boot can take a while
+ok=0
+for _ in $(seq 1 180); do
+  if curl -sf --max-time 2 http://localhost/health >/dev/null 2>&1; then ok=1; break; fi
+  sleep 1
+done
+[[ $ok -eq 1 ]] || say "Fieldnote UI (http://localhost/health) not answering after 180 s; starting the browser anyway (check: systemctl status sdr-web nginx)"
+
+# X11 desktop sessions: no screen saver / DPMS (Wayland blanking is handled by the compositor)
+if [[ -n "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]] && command -v xset >/dev/null; then
+  xset s off; xset s noblank; xset -dpms
+fi
+
+# Snap Chromium (Ubuntu) may only write inside ~/snap/chromium/, so its profile lives there; a
+# profile in ~/.config fails with "SingletonLock: Permission denied". Non-snap keeps ~/.config.
+BROWSER=""; SNAP=0
+if [[ -x /snap/bin/chromium ]] && snap list chromium >/dev/null 2>&1; then
+  BROWSER=/snap/bin/chromium; SNAP=1
+else
+  for b in chromium chromium-browser; do
+    p="$(command -v "$b" 2>/dev/null)" || continue
+    BROWSER="$p"
+    [[ "$(readlink -f "$p")" == /snap/* ]] && SNAP=1
+    break
+  done
+fi
+if [[ -z "$BROWSER" ]]; then
+  say "no Chromium found (Raspberry Pi OS: apt install chromium; Ubuntu: sudo snap install chromium)"
+  sleep 30; exit 1
+fi
+if [[ $SNAP -eq 1 ]]; then
+  PROFILE="$HOME/snap/chromium/common/fieldnote-kiosk"
+else
+  PROFILE="$HOME/.config/fieldnote-kiosk"
+fi
+mkdir -p "$PROFILE/Default"
+say "starting $BROWSER (snap=$SNAP) profile=$PROFILE url=$URL"
+
+# shellcheck disable=SC2054  # the comma in --disable-features is intended
+FLAGS=(--kiosk --user-data-dir="$PROFILE" --noerrdialogs --disable-infobars --no-first-run
+       --disable-session-crashed-bubble --disable-features=Translate,TranslateUI
+       --password-store=basic --check-for-update-interval=31536000
+       --overscroll-history-navigation=0 --disable-pinch
+       --autoplay-policy=no-user-gesture-required)
+# Desktop edition: on an HDMI monitor (DISPLAY_MODE=hdmi) do not force touch events, so Chromium only
+# reports touch (and the on-screen keyboard only appears) when a real touch screen is connected.
+DMODE="$(awk -F= '$1=="DISPLAY_MODE"{print $2; exit}' /etc/sdr/display.env 2>/dev/null)"
+[[ "$DMODE" == hdmi ]] || FLAGS+=(--touch-events=enabled)
+# 1.2.0: no --enable-gpu-rasterization: forcing GPU raster on the Pi 4 (V3D, blocklisted by Chromium) dropped the
+# side-rail SVG icons on the TV while grim (screencopy) still showed them
+[[ "$DMODE" == hdmi ]] && FLAGS+=(--start-fullscreen)
+[[ -n "${WAYLAND_DISPLAY:-}" ]] && FLAGS+=(--ozone-platform=wayland)
+# 1.2.0 keyboard (K830 Shift): make sure the US keymap env reaches the browser too (cage passes its own env on, but a
+# PAM session / snap launcher can reset it); the kiosk page also tracks physical Shift itself (kbd.js) as a fallback.
+export XKB_DEFAULT_RULES="${XKB_DEFAULT_RULES:-evdev}" XKB_DEFAULT_MODEL="${XKB_DEFAULT_MODEL:-pc105}" XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-us}"
+say "keymap rules=$XKB_DEFAULT_RULES model=$XKB_DEFAULT_MODEL layout=$XKB_DEFAULT_LAYOUT"
+
+fast=0
+while true; do
+  # never show "Restore pages?" after a power cut
+  sed -i 's/"exited_cleanly":false/"exited_cleanly":true/; s/"exit_type":"[^"]*"/"exit_type":"Normal"/' \
+    "$PROFILE/Default/Preferences" 2>/dev/null
+  rotate_log
+  start=$(date +%s)
+  echo "$(date -Is) [launcher] run $BROWSER ${FLAGS[*]} $URL" >>"$LOG"
+  "$BROWSER" "${FLAGS[@]}" "$URL" >>"$LOG" 2>&1
+  rc=$?
+  ran=$(( $(date +%s) - start ))
+  if (( ran < 15 )); then fast=$((fast + 1)); else fast=0; fi
+  wait_s=3
+  (( fast >= 3 )) && wait_s=30
+  say "browser exited rc=$rc after ${ran}s; restarting in ${wait_s}s (log: $LOG)"
+  sleep "$wait_s"
+done
+EOF
+  if install_if_changed "$LAUNCHER" "$tmp" 755; then
+    say "launcher installed: /usr/local/bin/fieldnote-kiosk"
+  else
+    say "launcher already up to date"
+  fi
+}
+
+setup_desktop() {
+  say "Raspberry Pi OS Desktop: Chromium kiosk from the desktop autostart, autologin as $KUSER"
+  install_browser || return 1
+  local ad="$KHOME/.config/autostart" tmp
+  mkdir -p "$ad"
+  tmp="$(mktemp)"
+  cat >"$tmp" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Fieldnote kiosk
+Comment=Quietline Fieldnote full-screen UI (fieldnote-display-setup)
+Exec=/usr/local/bin/fieldnote-kiosk
+X-GNOME-Autostart-enabled=true
+EOF
+  install_if_changed "$ad/fieldnote-kiosk.desktop" "$tmp" 644 || true
+  # labwc/wayfire user files take over from the system ones when present; add a line there too
+  local f="$KHOME/.config/labwc/autostart"
+  if [[ -f "$f" ]] && ! grep -q fieldnote-kiosk "$f"; then
+    echo "/usr/local/bin/fieldnote-kiosk &   # fieldnote-display-setup" >>"$f"
+    say "added kiosk to $f"
+  fi
+  f="$KHOME/.config/wayfire.ini"
+  if [[ -f "$f" ]] && ! grep -q fieldnote-kiosk "$f"; then
+    if grep -q '^\[autostart\]' "$f"; then
+      sed -i '/^\[autostart\]/a fieldnote = /usr/local/bin/fieldnote-kiosk' "$f"
+    else
+      printf '\n[autostart]\nfieldnote = /usr/local/bin/fieldnote-kiosk\n' >>"$f"
+    fi
+    say "added kiosk to $f"
+  fi
+  [[ "$DRY" == "1" ]] || chown -R "$KUSER:" "$ad" 2>/dev/null || true
+
+  set_state_once PREV_DEFAULT_TARGET "$(systemctl get-default 2>/dev/null || echo graphical.target)"
+  if [[ -f "$R/etc/lightdm/lightdm.conf" && -z "$(get_state LIGHTDM_BACKUP)" ]]; then
+    backup "$R/etc/lightdm/lightdm.conf"
+    set_state LIGHTDM_BACKUP "/etc/lightdm/lightdm.conf.fieldnote-$TS"
+  fi
+  if command -v raspi-config >/dev/null 2>&1; then
+    run env SUDO_USER="$KUSER" raspi-config nonint do_boot_behaviour B4 || warn "raspi-config autologin failed"
+    local blank
+    blank="$(raspi-config nonint get_blanking 2>/dev/null || echo "")"
+    [[ -n "$blank" ]] && set_state_once PREV_BLANKING "$blank"
+    run raspi-config nonint do_blanking 1 || warn "could not turn off screen blanking with raspi-config"
+  elif [[ -f "$R/etc/lightdm/lightdm.conf" ]]; then
+    if ! grep -q "^autologin-user=$KUSER\$" "$R/etc/lightdm/lightdm.conf"; then
+      sed -i "s/^#\?autologin-user=.*/autologin-user=$KUSER/" "$R/etc/lightdm/lightdm.conf"
+      grep -q "^autologin-user=$KUSER\$" "$R/etc/lightdm/lightdm.conf" \
+        || sed -i "/^\[Seat:\*\]/a autologin-user=$KUSER" "$R/etc/lightdm/lightdm.conf"
+    fi
+    [[ "$(systemctl get-default 2>/dev/null)" == graphical.target ]] || run systemctl set-default graphical.target
+    warn "raspi-config not found: screen blanking left as is"
+  fi
+  set_state KIOSK_KIND desktop
+}
+
+setup_lite() {
+  if [[ $IS_UBUNTU -eq 1 ]]; then
+    say "Ubuntu Server: cage (Wayland kiosk) + snap Chromium as fieldnote-kiosk.service on tty1, user $KUSER"
+  else
+    say "Raspberry Pi OS Lite: cage (Wayland kiosk) + Chromium as fieldnote-kiosk.service on tty1, user $KUSER"
+  fi
+  install_cage || return 1
+  install_browser || return 1
+  if [[ $HDMI -eq 1 ]] && ! command -v wlopm >/dev/null 2>&1; then
+    run apt-get install -y --no-install-recommends wlopm || warn "wlopm not installed: screen off falls back to a black overlay (sudo apt install wlopm)"
+  fi
+  local g
+  for g in video render input tty; do
+    if getent group "$g" >/dev/null && ! id -nG "$KUSER" 2>/dev/null | tr ' ' '\n' | grep -qx "$g"; then
+      run usermod -aG "$g" "$KUSER" || true
+    fi
+  done
+
+  local cage_bin tmp changed=0
+  cage_bin="$(command -v cage 2>/dev/null || echo /usr/bin/cage)"
+  tmp="$(mktemp)"
+  cat >"$tmp" <<'EOF'
+# fieldnote-kiosk.service (cage) login session; created by fieldnote-display-setup
+auth     required pam_unix.so nullok
+account  required pam_unix.so
+session  required pam_unix.so
+session  required pam_systemd.so
+EOF
+  install_if_changed "$PAMFILE" "$tmp" 644 && changed=1
+  tmp="$(mktemp)"
+  cat >"$tmp" <<EOF
+[Unit]
+Description=Quietline Fieldnote kiosk on the Touch Display (cage + Chromium)
+After=systemd-user-sessions.service plymouth-quit-wait.service dbus.socket systemd-logind.service getty@tty1.service
+After=sdr-web.service nginx.service
+Wants=dbus.socket systemd-logind.service
+Conflicts=getty@tty1.service
+ConditionPathExists=/dev/tty1
+
+[Service]
+Type=simple
+User=$KUSER
+PAMName=fieldnote-kiosk
+WorkingDirectory=~
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+Environment=XDG_SESSION_TYPE=wayland
+# 1.1.0: explicit US keyboard map; without it some Bluetooth keyboards (Logitech K830) lost Shift in cage
+Environment=XKB_DEFAULT_RULES=evdev XKB_DEFAULT_MODEL=pc105 XKB_DEFAULT_LAYOUT=us XKB_DEFAULT_OPTIONS=
+ExecStart=$cage_bin -d -s -- /usr/local/bin/fieldnote-kiosk
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=graphical.target
+EOF
+  install_if_changed "$UNIT" "$tmp" 644 && changed=1
+  set_state_once PREV_DEFAULT_TARGET "$(systemctl get-default 2>/dev/null || echo multi-user.target)"
+  if [[ $changed -eq 1 ]]; then run systemctl daemon-reload; fi
+  [[ "$(systemctl get-default 2>/dev/null)" == graphical.target ]] || run systemctl set-default graphical.target
+  systemctl is-enabled --quiet fieldnote-kiosk.service 2>/dev/null || run systemctl enable fieldnote-kiosk.service
+  if [[ $HDMI -eq 1 ]]; then
+    # HDMI desktop: the mouse pointer stays VISIBLE (no blank cursor theme); remove one if a handheld setup left it
+    if [[ "$(get_state CURSOR)" != shown ]] || [[ -f "$CURSOR_DROPIN" ]]; then show_cursor >/dev/null && { changed=1; KIOSK_CHANGED=1; }; fi
+  elif [[ "$(get_state CURSOR)" != shown ]] && hide_cursor; then changed=1; KIOSK_CHANGED=1; fi
+  set_state KIOSK_KIND lite
+  if [[ $changed -eq 1 ]]; then
+    say "fieldnote-kiosk.service written and enabled (logs: journalctl -u fieldnote-kiosk)"
+    KIOSK_CHANGED=1
+  else
+    say "fieldnote-kiosk.service already in place"
+  fi
+}
+
+# ---------- mouse pointer (cage) ----------
+# cage 0.1.5 (Ubuntu 24.04) has no hide-cursor option (cage -h lists only -d -h -m -s -v). It shows
+# the "left_ptr" image of the xcursor theme named "default" whenever ANY pointer device exists on the
+# seat, and on a touch-only screen Chromium never gets pointer focus, so CSS cursor:none cannot hide
+# it. wlroots 0.17 ignores XCURSOR_THEME for cage's own cursor but does search XCURSOR_PATH, so the
+# kiosk service gets XCURSOR_PATH pointing at a directory whose "default" theme is fully transparent.
+# This is a systemd drop-in: the (possibly hand-edited) fieldnote-kiosk.service itself is untouched.
+# Touch input is not affected; a real mouse still works, its pointer is just invisible.
+write_blank_cursor_theme() { # returns 0 if files changed
+  local tmp; tmp="$(mktemp -d)"
+  python3 - "$tmp" <<'PY'
+import os, struct, sys
+d = sys.argv[1]
+os.makedirs(os.path.join(d, "cursors"))
+with open(os.path.join(d, "index.theme"), "w") as f:
+    f.write("[Icon Theme]\nName=fieldnote-blank\nComment=Invisible pointer for the Quietline Fieldnote touch kiosk\n")
+sizes = (24, 32, 48)
+pos = 16 + 12 * len(sizes)
+toc, chunks = b"", b""
+for n in sizes:
+    toc += struct.pack("<III", 0xFFFD0002, n, pos)
+    chunk = struct.pack("<IIIIIIIII", 36, 0xFFFD0002, n, 1, n, n, 0, 0, 0) + b"\0" * (4 * n * n)  # ARGB, all transparent
+    chunks += chunk
+    pos += len(chunk)
+with open(os.path.join(d, "cursors", "left_ptr"), "wb") as f:
+    f.write(struct.pack("<IIII", 0x72756358, 16, 0x10000, len(sizes)) + toc + chunks)
+for name in ("default arrow top_left_arrow pointer hand1 hand2 pointing_hand text xterm ibeam crosshair cross "
+             "move grab grabbing all-scroll fleur wait watch progress left_ptr_watch not-allowed crossed_circle "
+             "no-drop help question_arrow context-menu cell copy alias vertical-text zoom-in zoom-out "
+             "col-resize row-resize ew-resize ns-resize n-resize s-resize e-resize w-resize ne-resize nw-resize "
+             "se-resize sw-resize nesw-resize nwse-resize sb_h_double_arrow sb_v_double_arrow").split():
+    os.symlink("left_ptr", os.path.join(d, "cursors", name))
+PY
+  chmod 755 "$tmp" "$tmp/cursors"; chmod 644 "$tmp/index.theme" "$tmp/cursors/left_ptr"
+  local changed=1 l
+  if [[ -d "$CURSOR_THEME_DIR" ]] && diff -r --no-dereference "$tmp" "$CURSOR_THEME_DIR" >/dev/null 2>&1; then
+    rm -rf "$tmp"; changed=0
+  else
+    mkdir -p "$(dirname "$CURSOR_THEME_DIR")"
+    rm -rf "$CURSOR_THEME_DIR"; mv "$tmp" "$CURSOR_THEME_DIR"
+  fi
+  mkdir -p "$CURSOR_PATH_DIR"; chmod 755 "$CURSOR_PATH_DIR"
+  for l in default fieldnote-blank; do
+    if [[ "$(readlink "$CURSOR_PATH_DIR/$l" 2>/dev/null)" != /usr/share/icons/fieldnote-blank ]]; then
+      ln -sfn /usr/share/icons/fieldnote-blank "$CURSOR_PATH_DIR/$l"; changed=1
+    fi
+  done
+  [[ $changed -eq 1 ]]
+}
+
+kiosk_restart_if_running() {
+  if [[ $NO_RESTART -eq 1 ]]; then say "kiosk not restarted (--no-restart): applies at its next start or reboot"; return 0; fi
+  if [[ "$DRY" == "1" ]] || systemctl is-active --quiet fieldnote-kiosk.service 2>/dev/null; then
+    run systemctl restart fieldnote-kiosk.service && say "kiosk restarted"
+  else
+    say "kiosk is not running; the change applies when it starts"
+  fi
+}
+
+# Why the pointer could still show in the middle of the screen with only cage's theme replaced: once
+# Chromium has pointer focus it sets its OWN cursor image (cage then draws that). Snap Chromium cannot see
+# /usr/local or the host's /usr/share/icons, so it fell back to its built-in arrow, and CSS cursor:none only
+# applies after the pointer moves. So the blank theme is also copied (under the names Chromium may ask for)
+# into /var/snap/chromium/common/fieldnote-cursor, a path the snap can read and that is the same inside and
+# outside the snap; XCURSOR_PATH lists it first. (systemd's %h would be /root here, not the kiosk user.)
+# The helper (kiosk user, before each start) adds it to the snap's own ~/.icons as a fallback.
+SNAP_CURSOR_DIR="$R/var/snap/chromium/common/fieldnote-cursor"
+write_snap_cursor_dir() { # returns 0 if changed
+  [[ -d "$R/var/snap/chromium" ]] || { say "no chromium snap yet: pointer theme for Chromium skipped (re-run --hide-cursor after installing it)"; return 1; }
+  local n changed=1
+  mkdir -p "$SNAP_CURSOR_DIR"; chmod 755 "$SNAP_CURSOR_DIR"
+  for n in default fieldnote-blank Adwaita Yaru DMZ-White DMZ-Black; do
+    if diff -rq --no-dereference "$CURSOR_THEME_DIR" "$SNAP_CURSOR_DIR/$n" >/dev/null 2>&1; then continue; fi
+    rm -rf "$SNAP_CURSOR_DIR/$n" && cp -r "$CURSOR_THEME_DIR" "$SNAP_CURSOR_DIR/$n" && changed=0
+  done
+  [[ $changed -eq 0 ]]
+}
+CURSOR_HELPER="$R/usr/local/bin/fieldnote-kiosk-cursor"
+write_cursor_helper() { # returns 0 if changed
+  local tmp; tmp="$(mktemp)"
+  cat >"$tmp" <<'EOF'
+#!/usr/bin/env bash
+# Managed by fieldnote-display-setup (--hide-cursor). Runs as the kiosk user before cage starts
+# (ExecStartPre): puts the blank pointer theme where snap Chromium can read it. Never fails the kiosk.
+SRC=/usr/share/icons/fieldnote-blank
+[[ -d "$SRC/cursors" && -n "${HOME:-}" ]] || exit 0
+put() {  # DIR NAME...
+  local base="$1" n; shift
+  mkdir -p "$base" 2>/dev/null || return 0
+  for n in "$@"; do
+    if ! diff -rq --no-dereference "$SRC" "$base/$n" >/dev/null 2>&1; then
+      rm -rf "$base/$n.tmp" && cp -r "$SRC" "$base/$n.tmp" && rm -rf "$base/$n" && mv "$base/$n.tmp" "$base/$n"
+    fi
+  done
+}
+# the snap's own ~/.icons (HOME inside the snap is ~/snap/chromium/<revision>)
+if [[ -d "$HOME/snap/chromium" ]]; then
+  for d in "$HOME"/snap/chromium/[0-9]* "$HOME"/snap/chromium/x[0-9]*; do
+    [[ -d "$d" && ! -L "$d" ]] && put "$d/.icons" default fieldnote-blank
+  done
+fi
+exit 0
+EOF
+  install_if_changed "$CURSOR_HELPER" "$tmp" 755
+}
+
+hide_cursor() { # returns 0 if anything changed
+  local changed=0 tmp
+  if write_blank_cursor_theme; then changed=1; fi
+  if write_cursor_helper; then changed=1; fi
+  if write_snap_cursor_dir; then changed=1; fi
+  tmp="$(mktemp)"
+  cat >"$tmp" <<'EOF'
+# Managed by fieldnote-display-setup: hide the mouse pointer on the touch display.
+# cage has no hide-cursor option; it draws the "default" xcursor theme found via XCURSOR_PATH, and
+# Chromium draws the theme named by XCURSOR_THEME; both are fully transparent here. Touch is not affected.
+# /var/snap/chromium/common/fieldnote-cursor holds the same blank theme where snap Chromium can read it.
+# Bring the pointer back: sudo fieldnote-display-setup --show-cursor
+[Service]
+ExecStartPre=-/usr/local/bin/fieldnote-kiosk-cursor
+Environment=XCURSOR_PATH=/var/snap/chromium/common/fieldnote-cursor:/usr/local/share/fieldnote-cursor
+Environment=XCURSOR_THEME=fieldnote-blank
+Environment=XCURSOR_SIZE=24
+EOF
+  if install_if_changed "$CURSOR_DROPIN" "$tmp" 644; then changed=1; fi
+  set_state CURSOR hidden
+  if [[ $changed -eq 1 ]]; then
+    run systemctl daemon-reload || true
+    say "mouse pointer hidden on the kiosk (drop-in ${CURSOR_DROPIN#"$R"})"
+    return 0
+  fi
+  say "mouse pointer already hidden (nothing changed)"
+  return 1
+}
+
+show_cursor() { # returns 0 if anything changed
+  set_state CURSOR shown
+  if [[ -f "$CURSOR_DROPIN" ]]; then
+    rm -f "$CURSOR_DROPIN"; rmdir "$(dirname "$CURSOR_DROPIN")" 2>/dev/null || true
+    run systemctl daemon-reload || true
+    say "mouse pointer shown again (removed ${CURSOR_DROPIN#"$R"}); install.sh will leave it shown"
+    return 0
+  fi
+  say "mouse pointer is already shown"
+  return 1
+}
+
+# ---------- undo ----------
+undo() {
+  say "removing Trace display/kiosk setup"
+  if [[ -f "$CONFIG" ]]; then
+    local tmp out
+    tmp="$(mktemp)"
+    out="$(cfg_edit undo "$CONFIG" "$tmp" 0 "" 0)"
+    if grep -q '^CHANGED=1' <<<"$out"; then
+      backup "$CONFIG"
+      cat "$tmp" >"$CONFIG"
+      say "config.txt: removed the fieldnote block and re-enabled the lines it had commented out"
+    else
+      say "config.txt: nothing of ours in it"
+    fi
+    rm -f "$tmp"
+  fi
+  if [[ "$(get_state ADDED_CONSOLEBLANK)" == "1" && -f "$CMDLINE" ]]; then   # set by older versions
+    backup "$CMDLINE"
+    sed -i '1 s/[[:space:]]*consoleblank=0//' "$CMDLINE"
+    say "cmdline.txt: removed consoleblank=0"
+  fi
+  rm -f "$KHOME/.config/autostart/fieldnote-kiosk.desktop"
+  [[ -f "$KHOME/.config/labwc/autostart" ]] && sed -i '/fieldnote-kiosk/d' "$KHOME/.config/labwc/autostart"
+  [[ -f "$KHOME/.config/wayfire.ini" ]] && sed -i '/fieldnote-kiosk/d' "$KHOME/.config/wayfire.ini"
+  if [[ -f "$UNIT" ]]; then
+    run systemctl disable fieldnote-kiosk.service || true
+    rm -f "$UNIT" "$PAMFILE"
+    run systemctl daemon-reload || true
+  fi
+  local lb; lb="$(get_state LIGHTDM_BACKUP)"
+  if [[ -n "$lb" && -f "$R$lb" ]]; then
+    cp -a "$R$lb" "$R/etc/lightdm/lightdm.conf"
+    say "restored lightdm.conf (autologin as before)"
+  fi
+  local pb; pb="$(get_state PREV_BLANKING)"
+  if [[ -n "$pb" ]] && command -v raspi-config >/dev/null 2>&1; then
+    run raspi-config nonint do_blanking "$pb" || true
+  fi
+  local pt; pt="$(get_state PREV_DEFAULT_TARGET)"
+  if [[ -n "$pt" ]]; then run systemctl set-default "$pt"; fi
+  if [[ -f "$CURSOR_DROPIN" ]]; then
+    rm -f "$CURSOR_DROPIN"; rmdir "$(dirname "$CURSOR_DROPIN")" 2>/dev/null || true
+    run systemctl daemon-reload || true
+  fi
+  rm -rf "$CURSOR_THEME_DIR" "$CURSOR_PATH_DIR"
+  rm -f "$LAUNCHER" "$STATE"
+  say "done. Chromium/cage packages and the kiosk browser profile in the user's home were left in place."
+}
+
+banner() {
+  echo
+  echo "=================================================================="
+  if [[ "${1:-}" == "needed" ]]; then
+    echo " REBOOT REQUIRED: run  sudo reboot"
+    echo " The display/kiosk changes only take effect after a reboot."
+  else
+    echo " config.txt and the kiosk service were already correct: no reboot needed."
+    echo " To pick up a new launcher without rebooting: sudo systemctl restart fieldnote-kiosk"
+  fi
+  echo "=================================================================="
+}
+
+if [[ -n "$CURSOR_ONLY" ]]; then
+  # cursor only: config.txt, the kiosk unit, the launcher and everything else stay exactly as they are
+  if [[ "$CURSOR_ONLY" == hide ]]; then
+    if hide_cursor; then kiosk_restart_if_running; fi
+  elif show_cursor; then
+    kiosk_restart_if_running
+  fi
+  [[ -f "$UNIT" ]] || say "note: ${UNIT#"$R"} does not exist; the setting applies once the cage kiosk is set up"
+  exit 0
+fi
+
+if [[ $UNDO -eq 1 ]]; then
+  undo
+  banner needed
+  exit 0
+fi
+
+CONFIG_CHANGED=0
+KIOSK_CHANGED=0
+CFG_MODE=""
+say "OS: ${OS_PRETTY:-unknown}   kiosk user: $KUSER   config: ${CONFIG#"$R"}"
+setup_config
+set_state KIOSK_USER "$KUSER"
+set_state KIOSK_URL "$URL"
+if [[ $HDMI -eq 1 ]]; then set_state DISPLAY_MODE hdmi
+  # 1.0.8.2: always 720p (1280x720@60, landscape); a Pi 4 cannot drive the kiosk smoothly above that
+  SDR_ROOT="$R" bash "$(dirname "$(readlink -f "$0")")/sdr-display-res" 720p >/dev/null 2>&1 \
+    || SDR_ROOT="$R" /usr/local/sbin/sdr-display-res 720p >/dev/null 2>&1 || true
+  say "HDMI output: 720p landscape (1280x720@60; applies at the next reboot)"
+fi
+if [[ $NO_KIOSK -eq 0 ]]; then
+  detect_kind
+  write_launcher
+  case "$KIND" in
+    desktop) setup_desktop; [[ -z "$(get_state KIOSK_SETUP_DONE)" ]] && KIOSK_CHANGED=1 ;;
+    lite) setup_lite ;;
+    *) warn "Ubuntu Desktop (GDM) is not set up automatically. Use --lite to run cage on tty1 instead, or start /usr/local/bin/fieldnote-kiosk from your session's autostart." ;;
+  esac
+  set_state KIOSK_SETUP_DONE 1
+fi
+echo
+say "Summary:"
+if [[ $HDMI -eq 1 ]]; then
+say "  display: HDMI monitor (Pi 4 HDMI0, the port next to USB-C), native mode from EDID; pointer visible; screen off via wlopm"
+else
+say "  panel: Touch Display 2 5\" (720x1280 portrait) on the Pi 4 DISPLAY connector, 15-way ribbon, GPIO 5V/GND power"
+fi
+[[ $HDMI -eq 1 ]] || say "  overlay: $CFG_MODE ($( [[ "$CFG_MODE" == auto ]] && echo "display_auto_detect=1" || echo "dtoverlay=$OVERLAY" )); vc4-kms-v3d applies to the Pi 4"
+[[ $NO_KIOSK -eq 0 ]] && say "  kiosk: $KIND, user $KUSER, opens $URL"
+say "  undo: sudo fieldnote-display-setup --undo"
+if [[ $CONFIG_CHANGED -eq 1 || $KIOSK_CHANGED -eq 1 ]]; then banner needed; else banner; fi

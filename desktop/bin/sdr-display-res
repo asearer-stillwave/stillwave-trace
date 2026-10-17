@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Trace Desktop 1.0.8.2: HDMI output is fixed at 720p (1280x720@60, landscape). A Pi 4 can't drive the kiosk smoothly above that.
+#   sdr-display-res status | 720p | migrate | edid-on | edid-off
+# 1.1.0: video= on the cmdline only sets the console mode; cage/wlroots still picks the TV's preferred mode
+# (e.g. a Samsung 4K TV's 3840x2160@30). So 720p/migrate/edid-on also install a 720p-only EDID
+# (/lib/firmware/edid/trace-720p.bin, with HDMI audio blocks kept) and add
+# drm.edid_firmware=HDMI-A-1:edid/trace-720p.bin,HDMI-A-2:edid/trace-720p.bin to cmdline.txt. The TV then only
+# offers 1280x720@60 to the kernel, cage and Chromium. Reboot to apply. Idempotent.
+# RECOVERY (screen black after reboot): sudo sdr-display-res edid-off && sudo reboot  (over SSH), or put the SD
+# card in another computer and delete the drm.edid_firmware=... word from cmdline.txt on the boot partition.
+# Backup of the previous cmdline.txt: cmdline.txt.trace-pre-edid. Set SDR_EDID=off in /etc/sdr/display.env to keep it off.
+#   (1080p / 1440p / native from older builds are accepted and mapped to 720p.)
+set -u
+R="${SDR_ROOT:-}"
+CMDLINE="$R/boot/firmware/cmdline.txt"; [[ -f "$CMDLINE" ]] || CMDLINE="$R/boot/cmdline.txt"
+STATE="$R/etc/sdr/display.env"
+MODE="1280x720@60"
+case "${1:-status}" in
+  status) e=false; [[ -f "$CMDLINE" ]] && grep -q 'drm.edid_firmware=' "$CMDLINE" && e=true
+          printf '{"ok":true,"resolution":"720p","mode":"%s","orientation":"landscape","options":["720p"],"edid_override":%s}\n' "$MODE" "$e"; exit 0 ;;
+  720p|1080p|1440p|native|migrate|edid-on|edid-off) : ;;
+  *) echo '{"ok":false,"error":"only 720p is supported on the desktop edition"}'; exit 2 ;;
+esac
+[[ -f "$CMDLINE" ]] || { echo '{"ok":false,"error":"no cmdline.txt"}'; exit 1; }
+EDID="$R/lib/firmware/edid/trace-720p.bin"
+EDIDARG="drm.edid_firmware=HDMI-A-1:edid/trace-720p.bin,HDMI-A-2:edid/trace-720p.bin"
+want_edid=1
+[[ "$1" == edid-off ]] && want_edid=0
+if [[ "$1" != edid-on && "$1" != edid-off ]] && grep -qs '^SDR_EDID=off' "$STATE"; then want_edid=0; fi
+install -d -m 755 "$(dirname "$STATE")"; touch "$STATE"
+if [[ "$1" == edid-off ]]; then sed -i '/^SDR_EDID=/d' "$STATE"; echo "SDR_EDID=off" >> "$STATE"; fi
+if [[ "$1" == edid-on ]]; then sed -i '/^SDR_EDID=/d' "$STATE"; fi
+if [[ $want_edid -eq 1 ]]; then
+  install -d -m 755 "$(dirname "$EDID")"
+  tmpe="$(mktemp)"
+  python3 - >"$tmpe" <<'PYEDID'
+import sys
+def dtd(clk_khz10, ha, hb, va, vb, hso, hsw, vso, vsw, hmm, vmm, flags=0x1E):
+    return bytes([clk_khz10 & 255, clk_khz10 >> 8, ha & 255, hb & 255, ((ha >> 8) << 4) | (hb >> 8),
+                  va & 255, vb & 255, ((va >> 8) << 4) | (vb >> 8), hso & 255, hsw & 255,
+                  ((vso & 15) << 4) | (vsw & 15), ((hso >> 8) << 6) | ((hsw >> 8) << 4) | ((vso >> 4) << 2) | (vsw >> 4),
+                  hmm & 255, vmm & 255, ((hmm >> 8) << 4) | (vmm >> 8), 0, 0, flags])
+t720 = dtd(7425, 1280, 370, 720, 30, 110, 40, 5, 5, 708, 398)
+def desc(tag, data): return bytes([0, 0, 0, tag, 0]) + data
+b = bytearray(b"\x00\xff\xff\xff\xff\xff\xff\x00")
+b += bytes([0x50, 0x74])                     # mfg "TRC"
+b += bytes([0x20, 0x07, 1, 0, 0, 0, 1, 36])  # product, serial, week, year 2026
+b += bytes([1, 3, 0x80, 71, 40, 0x78, 0x0E, 0xEE, 0x91, 0xA3, 0x54, 0x4C, 0x99, 0x26, 0x0F, 0x50, 0x54])  # 1.3, digital, chroma
+b += bytes([0, 0, 0])                        # no established timings
+b += b"\x01\x01" * 8                         # no standard timings
+b += t720
+b += desc(0xFD, bytes([50, 61, 30, 46, 8, 0, 0x0A]) + b"\x20" * 6)       # range limits
+b += desc(0xFC, b"TRACE 720p\n  ")                                       # name
+b += desc(0x10, bytes(13))                                               # dummy
+b += bytes([1])                               # one extension
+b.append((-sum(b)) & 255)
+# CEA-861 extension: video (VIC 4 native), audio LPCM 2ch, speaker, HDMI VSDB (so HDMI audio still works); VCDB
+blocks = bytes([0x41, 0x04])                                              # video: VIC 4 native
+blocks += bytes([0x23, 0x09, 0x07, 0x07])                                 # audio: LPCM 2ch 32/44.1/48k 16/20/24
+blocks += bytes([0x83, 0x01, 0x00, 0x00])                                 # speaker: FL/FR
+blocks += bytes([0xE2, 0x00, 0x4A])
+blocks += bytes([0x65, 0x03, 0x0C, 0x00, 0x10, 0x00])                     # HDMI VSDB, phys addr 1.0.0.0
+e = bytearray([0x02, 0x03, 4 + len(blocks), 0xC0 | 1]) + blocks   # basic audio, 1 native DTD
+e += t720
+e += bytes(127 - len(e)); e.append((-sum(e)) & 255)
+sys.stdout.buffer.write(bytes(b) + bytes(e))
+PYEDID
+  if [[ "$(stat -c %s "$tmpe")" == 256 ]] && ! cmp -s "$tmpe" "$EDID"; then install -m 644 "$tmpe" "$EDID"; fi
+  rm -f "$tmpe"
+  # if the vc4 driver is in the initramfs, the EDID must be in there too (otherwise the kernel just uses the TV's own EDID)
+  # 1.1.0.1: writing the hook is instant; the rebuild (update-initramfs, minutes on a Pi) is skipped when the installer
+  # asks (SDR_DISPLAY_NO_INITRAMFS=1: it rebuilds once, together with the boot splash, BEFORE the health check)
+  if [[ -z "$R" && -d /etc/initramfs-tools/hooks ]]; then
+    [[ -f /etc/initramfs-tools/hooks/trace-edid ]] || { printf '#!/bin/sh\n[ "$1" = prereqs ] && exit 0\n. /usr/share/initramfs-tools/hook-functions\n[ -f /lib/firmware/edid/trace-720p.bin ] && copy_file firmware /lib/firmware/edid/trace-720p.bin\nexit 0\n' > /etc/initramfs-tools/hooks/trace-edid; chmod 755 /etc/initramfs-tools/hooks/trace-edid; }
+    INITRD="$(dirname "$CMDLINE")/initrd.img"
+    if [[ -z "${SDR_DISPLAY_NO_INITRAMFS:-}" && -s "$INITRD" && "$EDID" -nt "$INITRD" ]] && command -v update-initramfs >/dev/null; then
+      echo "rebuilding the initramfs with the 720p EDID (update-initramfs -u, a few minutes) ..." >&2
+      timeout 900 update-initramfs -u >/dev/null 2>&1 || echo "update-initramfs failed; the kernel falls back to the TV's own EDID if it can't load the file early" >&2
+    fi
+  fi
+fi
+before="$(head -n1 "$CMDLINE")"
+[[ -f "$CMDLINE.trace-pre-edid" ]] || { grep -q 'drm.edid_firmware=' "$CMDLINE" || cp -p "$CMDLINE" "$CMDLINE.trace-pre-edid"; }
+line="$(printf '%s' "$before" | sed -E 's/ ?video=HDMI-A-[12]:[^ ]*//g; s/ ?drm\.edid_firmware=[^ ]*//g') video=HDMI-A-1:$MODE video=HDMI-A-2:$MODE"
+[[ $want_edid -eq 1 ]] && line="$line $EDIDARG"
+changed=false
+if [[ "$line" != "$before" ]]; then printf '%s\n' "$line" > "$CMDLINE.trace-tmp" && mv "$CMDLINE.trace-tmp" "$CMDLINE"; changed=true; fi
+sed -i '/^RESOLUTION=/d' "$STATE"; echo "RESOLUTION=720p" >> "$STATE"
+printf '{"ok":true,"resolution":"720p","edid_override":%s,"changed":%s,"reboot":%s}\n' "$([[ $want_edid -eq 1 ]] && echo true || echo false)" "$changed" "$changed"

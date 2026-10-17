@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trace">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Stillwave Trace · Screenshots</title>
+<link rel="icon" type="image/png" href="/img/trace-icon-192.png">
+<link rel="stylesheet" href="/fieldnote.css">
+</head>
+<body class="page-shots">
+<script src="/nav.js"></script>
+<div class="wrap">
+  <div class="brand"><h1><span class="acc">Screenshots</span></h1></div>
+  <p class="lead">Captures the Trace screen and saves it on the Pi. With a delay you have time to open the page you want (Listen, Map, Scan…).</p>
+  <div class="card">
+    <h2>Capture</h2>
+    <div class="row"><button type="button" class="big primary" id="sNow">Capture now</button><button type="button" class="big" id="s5">In 5 s</button><button type="button" class="big" id="s10">In 10 s</button></div>
+    <div id="sMsg" class="umsg hide" role="status" aria-live="polite"></div>
+  </div>
+  <div class="card">
+    <h2>Saved on this box</h2>
+    <div class="shotgrid" id="sList"><p class="note">Loading…</p></div>
+    <p class="note">Saved in <code>/var/lib/sdr/screenshots</code>. Tap one to open it; on a phone or computer Download saves it there. Over SSH: <code>sudo sdr-shot take 5</code> · <code>scp USER@HOST:/var/lib/sdr/screenshots/*.png .</code></p>
+  </div>
+</div>
+<div class="shot-view" id="sView" hidden role="dialog" aria-modal="true" aria-label="Screenshot">
+  <div class="k" id="sViewK"></div>
+  <img id="sViewImg" alt="">
+  <div class="row"><button type="button" id="sViewClose">Close</button><a class="btn" id="sViewDl">Download</a><button type="button" class="v-del" id="sViewDel">Delete</button></div>
+</div>
+<script src="/mode.js"></script>
+<script src="/power.js"></script>
+<script src="/screen.js"></script>
+<script src="/kbd.js"></script>
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  function msg(t, k){ const m = $('sMsg'); m.textContent = t; m.className = 'umsg ' + (k || ''); }
+  async function load(){
+    try{
+      const r = await fetch('/api/shots', {cache:'no-store'}); const j = await r.json();
+      const l = $('sList'); l.innerHTML = '';
+      if(!j.shots || !j.shots.length){ l.innerHTML = '<p class="note">No screenshots yet.</p>'; return; }
+      j.shots.forEach(s => {
+        // 1.1.0: never navigate to the raw PNG (it traps the kiosk); open the in-app viewer instead
+        const c = document.createElement('div'); c.className = 'shot';
+        const u = '/shots/' + encodeURIComponent(s.name);
+        c.innerHTML = '<img loading="lazy" alt="" role="button" tabindex="0"><span class="nmeta"></span><span class="row"><button type="button" class="sm">Open</button><button type="button" class="sm v-warn">Delete</button></span>';
+        const img = c.querySelector('img'); img.src = u + '?t=' + s.t;
+        c.querySelector('.nmeta').textContent = s.name.replace(/^trace-|\.png$/g, '') + ' · ' + Math.round(s.size / 1024) + ' KB';
+        img.onclick = () => view(s); c.querySelector('button').onclick = () => view(s);
+        c.querySelector('button.v-warn').onclick = () => del(s);
+        l.appendChild(c);
+      });
+    }catch(e){ $('sList').innerHTML = '<p class="note err">Could not list screenshots.</p>'; }
+  }
+  let cur = null;
+  function view(s){
+    cur = s; $('sViewK').textContent = '// ' + s.name.replace(/^trace-|\.png$/g, '');
+    $('sViewImg').src = '/shots/' + encodeURIComponent(s.name) + '?t=' + s.t;
+    const dl = $('sViewDl'); dl.href = '/shots/' + encodeURIComponent(s.name) + '?dl=1'; dl.setAttribute('download', s.name);
+    dl.hidden = document.documentElement.classList.contains('kiosk');   // 1.2.0: no Download on the kiosk screen itself
+    $('sView').hidden = false;
+  }
+  function closeView(){ $('sView').hidden = true; $('sViewImg').removeAttribute('src'); cur = null; }
+  async function del(s){
+    if(!confirm('Delete ' + s.name + '?')) return;
+    await fetch('/api/shots/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: s.name})});
+    if(cur && cur.name === s.name) closeView();
+    load();
+  }
+  $('sViewClose').onclick = closeView;
+  $('sViewDel').onclick = () => cur && del(cur);
+  $('sView').onclick = e => { if(e.target === $('sView')) closeView(); };
+  document.addEventListener('keydown', e => { if(e.key === 'Escape' && !$('sView').hidden) closeView(); });
+  async function take(delay){
+    document.querySelectorAll('#sNow,#s5,#s10').forEach(b => b.disabled = true);
+    msg(delay ? 'Capturing in ' + delay + ' s. Open the page you want now…' : 'Capturing…');
+    try{
+      const r = await fetch('/api/shots/take', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({delay})});
+      const j = await r.json(); msg(j.message || j.error || 'Done.', r.ok && j.ok ? 'ok' : 'err');
+    }catch(e){ msg(e.message, 'err'); }
+    document.querySelectorAll('#sNow,#s5,#s10').forEach(b => b.disabled = false);
+    load();
+  }
+  $('sNow').onclick = () => take(0); $('s5').onclick = () => take(5); $('s10').onclick = () => take(10);
+  load();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+[Unit]
+Description=RTL-SDR live spectrum + waterfall (SSE on 127.0.0.1:8081)
+After=network.target sdr-fm.service
+# One dongle: starting spectrum stops FM / detect / ADS-B (see sdr-mode)
+Conflicts=sdr-fm.service sdr-detect.service sdr-adsb.service
+
+[Service]
+Type=simple
+# 1.0.9: RADIO_DEVICE / ADSB_DEVICE (dual dongle, written by sdr-dongles; empty = the only dongle)
+EnvironmentFile=-/etc/sdr/dongles.env
+WorkingDirectory=/usr/local/lib/sdr-station/web
+Environment=PYTHONUNBUFFERED=1
+Environment=SDR_SCOPE_PORT=8081
+Environment=SDR_ENV_FILE=/etc/sdr/fm.env
+StateDirectory=sdr-station
+ExecStartPre=-+/usr/local/sbin/sdr-mode mark spectrum
+ExecStart=/usr/bin/python3 -u /usr/local/lib/sdr-station/web/sdr_scope.py --mode spectrum
+Restart=always
+RestartSec=2
+TimeoutStopSec=8
+SupplementaryGroups=plugdev
+StandardOutput=journal
+StandardError=journal
+
+# No [Install]: started by sdr-mode.

@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""Stillwave Trace: Pi 4 bootloader power settings (called by sdr-power).
+
+  sdr-power eeprom-status            bootloader version + POWER_OFF_ON_HALT / WAKE_ON_GPIO
+  sdr-power eeprom-setup             POWER_OFF_ON_HALT=1 and WAKE_ON_GPIO=0, so the board powers fully down after a
+        shutdown (start again = unplug and replug the power); only those keys change. Set WAKE_ON_GPIO back to 1
+        if a power button on GPIO3 is added later. Uses rpi-eeprom-config with the bootloader
+        image that matches the one running now, so only the configuration changes; it never installs a
+        newer bootloader. Applies at the next reboot.
+        Skips (exit 0) when the tool, vcgencmd or the matching image is missing.
+
+  sdr-boot-setup --splash on|off|status|check
+        Trace boot + shutdown splash (Plymouth theme stillwave-trace; see sdr-splash). "off" puts the normal
+        text boot back (cmdline.txt, config.txt, default theme, initramfs) and keeps it off through updates.
+"""
+import datetime
+import glob
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+E = os.environ.get
+CANDIDATES = [E("SDR_BOOT_CONFIG")] if E("SDR_BOOT_CONFIG") else ["/boot/firmware/config.txt", "/boot/config.txt"]
+MODEL = E("SDR_DT_MODEL", "/proc/device-tree/model")
+FW_DIRS = E("SDR_EEPROM_FW_DIRS", "/lib/firmware/raspberrypi/bootloader-2711:/usr/lib/firmware/raspberrypi/bootloader-2711:"
+            "/lib/firmware/raspberrypi/bootloader:/usr/lib/firmware/raspberrypi/bootloader").split(":")
+LOG = E("SDR_POWER_LOG", "/var/log/sdr-power.log")
+WANT_KEYS = {"POWER_OFF_ON_HALT": "1", "WAKE_ON_GPIO": "0"}   # 0: full power-off after halt (no GPIO wake)
+DEFAULTS = {"POWER_OFF_ON_HALT": "0", "WAKE_ON_GPIO": "1"}
+
+
+def say(msg):
+    print("[power] " + msg, flush=True)
+    try:
+        with open(LOG, "a") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S %z ") + msg + "\n")
+    except OSError:
+        pass
+
+
+def config_path():
+    for c in CANDIDATES:
+        if c and os.path.isfile(c):
+            return c
+    return None
+
+
+def model():
+    try:
+        return open(MODEL, "rb").read().decode(errors="replace").strip("\0").strip()
+    except OSError:
+        return ""
+
+
+# ---------------- EEPROM ----------------
+def run(cmd, timeout=60):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout, r.stderr
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 127, "", str(e)
+
+
+def parse_conf(text):
+    d = {}
+    for l in text.splitlines():
+        m = re.match(r"^\s*([A-Z_0-9]+)\s*=\s*(.*?)\s*$", l)
+        if m:
+            d[m.group(1)] = m.group(2)
+    return d
+
+
+def bootloader_version():
+    rc, out, _ = run(["vcgencmd", "bootloader_version"], 15)
+    if rc != 0 or not out.strip():
+        return None
+    v = {"text": out.strip().splitlines()[0]}
+    m = re.search(r"^timestamp\s+(\d+)", out, re.M)
+    v["timestamp"] = int(m.group(1)) if m else None
+    first = v["text"]
+    for fmt in ("%Y/%m/%d %H:%M:%S", "%b %d %Y %H:%M:%S"):
+        try:
+            v["date"] = datetime.datetime.strptime(re.sub(r"\s+", " ", first.strip()), fmt).strftime("%Y-%m-%d")
+            break
+        except ValueError:
+            continue
+    return v
+
+
+def image_timestamp(path):
+    try:
+        data = open(path, "rb").read()
+    except OSError:
+        return None
+    m = re.search(rb"BUILD_TIMESTAMP=(\d+)", data)
+    return int(m.group(1)) if m else None
+
+
+def matching_image(ver):
+    imgs = []
+    for d in FW_DIRS:
+        imgs += glob.glob(os.path.join(d, "*", "pieeprom-*.bin")) + glob.glob(os.path.join(d, "pieeprom-*.bin"))
+    imgs = sorted(set(imgs))
+    if ver.get("timestamp"):
+        for p in imgs:
+            if image_timestamp(p) == ver["timestamp"]:
+                return p
+    if ver.get("date"):
+        for p in imgs:
+            if os.path.basename(p) == "pieeprom-%s.bin" % ver["date"]:
+                return p
+    return None
+
+
+def boot_dir():
+    cfg = config_path()
+    return os.path.dirname(cfg) if cfg else "/boot/firmware"
+
+
+def halt_mode(conf):
+    """What the Pi 4 bootloader does after a shutdown with these settings (Raspberry Pi bootloader docs:
+    POWER_OFF_ON_HALT only switches the PMIC off when WAKE_ON_GPIO=0)."""
+    poh = conf.get("POWER_OFF_ON_HALT", DEFAULTS["POWER_OFF_ON_HALT"]).strip()
+    wog = conf.get("WAKE_ON_GPIO", DEFAULTS["WAKE_ON_GPIO"]).strip()
+    if wog == "0" and poh == "1":
+        return "full power-off (PMIC outputs off); start again by unplugging and replugging the power"
+    if poh != "1" and wog == "0":
+        return "standard halt (POWER_OFF_ON_HALT=0); start again by unplugging and replugging the power"
+    if wog != "0":
+        return ("low-power wait (WAKE_ON_GPIO=%s; POWER_OFF_ON_HALT only takes effect with WAKE_ON_GPIO=0); "
+                "start again by unplugging and replugging the power" % wog)
+    return "standard halt; start again by unplugging and replugging the power"
+
+
+def eeprom_status():
+    m = model()
+    print("board: %s" % (m or "unknown"))
+    tool = shutil.which("rpi-eeprom-config")
+    print("rpi-eeprom-config: %s" % (tool or "missing (sudo apt install rpi-eeprom)"))
+    ver = bootloader_version()
+    print("bootloader: %s" % (ver["text"] + (" (timestamp %s)" % ver["timestamp"] if ver.get("timestamp") else "") if ver else "unknown (vcgencmd missing?)"))
+    if tool:
+        rc, out, err = run([tool], 30)
+        if rc == 0:
+            conf = parse_conf(out)
+            for k in WANT_KEYS:
+                v = conf.get(k)
+                print("%s=%s%s" % (k, v if v is not None else DEFAULTS[k], "" if v is not None else " (default)"))
+            print("after a shutdown: %s" % halt_mode(conf))
+        else:
+            print("current config: could not be read (%s)" % (err.strip() or out.strip() or rc))
+    staged = [p for p in ("pieeprom.upd", "pieeprom.sig", "recovery.bin") if os.path.exists(os.path.join(boot_dir(), p))]
+    print("staged update: %s" % ("yes, applies at the next reboot (%s)" % ", ".join(staged) if "pieeprom.upd" in staged else "none"))
+    if ver:
+        img = matching_image(ver)
+        print("image for the running bootloader: %s" % (img or "not found on disk"))
+    return 0
+
+
+def eeprom_setup():
+    m = model()
+    if m and "Raspberry Pi 4" not in m and "Compute Module 4" not in m:
+        say("eeprom: board is '%s'; these settings are only set on a Pi 4; skipped" % m)
+        return 0
+    if not m:
+        say("eeprom: not a Raspberry Pi (no device-tree model); skipped")
+        return 0
+    tool = shutil.which("rpi-eeprom-config")
+    if not tool:
+        say("eeprom: rpi-eeprom-config not found (Ubuntu: sudo apt install rpi-eeprom); skipped. Current settings: unknown")
+        return 0
+    rc, out, err = run([tool], 30)
+    if rc != 0:
+        say("eeprom: could not read the current bootloader config (%s); skipped" % (err.strip()[-200:] or rc))
+        return 0
+    conf = parse_conf(out)
+    cur = {k: conf.get(k, DEFAULTS[k]) for k in WANT_KEYS}
+    say("eeprom: now POWER_OFF_ON_HALT=%s WAKE_ON_GPIO=%s" % (cur["POWER_OFF_ON_HALT"], cur["WAKE_ON_GPIO"]))
+    if cur == WANT_KEYS:
+        say("eeprom: already POWER_OFF_ON_HALT=1 WAKE_ON_GPIO=0; nothing to do")
+        return 0
+    if os.path.exists(os.path.join(boot_dir(), "pieeprom.upd")):
+        say("eeprom: a bootloader update is already waiting for a reboot (%s/pieeprom.upd); not stacking another. "
+            "Reboot, then run: sudo sdr-power eeprom-setup" % boot_dir())
+        return 0
+    ver = bootloader_version()
+    if not ver:
+        say("eeprom: vcgencmd bootloader_version did not answer; skipped (nothing changed)")
+        return 0
+    img = matching_image(ver)
+    if not img:
+        say("eeprom: the image for the running bootloader (%s) is not on disk; skipped so the bootloader itself "
+            "is never replaced (nothing changed)" % ver["text"])
+        return 0
+    # change only our two keys, keep every other line and its order
+    lines, seen = [], set()
+    for l in out.splitlines():
+        mm = re.match(r"^\s*([A-Z_0-9]+)\s*=", l)
+        if mm and mm.group(1) in WANT_KEYS:
+            lines.append("%s=%s" % (mm.group(1), WANT_KEYS[mm.group(1)]))
+            seen.add(mm.group(1))
+        else:
+            lines.append(l)
+    for k, v in WANT_KEYS.items():
+        if k not in seen:
+            lines.append("%s=%s" % (k, v))
+    with tempfile.NamedTemporaryFile("w", suffix=".conf", prefix="stillwave-eeprom-", delete=False) as f:
+        f.write("\n".join(lines).rstrip("\n") + "\n")
+        newconf = f.name
+    say("eeprom: applying with the running bootloader's own image %s (config change only)" % img)
+    rc, o2, e2 = run([tool, "--apply", newconf, img], 180)
+    os.unlink(newconf)
+    for l in (o2 + e2).strip().splitlines()[-8:]:
+        say("eeprom:   " + l)
+    if rc != 0:
+        say("eeprom: rpi-eeprom-config --apply failed (exit %s); nothing changed" % rc)
+        return 0
+    say("eeprom: POWER_OFF_ON_HALT=1 WAKE_ON_GPIO=0 staged; takes effect after the next reboot")
+    say("eeprom: after a shutdown the Pi now powers fully off; start it again by unplugging and replugging the power "
+        "(set WAKE_ON_GPIO=1 again if a GPIO power button is added later; see: sudo sdr-power eeprom-status)")
+    return 0
+
+
+def main(a):
+    if not a or a[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    if a[0] in ("--splash", "splash"):
+        if len(a) != 2 or a[1] not in ("on", "off", "status", "check"):
+            print("usage: sdr-boot-setup --splash on|off|status|check", file=sys.stderr)
+            return 2
+        tool = os.path.join(os.path.dirname(os.path.realpath(__file__)), "sdr-splash")
+        os.execv("/bin/bash", ["bash", tool, a[1]])
+    if a[0] == "eeprom-setup":
+        return eeprom_setup()
+    if a[0] == "eeprom-status":
+        return eeprom_status()
+    print("unknown: %s" % a[0], file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

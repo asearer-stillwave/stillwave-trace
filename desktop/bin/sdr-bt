@@ -1,0 +1,541 @@
+#!/usr/bin/env bash
+# Stillwave Trace Bluetooth speaker + audio output helper. Run as root (the web UI uses sudo).
+#
+#   sdr-bt status                 JSON: adapter, saved speaker, connected, default sink, output mode, job
+#   sdr-bt scan [--bg]            search ~12 s, print JSON list (audio devices first)
+#   sdr-bt scan-results           last scan as JSON (no new search)
+#   sdr-bt pair MAC [--bg]        pair + trust + connect, remember as THE speaker, make it the default sink
+#   sdr-bt connect [MAC] [--bg]   connect (default: saved speaker) and make it the default sink
+#   sdr-bt disconnect [MAC]       disconnect (audio falls back to onboard/HDMI)
+#   sdr-bt forget MAC             unpair; clears the saved speaker if it was this one
+#   sdr-bt set-default [MAC]      make the speaker's PipeWire sink the default output
+#   sdr-bt output phone|speaker|both   where FM audio goes (saved in /etc/sdr/audio.env, restarts FM)
+#   sdr-bt autoconnect            boot: reconnect the saved speaker if it is on (sdr-bt-reconnect.service)
+#   sdr-bt job                    JSON of the running / last background job
+#
+# --bg detaches into a transient systemd unit (setsid fallback) so the web request returns at once;
+# poll "status" or "job". The audio side runs in AUDIO_USER's PipeWire session (lingering user).
+set -u
+
+AUDIO_ENV="${SDR_AUDIO_ENV:-/etc/sdr/audio.env}"
+RUNDIR="${SDR_BT_RUNDIR:-/run/sdr-bt}"
+LOG="${SDR_BT_LOG:-/var/log/sdr-bt.log}"
+BTCTL="${SDR_BT_BLUETOOTHCTL:-bluetoothctl}"
+SCAN_SECS="${SDR_BT_SCAN_SECS:-12}"
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+MAC_RE='^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$'
+
+mkdir -p "$RUNDIR" 2>/dev/null || true
+
+log() {
+  local line
+  line="$(date '+%F %T') [$$] $*"
+  echo "$line" >>"$LOG" 2>/dev/null || true
+  [[ -n "${SDR_BT_QUIET:-}" ]] || echo "$*" >&2
+}
+
+die_json() { # die_json "message" [exit]
+  json_obj ok=false error="$1"
+  exit "${2:-1}"
+}
+
+# json_obj key=value ... -> {"key": "value"}; true/false/null and integers stay bare
+json_obj() {
+  python3 - "$@" <<'PY'
+import json, sys
+out = {}
+for a in sys.argv[1:]:
+    k, _, v = a.partition("=")
+    if v in ("true", "false"): out[k] = (v == "true")
+    elif v == "null": out[k] = None
+    elif v.lstrip("-").isdigit() and len(v) < 12: out[k] = int(v)
+    else: out[k] = v
+print(json.dumps(out))
+PY
+}
+
+# ---------- /etc/sdr/audio.env ----------
+env_get() {
+  [[ -f "$AUDIO_ENV" ]] || return 0
+  awk -F= -v k="$1" '$1==k{sub(/^[^=]*=/,""); gsub(/^"|"$/,""); print; exit}' "$AUDIO_ENV"
+}
+env_set() { # env_set KEY VALUE (VALUE empty -> remove)
+  local k="$1" v="${2:-}" tmp
+  install -d -m 755 "$(dirname "$AUDIO_ENV")"
+  tmp="$(mktemp)"
+  if [[ -f "$AUDIO_ENV" ]]; then grep -v "^${k}=" "$AUDIO_ENV" >"$tmp" || true; fi
+  if [[ -n "$v" ]]; then
+    v="${v//\"/}"; v="${v//$'\n'/ }"
+    printf '%s="%s"\n' "$k" "$v" >>"$tmp"
+  fi
+  if [[ -f "$AUDIO_ENV" ]] && cmp -s "$tmp" "$AUDIO_ENV"; then rm -f "$tmp"; return 0; fi
+  install -m 644 "$tmp" "$AUDIO_ENV"
+  rm -f "$tmp"
+}
+
+output_mode() {
+  local m
+  m="$(env_get AUDIO_OUT)"
+  case "$m" in phone|speaker|both) echo "$m" ;; *) echo phone ;; esac
+}
+
+# ---------- PipeWire session of the audio user ----------
+audio_user() {
+  local u
+  u="$(env_get AUDIO_USER)"
+  [[ -n "$u" ]] && id "$u" >/dev/null 2>&1 && { echo "$u"; return; }
+  [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != root ]] && id "$SUDO_USER" >/dev/null 2>&1 && { echo "$SUDO_USER"; return; }
+  getent passwd 1000 | cut -d: -f1
+}
+
+as_user() { # run a PipeWire/Pulse client as the audio user
+  local u uid
+  u="$(audio_user)"
+  [[ -n "$u" ]] || return 1
+  uid="$(id -u "$u")"
+  if [[ -n "${SDR_BT_NO_RUNUSER:-}" || "$(id -u)" == "$uid" ]]; then
+    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}" timeout 8 "$@"
+  else
+    timeout 8 runuser -u "$u" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+      PULSE_SERVER="unix:/run/user/$uid/pulse/native" "$@"
+  fi
+}
+
+pulse_ok() { as_user pactl info >/dev/null 2>&1; }
+
+sink_for_mac() { # PipeWire sink name for a BT MAC (bluez_output.AA_BB_..)
+  local m="${1//:/_}"
+  as_user pactl list short sinks 2>/dev/null | awk -v p="bluez_output.${m}" 'index($2,p)==1{print $2; exit}'
+}
+
+default_sink() { as_user pactl get-default-sink 2>/dev/null || true; }
+
+set_default_sink() { # MAC [wait_secs]
+  local mac="$1" wait="${2:-12}" sink="" i id
+  for ((i = 0; i <= wait; i++)); do
+    sink="$(sink_for_mac "$mac")"
+    [[ -n "$sink" ]] && break
+    sleep 1
+  done
+  if [[ -z "$sink" ]]; then
+    log "no PipeWire sink for $mac (is it connected? is pipewire-pulse running for $(audio_user)?)"
+    return 1
+  fi
+  as_user pactl set-default-sink "$sink" || return 1
+  # Move anything already playing (FM) onto the speaker; new streams follow the default.
+  while read -r id _; do
+    [[ -n "$id" ]] && as_user pactl move-sink-input "$id" "$sink" >/dev/null 2>&1
+  done < <(as_user pactl list short sink-inputs 2>/dev/null)
+  log "default sink -> $sink"
+  return 0
+}
+
+# ---------- BlueZ ----------
+bt() { timeout "${BT_TIMEOUT:-6}" "$BTCTL" "$@" 2>/dev/null; }
+
+controller_ok() { bt show | grep -q 'Controller'; }
+
+power_on() {
+  command -v rfkill >/dev/null 2>&1 && rfkill unblock bluetooth 2>/dev/null
+  bt show | grep -q 'Powered: yes' && return 0
+  bt power on >/dev/null
+  sleep 1
+  bt show | grep -q 'Powered: yes'
+}
+
+info_field() { # info_text Field
+  awk -v f="$2:" '{sub(/^[ \t]+/,"")} index($0,f)==1{sub(/^[^:]*:[ \t]*/,""); print; exit}' <<<"$1"
+}
+
+is_yes() { [[ "$(info_field "$1" "$2")" == yes ]]; }
+
+paired_macs() {
+  local out
+  out="$(bt devices Paired)"
+  [[ -n "$out" ]] || out="$(bt paired-devices)"
+  awk '$1=="Device"{print $2}' <<<"$out"
+}
+
+# Prints one JSON object per device MAC given on stdin (used by status and scan)
+devices_json() {
+  local mac info lines=()
+  while read -r mac; do
+    [[ "$mac" =~ $MAC_RE ]] || continue
+    info="$(bt info "$mac")"
+    [[ -n "$info" ]] || continue
+    lines+=("$mac"$'\x1f'"$(base64 -w0 <<<"$info")")
+  done
+  python3 - "${lines[@]+"${lines[@]}"}" <<'PY'
+import base64, json, re, sys
+out = []
+for a in sys.argv[1:]:
+    mac, _, b = a.partition("\x1f")
+    info = base64.b64decode(b).decode("utf-8", "replace")
+    f, uuids = {}, []
+    for ln in info.splitlines():
+        ln = ln.strip()
+        m = re.match(r"([A-Za-z ]+):\s*(.*)", ln)
+        if not m: continue
+        k, v = m.group(1), m.group(2)
+        if k == "UUID": uuids.append(v)
+        else: f.setdefault(k, v)
+    name = f.get("Name") or f.get("Alias") or ""
+    named = bool(name) and not re.fullmatch(r"([0-9A-Fa-f]{2}[-:]){5}[0-9A-Fa-f]{2}", name)
+    icon = f.get("Icon", "")
+    audio = icon.startswith("audio") or any(u.startswith(("Audio Sink", "Advanced Audio")) for u in uuids)
+    sink = any(u.startswith("Audio Sink") for u in uuids) or icon in ("audio-card", "audio-speakers", "audio-headset", "audio-headphones")
+    rssi = re.match(r"(-?\d+)", f.get("RSSI", "") or "")
+    out.append({
+        "mac": mac.upper(), "name": name if named else "", "icon": icon,
+        "paired": f.get("Paired") == "yes", "trusted": f.get("Trusted") == "yes",
+        "connected": f.get("Connected") == "yes", "audio": audio, "sink": sink,
+        "rssi": int(rssi.group(1)) if rssi else None,
+    })
+print(json.dumps(out))
+PY
+}
+
+# ---------- background jobs ----------
+JOB="$RUNDIR/job.json"
+job_write() { # state action mac message
+  local tmp
+  tmp="$(mktemp "$RUNDIR/.job.XXXXXX")" || return 0
+  json_obj state="$1" action="$2" mac="${3:-}" message="${4:-}" time="$(date +%s)" >"$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$JOB"
+}
+
+job_running() { # true if a background job holds the lock
+  [[ -e "$RUNDIR/lock" ]] || return 1
+  ! flock -n "$RUNDIR/lock" true 2>/dev/null
+}
+
+detach() { # detach ACTION [MAC]
+  local action="$1" mac="${2:-}" unit
+  if job_running; then
+    die_json "busy: another Bluetooth job is running" 3
+  fi
+  job_write running "$action" "$mac" "starting"
+  unit="sdr-bt-${action}-$(date +%s)"
+  if command -v systemd-run >/dev/null 2>&1 && [[ -d /run/systemd/system ]] && [[ -z "${SDR_BT_NO_SYSTEMD:-}" ]]; then
+    systemd-run --quiet --collect --unit="$unit" \
+      --setenv=SDR_AUDIO_ENV="$AUDIO_ENV" --setenv=SDR_BT_RUNDIR="$RUNDIR" --setenv=SDR_BT_LOG="$LOG" \
+      "$SELF" "$action" ${mac:+"$mac"} --job >/dev/null 2>&1 && {
+      json_obj ok=true started=true action="$action" mac="$mac" unit="$unit"
+      return 0
+    }
+  fi
+  setsid -f env SDR_BT_QUIET=1 "$SELF" "$action" ${mac:+"$mac"} --job </dev/null >/dev/null 2>&1
+  json_obj ok=true started=true action="$action" mac="$mac"
+}
+
+# ---------- commands ----------
+cmd_status() {
+  local bt_ok=0 powered=0 disc=0 pulse=0 dflt="" paired_json="[]" show job="" scan="" running=0
+  if command -v "$BTCTL" >/dev/null 2>&1 && controller_ok; then
+    bt_ok=1
+    show="$(bt show)"
+    is_yes "$show" Powered && powered=1
+    is_yes "$show" Discovering && disc=1
+    paired_json="$( { paired_macs; env_get BT_MAC; } | awk 'NF && !seen[toupper($0)]++' | devices_json)"
+  fi
+  if pulse_ok; then pulse=1; dflt="$(default_sink)"; fi
+  [[ -s "$JOB" ]] && job="$(cat "$JOB")"
+  [[ -s "$RUNDIR/scan.json" ]] && scan="$(cat "$RUNDIR/scan.json")"
+  job_running && running=1
+  python3 - "$bt_ok" "$powered" "$disc" "$pulse" "$dflt" "$paired_json" "$job" "$scan" "$running" \
+    "$(env_get BT_MAC)" "$(env_get BT_NAME)" "$(audio_user)" "$(output_mode)" <<'PY'
+import json, sys
+(bt_ok, powered, disc, pulse, dflt, paired, job, scan, running,
+ saved, saved_name, user, mode) = sys.argv[1:14]
+def load(s, d):
+    try: return json.loads(s) if s else d
+    except ValueError: return d
+paired = load(paired, [])
+saved = saved.upper()
+sp = next((d for d in paired if d["mac"] == saved), None) if saved else None
+if saved and sp is None:
+    sp = {"mac": saved, "name": "", "paired": False, "connected": False, "trusted": False}
+if sp is not None and not sp.get("name"):
+    sp["name"] = saved_name
+job = load(job, None)
+import time
+if (isinstance(job, dict) and job.get("state") == "running" and running != "1"
+        and time.time() - (job.get("time") or 0) > 15):
+    job["state"], job["message"] = "failed", "job stopped unexpectedly"
+key = "bluez_output." + saved.replace(":", "_") if saved else ""
+print(json.dumps({
+    "ok": True,
+    "bluetooth": bt_ok == "1", "powered": powered == "1", "discovering": disc == "1",
+    "speaker": sp,
+    "speaker_default": bool(key) and dflt.startswith(key),
+    "paired": [d for d in paired if d.get("paired")],
+    "connected": [d for d in paired if d.get("connected")],
+    "pulse": pulse == "1", "audio_user": user, "default_sink": dflt or None,
+    "output": mode, "job": job, "scan_time": (load(scan, {}) or {}).get("time"),
+}))
+PY
+}
+
+cmd_scan() {
+  command -v "$BTCTL" >/dev/null 2>&1 || die_json "bluetoothctl not installed"
+  controller_ok || die_json "no Bluetooth adapter (is bluetooth.service running? rfkill?)"
+  power_on || die_json "could not power on the Bluetooth adapter"
+  log "scan ${SCAN_SECS}s"
+  BT_TIMEOUT=$((SCAN_SECS + 5)) bt --timeout "$SCAN_SECS" scan on >/dev/null
+  local devs tmp
+  devs="$(bt devices | awk '$1=="Device"{print $2}' | devices_json)"
+  tmp="$(mktemp "$RUNDIR/.scan.XXXXXX")"
+  python3 - "$devs" >"$tmp" <<'PY'
+import json, sys, time
+d = json.loads(sys.argv[1] or "[]")
+d = [x for x in d if x["name"] or x["paired"]]
+d.sort(key=lambda x: (not x["sink"], not x["audio"], not x["paired"], -(x["rssi"] or -999), x["name"].lower()))
+print(json.dumps({"ok": True, "time": int(time.time()), "devices": d}))
+PY
+  chmod 644 "$tmp"; mv -f "$tmp" "$RUNDIR/scan.json"
+  cat "$RUNDIR/scan.json"
+}
+
+cmd_scan_results() {
+  if [[ -s "$RUNDIR/scan.json" ]]; then cat "$RUNDIR/scan.json"
+  else echo '{"ok": true, "time": null, "devices": []}'; fi
+}
+
+need_mac() {
+  [[ "${1:-}" =~ $MAC_RE ]] || die_json "need a Bluetooth address like AA:BB:CC:DD:EE:FF" 2
+  echo "${1^^}"
+}
+
+connect_mac() { # MAC -> 0 when Connected: yes
+  local mac="$1" i info
+  for i in 1 2 3; do
+    BT_TIMEOUT=25 bt connect "$mac" >/dev/null
+    sleep 2
+    info="$(bt info "$mac")"
+    is_yes "$info" Connected && return 0
+    log "connect $mac attempt $i failed"
+    sleep 3
+  done
+  return 1
+}
+
+remember() { # MAC
+  local mac="$1" info name
+  info="$(bt info "$mac")"
+  name="$(info_field "$info" Name)"
+  [[ -n "$name" ]] || name="$(info_field "$info" Alias)"
+  env_set BT_MAC "$mac"
+  env_set BT_NAME "$name"
+}
+
+finish() { # ok|failed action mac message  (prints JSON, writes job file if --job)
+  local st="$1" action="$2" mac="$3" msg="$4"
+  [[ -n "${IS_JOB:-}" ]] && job_write "$st" "$action" "$mac" "$msg"
+  log "$action ${mac:-} -> $st: $msg"
+  if [[ "$st" == ok ]]; then json_obj ok=true action="$action" mac="$mac" message="$msg"
+  else json_obj ok=false action="$action" mac="$mac" error="$msg"; return 1; fi
+}
+
+cmd_pair() {
+  local mac info name
+  mac="$(need_mac "${1:-}")" || exit 2
+  controller_ok || { finish failed pair "$mac" "no Bluetooth adapter (bluetooth.service?)"; return; }
+  power_on || { finish failed pair "$mac" "could not power on Bluetooth"; return; }
+  [[ -n "${IS_JOB:-}" ]] && job_write running pair "$mac" "pairing"
+  info="$(bt info "$mac")"
+  if [[ -z "$info" ]] || ! grep -q 'Name\|Alias' <<<"$info"; then
+    log "pair: $mac not known yet, searching"
+    BT_TIMEOUT=15 bt --timeout 10 scan on >/dev/null
+    info="$(bt info "$mac")"
+    [[ -n "$info" ]] || { finish failed pair "$mac" "speaker not found - put it in pairing mode and search again"; return; }
+  fi
+  bt pairable on >/dev/null
+  if ! is_yes "$info" Paired; then
+    log "pair: pairing $mac"
+    BT_TIMEOUT=40 bt --agent NoInputNoOutput pair "$mac" >/dev/null
+    info="$(bt info "$mac")"
+    if ! is_yes "$info" Paired; then
+      log "pair: one-shot pair failed, retrying with an interactive agent"
+      { echo "agent NoInputNoOutput"; echo "default-agent"; echo "pair $mac"; sleep 20; echo "quit"; } |
+        timeout 30 "$BTCTL" >/dev/null 2>&1
+      info="$(bt info "$mac")"
+    fi
+    is_yes "$info" Paired || { finish failed pair "$mac" "pairing failed - is the speaker in pairing mode (fast-blinking Bluetooth light)?"; return; }
+  fi
+  bt trust "$mac" >/dev/null
+  [[ -n "${IS_JOB:-}" ]] && job_write running pair "$mac" "connecting"
+  remember "$mac"
+  name="$(env_get BT_NAME)"
+  if ! connect_mac "$mac"; then
+    finish failed pair "$mac" "paired ${name:-$mac} but could not connect - turn it off and on, then tap Connect"
+    return
+  fi
+  if set_default_sink "$mac"; then
+    finish ok pair "$mac" "paired and connected ${name:-$mac}; Pi audio now plays on it"
+  else
+    finish ok pair "$mac" "paired and connected ${name:-$mac}, but its audio output did not appear yet (PipeWire)"
+  fi
+}
+
+cmd_connect() {
+  local mac="${1:-}" name
+  [[ -n "$mac" ]] || mac="$(env_get BT_MAC)"
+  [[ -n "$mac" ]] || die_json "no saved speaker - pair one first" 2
+  mac="$(need_mac "$mac")" || exit 2
+  controller_ok || { finish failed connect "$mac" "no Bluetooth adapter (bluetooth.service?)"; return; }
+  power_on || { finish failed connect "$mac" "could not power on Bluetooth"; return; }
+  is_yes "$(bt info "$mac")" Paired || { finish failed connect "$mac" "not paired - pair it first"; return; }
+  [[ -n "${IS_JOB:-}" ]] && job_write running connect "$mac" "connecting"
+  bt trust "$mac" >/dev/null
+  if ! connect_mac "$mac"; then
+    finish failed connect "$mac" "could not connect - is the speaker on and in range (and not busy with two phones)?"
+    return
+  fi
+  remember "$mac"
+  name="$(env_get BT_NAME)"
+  if set_default_sink "$mac"; then
+    finish ok connect "$mac" "connected ${name:-$mac}; Pi audio now plays on it"
+  else
+    finish ok connect "$mac" "connected ${name:-$mac}, but its audio output did not appear yet (PipeWire)"
+  fi
+}
+
+cmd_disconnect() {
+  local mac="${1:-}"
+  [[ -n "$mac" ]] || mac="$(env_get BT_MAC)"
+  [[ -n "$mac" ]] || die_json "no saved speaker" 2
+  mac="$(need_mac "$mac")" || exit 2
+  BT_TIMEOUT=12 bt disconnect "$mac" >/dev/null
+  sleep 1
+  if is_yes "$(bt info "$mac")" Connected; then
+    finish failed disconnect "$mac" "still connected"
+  else
+    finish ok disconnect "$mac" "disconnected; Pi audio falls back to the onboard output"
+  fi
+}
+
+cmd_forget() {
+  local mac
+  mac="$(need_mac "${1:-}")" || exit 2
+  BT_TIMEOUT=12 bt disconnect "$mac" >/dev/null
+  BT_TIMEOUT=12 bt remove "$mac" >/dev/null
+  if [[ "$(env_get BT_MAC)" == "$mac" ]]; then env_set BT_MAC ""; env_set BT_NAME ""; fi
+  if is_yes "$(bt info "$mac")" Paired; then finish failed forget "$mac" "BlueZ still lists it as paired"
+  else finish ok forget "$mac" "forgotten"; fi
+}
+
+cmd_set_default() {
+  local mac="${1:-}"
+  [[ -n "$mac" ]] || mac="$(env_get BT_MAC)"
+  [[ -n "$mac" ]] || die_json "no saved speaker" 2
+  mac="$(need_mac "$mac")" || exit 2
+  pulse_ok || die_json "PipeWire/pulse is not running for $(audio_user)"
+  if set_default_sink "$mac" 5; then finish ok set-default "$mac" "default output is $(default_sink)"
+  else finish failed set-default "$mac" "no audio output for $mac - is it connected?"; fi
+}
+
+cmd_output() {
+  local m="${1:-}"
+  case "$m" in phone|speaker|both) ;; *) die_json "output must be phone, speaker or both" 2 ;; esac
+  env_set AUDIO_OUT "$m"
+  local restarted=false
+  if [[ -z "${SDR_BT_NO_SYSTEMD:-}" ]] && systemctl is-active --quiet sdr-fm.service 2>/dev/null; then
+    systemctl restart sdr-fm.service && restarted=true
+  fi
+  log "output -> $m (fm restarted: $restarted)"
+  json_obj ok=true output="$m" fm_restarted="$restarted"
+}
+
+# 1.0.8: which Pi output plays the speaker stream: hdmi | jack (3.5 mm headphone jack) | bluetooth | auto (PipeWire default)
+cmd_sink() {
+  local k="${1:-}"
+  case "$k" in hdmi|jack|bluetooth|auto) ;; *) die_json "sink must be hdmi, jack, bluetooth or auto" 2 ;; esac
+  env_set AUDIO_SINK "$k"
+  local restarted=false
+  if [[ -z "${SDR_BT_NO_SYSTEMD:-}" ]] && systemctl is-active --quiet sdr-fm.service 2>/dev/null; then
+    systemctl restart sdr-fm.service && restarted=true
+  fi
+  log "sink -> $k (fm restarted: $restarted)"
+  json_obj ok=true sink="$k" fm_restarted="$restarted"
+}
+
+cmd_autoconnect() {
+  local mac i
+  mac="$(env_get BT_MAC)"
+  [[ -n "$mac" ]] || { log "autoconnect: no saved speaker"; return 0; }
+  for i in $(seq 1 20); do controller_ok && break; sleep 1; done
+  controller_ok || { log "autoconnect: no Bluetooth adapter"; return 0; }
+  power_on || true
+  for i in $(seq 1 15); do pulse_ok && break; sleep 1; done
+  # The speaker may already have reconnected by itself (it reconnects to its last device on power-up).
+  for i in 1 2 3 4; do
+    if is_yes "$(bt info "$mac")" Connected || connect_mac "$mac"; then
+      set_default_sink "$mac" 15 || true
+      log "autoconnect: $mac connected"
+      return 0
+    fi
+    sleep 10
+  done
+  log "autoconnect: $mac not reachable (off or out of range); audio stays on the onboard output"
+  return 0
+}
+
+# ---------- main ----------
+ACTION="${1:-status}"; shift || true
+ARGS=(); BG=""; IS_JOB=""
+for a in "$@"; do
+  case "$a" in
+    --bg) BG=1 ;;
+    --job) IS_JOB=1 ;;
+    *) ARGS+=("$a") ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+if [[ "$(id -u)" != 0 && -z "${SDR_BT_ALLOW_USER:-}" && "$ACTION" != help ]]; then
+  echo "sdr-bt: run with sudo" >&2; exit 1
+fi
+
+if [[ -n "$BG" ]]; then
+  case "$ACTION" in
+    scan|pair|connect)
+      [[ "$ACTION" == pair ]] && { need_mac "${1:-}" >/dev/null || exit 2; }
+      detach "$ACTION" "${1:-}"; exit $? ;;
+    *) die_json "--bg only for scan, pair, connect" 2 ;;
+  esac
+fi
+
+run_locked() { # serialize pair/connect/scan against each other
+  exec 9>"$RUNDIR/lock"
+  if ! flock -w 60 9; then die_json "busy: another Bluetooth job is running" 3; fi
+  "$@"
+}
+
+case "$ACTION" in
+  status) cmd_status ;;
+  scan)
+    if [[ -n "$IS_JOB" ]]; then
+      job_write running scan "" "searching"
+      if out="$(run_locked cmd_scan)"; then
+        n="$(python3 -c 'import json,sys; print(len(json.loads(sys.argv[1])["devices"]))' "$out" 2>/dev/null || echo 0)"
+        job_write ok scan "" "found $n device(s)"
+      else
+        job_write failed scan "" "$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error","scan failed"))' "$out" 2>/dev/null || echo "scan failed")"
+      fi
+    else
+      run_locked cmd_scan
+    fi ;;
+  scan-results) cmd_scan_results ;;
+  pair) run_locked cmd_pair "${1:-}" ;;
+  connect) run_locked cmd_connect "${1:-}" ;;
+  disconnect) cmd_disconnect "${1:-}" ;;
+  forget) cmd_forget "${1:-}" ;;
+  set-default) cmd_set_default "${1:-}" ;;
+  output) cmd_output "${1:-}" ;;
+  sink) cmd_sink "${1:-}" ;;
+  autoconnect) cmd_autoconnect ;;
+  job) if [[ -s "$JOB" ]]; then cat "$JOB"; else echo null; fi ;;
+  help|-h|--help) sed -n '2,20p' "$SELF" | sed 's/^# \{0,1\}//' ;;
+  *) echo "usage: sdr-bt status|scan [--bg]|scan-results|pair MAC [--bg]|connect [MAC] [--bg]|disconnect [MAC]|forget MAC|set-default [MAC]|output phone|speaker|both|autoconnect|job" >&2; exit 2 ;;
+esac

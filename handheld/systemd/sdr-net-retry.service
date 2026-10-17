@@ -1,0 +1,8 @@
+[Unit]
+Description=Stillwave Trace: while the fallback hotspot is up and idle, try home Wi-Fi again
+After=sdr-net.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/sdr-net-mode retry --foreground
+TimeoutStartSec=150

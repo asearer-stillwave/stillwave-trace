@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Stillwave Trace
+Description=Stillwave Trace boot and shutdown screen (radar sweep)
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/stillwave-trace
+ScriptFile=/usr/share/plymouth/themes/stillwave-trace/stillwave-trace.script

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Trace 1.0.8: reset the RTL-SDR's USB device (unbind/rebind its port, or usbreset), then restart the current mode.
+# Usage: sdr-usb-reset [--dry]
+set -u
+DRY="${1:-}"
+SYS=/sys/bus/usb/devices
+dev=""
+for d in "$SYS"/*; do
+  [[ -f "$d/idVendor" ]] || continue
+  v="$(cat "$d/idVendor")"; p="$(cat "$d/idProduct")"
+  if [[ "$v" == 0bda && ( "$p" == 2838 || "$p" == 2832 ) ]]; then dev="$(basename "$d")"; break; fi
+done
+[[ -n "$dev" ]] || { echo "No RTL-SDR dongle found on USB" >&2; exit 3; }
+mode="$(/usr/local/sbin/sdr-mode current 2>/dev/null || echo spectrum)"
+echo "Resetting RTL-SDR at USB $dev (mode $mode)"
+[[ "$DRY" == --dry ]] && exit 0
+/usr/local/sbin/sdr-mode stop-all >/dev/null 2>&1 || true
+if [[ -w /sys/bus/usb/drivers/usb/unbind ]]; then
+  echo "$dev" > /sys/bus/usb/drivers/usb/unbind 2>/dev/null; sleep 2
+  echo "$dev" > /sys/bus/usb/drivers/usb/bind 2>/dev/null
+elif command -v usbreset >/dev/null 2>&1; then
+  usbreset "$(cat "$SYS/$dev/idVendor"):$(cat "$SYS/$dev/idProduct")" || true
+fi
+sleep 3
+/usr/local/sbin/sdr-mode set "$mode" >/dev/null && echo "Dongle reset; $mode restarted"

@@ -1,0 +1,34 @@
+{
+ "file": "la.pmtiles",
+ "sha256": "7f86fe62d862a31d6f4c85451236ed419f259b9f772a66b8f6b0efda3410e74b",
+ "bytes": 57188216,
+ "build": "20261006",
+ "source": "https://build.protomaps.com/20261006.pmtiles",
+ "created": "2026-10-07T01:16:39-0700",
+ "bbox_outer": [
+  -119.45,
+  33.25,
+  -117.3,
+  34.8
+ ],
+ "zoom_outer": [
+  0,
+  11
+ ],
+ "bbox_core": [
+  -118.75,
+  33.55,
+  -117.9,
+  34.3
+ ],
+ "zoom_core": [
+  12,
+  14
+ ],
+ "center": [
+  -118.4081,
+  33.9425
+ ],
+ "attribution": "\u00a9 OpenStreetMap contributors (ODbL) \u00b7 Protomaps",
+ "license": "Map data: OpenStreetMap contributors, Open Database License (ODbL) 1.0. Basemap: Protomaps."
+}

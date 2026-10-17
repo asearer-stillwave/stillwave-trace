@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Trace 1.0.8.2: the one safe writer for /etc/sdr/fm.env.
+  sdr-fm-env set KEY=VALUE ... [-KEY ...]   update only these keys (-KEY removes one); every other line is kept
+  sdr-fm-env heal                           add any missing required key (installer defaults; Icecast password from icecast.xml)
+  sdr-fm-env check                          exit 1 and list missing required keys
+Writes are atomic (temp file + rename) under a lock, and always heal, so a save can never drop the stream password."""
+import fcntl, os, re, sys
+ENV = os.environ.get("SDR_ENV_FILE", "/etc/sdr/fm.env")
+ICECAST_XML = os.environ.get("SDR_ICECAST_XML", "/etc/icecast2/icecast.xml")
+# Same values the installer writes (config/fm.env.example)
+DEFAULTS = [("ICECAST_HOST", "127.0.0.1"), ("ICECAST_PORT", "8000"), ("ICECAST_MOUNT", "/live.mp3"),
+            ("ICECAST_SOURCE_PASSWORD", None), ("STATION_ID", "alt987"), ("STATION_NAME", "ALT 98.7"),
+            ("FREQ", "98.705M"), ("GAIN", "4"), ("AUDIO_RATE", "32000"), ("MP3_BITRATE", "128k"),
+            ("HIGHPASS_HZ", "30"), ("LOWPASS_HZ", "15000"), ("RTL_PPM", "0")]
+KEY = re.compile(r"^([A-Z][A-Z0-9_]*)=(.*)$")
+def read():
+    try: return open(ENV).read().splitlines()
+    except OSError: return []
+def keys(lines):
+    return {m.group(1): m.group(2) for m in map(KEY.match, lines) if m}
+def icecast_pw():
+    try: m = re.search(r"<source-password>([^<]+)</source-password>", open(ICECAST_XML).read())
+    except OSError: m = None
+    return m.group(1).strip() if m else None
+def missing(lines):
+    k = keys(lines); return [n for n, _ in DEFAULTS if not k.get(n)]
+def heal(lines):
+    k = keys(lines); out = [l for l in lines if not (KEY.match(l) and not KEY.match(l).group(2) and KEY.match(l).group(1) in dict(DEFAULTS))]
+    added = []
+    for n, v in DEFAULTS:
+        if k.get(n): continue
+        if n == "ICECAST_SOURCE_PASSWORD": v = icecast_pw()
+        if not v: continue
+        out.append(f"{n}={v}"); added.append(n)
+    return out, added
+def write(lines):
+    d = os.path.dirname(ENV) or "."; tmp = os.path.join(d, ".fm.env.tmp.%d" % os.getpid())
+    with open(tmp, "w") as f: f.write("\n".join(lines) + "\n"); f.flush(); os.fsync(f.fileno())
+    try: st = os.stat(ENV); os.chown(tmp, st.st_uid, st.st_gid)
+    except OSError: pass
+    os.chmod(tmp, 0o644); os.replace(tmp, ENV)
+def main():
+    a = sys.argv[1:]
+    if not a: sys.exit(__doc__)
+    cmd = a.pop(0)
+    if cmd == "check":
+        m = missing(read())
+        if m: print("missing: " + " ".join(m)); sys.exit(1)
+        print("ok"); return
+    lockf = open(ENV + ".lock" if os.access(os.path.dirname(ENV) or ".", os.W_OK) else os.devnull, "a")
+    fcntl.flock(lockf, fcntl.LOCK_EX)
+    lines = read()
+    if cmd == "set":
+        sets, drops = {}, set()
+        for x in a:
+            if x.startswith("-"): drops.add(x[1:]); continue
+            m = KEY.match(x)
+            if not m or "\n" in x: sys.exit("bad assignment: " + x)
+            sets[m.group(1)] = m.group(2)
+        out, seen = [], set()
+        for l in lines:
+            m = KEY.match(l)
+            if m and m.group(1) in drops: continue
+            if m and m.group(1) in sets:
+                if m.group(1) in seen: continue
+                out.append(f"{m.group(1)}={sets[m.group(1)]}"); seen.add(m.group(1)); continue
+            out.append(l)
+        out += [f"{n}={v}" for n, v in sets.items() if n not in seen]
+        out, added = heal(out); write(out)
+        if added: print("fm.env restored: " + " ".join(added), file=sys.stderr)
+    elif cmd == "heal":
+        out, added = heal(lines)
+        if added or not lines: write(out)
+        print("fm.env restored: " + " ".join(added) if added else "fm.env ok")
+        m = missing(out)
+        if m: print("still missing: " + " ".join(m), file=sys.stderr)
+    else: sys.exit(__doc__)
+main()

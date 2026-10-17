@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trace">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Stillwave Trace · Screen</title>
+<link rel="icon" type="image/png" href="/img/trace-icon-192.png">
+<link rel="stylesheet" href="/fieldnote.css">
+</head>
+<body class="page-screen">
+<script src="/nav.js"></script>
+<div class="wrap">
+  <div class="brand">
+    <h1>Screen</h1>
+  </div>
+
+  <div class="card" id="tsCard">
+    <h2>Text size</h2>
+    <div class="tslist" id="tsList" role="radiogroup" aria-label="Text size">
+      <button type="button" class="tsopt" data-k="small" role="radio"><span>Small</span><i>Aa</i></button>
+      <button type="button" class="tsopt" data-k="normal" role="radio"><span>Normal</span><i>Aa</i></button>
+      <button type="button" class="tsopt" data-k="large" role="radio"><span>Large</span><i>Aa</i></button>
+      <button type="button" class="tsopt" data-k="xl" role="radio"><span>Extra large</span><i>Aa</i></button>
+    </div>
+    <p class="note" id="tsNote">Scales all text, subtexts and buttons across the app on this screen. Applies instantly.</p>
+  </div>
+
+  <div class="card">
+    <div class="uver"><span class="ulabel">Kiosk screen</span><b id="sState">—</b></div>
+    <p class="note" id="sSub"></p>
+    <div class="row uact"><button type="button" id="sToggle" class="primary" disabled>Screen off</button></div>
+    <div id="sMsg" class="umsg hide" role="status" aria-live="polite"></div>
+  </div>
+
+  <div class="card">
+    <h2>Turn off after</h2>
+    <div class="seg sseg" id="sTimes" role="group" aria-label="Turn the screen off after">
+      <button type="button" data-t="0">Never</button><button type="button" data-t="30">30 s</button>
+      <button type="button" data-t="60">1 min</button><button type="button" data-t="120">2 min</button>
+      <button type="button" data-t="300">5 min</button><button type="button" data-t="600">10 min</button>
+      <button type="button" data-t="1800">30 min</button>
+    </div>
+    <p class="note">Counts touches on the screen itself; using Trace from a phone doesn't keep it on. When the screen is dark, the first touch only wakes it. It never presses a button.</p>
+  </div>
+
+  <div class="card hide" id="sBriCard">
+    <h2>Brightness</h2>
+    <div class="sbri">
+      <button type="button" id="sDim" aria-label="Dimmer">−</button>
+      <input type="range" id="sBri" min="1" max="31" step="1" value="31" aria-label="Brightness">
+      <button type="button" id="sBright" aria-label="Brighter">+</button>
+    </div>
+    <p class="note" id="sBriV"></p>
+  </div>
+
+  <details class="card usrc">
+    <summary>How Trace turns the screen off</summary>
+    <p class="note" id="sHow">—</p>
+    <p class="note" id="sTouch"></p>
+    <p class="note">From SSH: <code>sudo sdr-screen status</code> · <code>sudo sdr-screen probe</code></p>
+  </details>
+</div>
+<script src="/mode.js"></script>
+<script src="/power.js"></script>
+<script src="/screen.js"></script>
+<script src="/kbd.js"></script>
+<script>
+// 1.2.0 text size (nav.js applies it; saved on this device)
+(function(){
+  const T = window.traceTextSize; if (!T) return;
+  const def = (document.documentElement.classList.contains('kiosk') && !document.documentElement.classList.contains('hdmi')) ? 'large' : 'normal';
+  const L = document.getElementById('tsList');
+  function mark(){ const k = T.get(); L.querySelectorAll('.tsopt').forEach(b => { const on = b.dataset.k === k; b.classList.toggle('on', on); b.setAttribute('aria-checked', on);
+    b.querySelector('span').textContent = {small:'Small', normal:'Normal', large:'Large', xl:'Extra large'}[b.dataset.k] + (b.dataset.k === def ? ' · default' : ''); }); }
+  L.onclick = e => { const b = e.target.closest('.tsopt'); if (!b) return; T.set(b.dataset.k); mark(); };
+  mark();
+})();
+</script>
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const kiosk = () => document.documentElement.classList.contains('kiosk');
+  const human = t => !t ? 'never' : (t < 60 ? t + ' s' : (t / 60) + ' min');
+  let S = null, briTo = null, briBusy = false;
+  function msg(t, cls) { const m = $('sMsg'); m.textContent = t || ''; m.className = 'umsg' + (cls ? ' ' + cls : '') + (t ? '' : ' hide'); }
+  function render() {
+    const s = S || {};
+    const off = s.state === 'off';
+    $('sState').textContent = !s.running ? '—' : (s.shutdown ? 'Shutting down' : off ? 'Off' : 'On');
+    $('sSub').textContent = !s.running ? "The screen service isn't running on this box (sudo systemctl status sdr-screen)."
+      : off ? (kiosk() ? 'Touch the screen to wake it.' : 'Touch the kiosk screen, or tap below, to wake it.')
+      : s.timeout ? 'Turns off after ' + human(s.timeout) + ' without a touch' + (s.touch_ok === false ? ' (no touchscreen found, so it stays on).' : '.')
+      : 'Never turns off by itself.';
+    const b = $('sToggle');
+    b.disabled = !s.running || !!s.shutdown;
+    b.textContent = kiosk() ? 'Screen off' : (off ? 'Turn kiosk screen on' : 'Turn kiosk screen off');
+    b.classList.toggle('primary', true);
+    document.querySelectorAll('#sTimes button').forEach(x => {
+      const on = Number(x.dataset.t) === Number(s.timeout);
+      x.classList.toggle('on', on); x.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    const br = s.brightness || {};
+    $('sBriCard').classList.toggle('hide', !(s.running && br.supported));
+    if (br.supported && !briBusy && document.activeElement !== $('sBri')) {
+      $('sBri').min = br.min || 1; $('sBri').max = br.max; $('sBri').value = br.value || br.max;
+    }
+    if (br.supported) $('sBriV').textContent = Math.round(100 * Number($('sBri').value) / br.max) + '%';
+    const how = { backlight: 'Panel backlight', wlopm: 'Display power (wlopm)', 'wlr-randr': 'Display power (wlr-randr)', overlay: 'Black overlay on the kiosk page' };
+    $('sHow').textContent = s.method ? (how[s.method] || s.method) + ': ' + (s.detail || '') : '—';
+    $('sTouch').textContent = s.touch ? 'Touch input: ' + (s.touch.length ? s.touch.join(', ') : 'none found') : '';
+  }
+  document.addEventListener('fieldnote-screen', e => { S = e.detail; render(); });
+  $('sToggle').onclick = async () => {
+    msg('');
+    const fs = window.fieldnoteScreen; if (!fs) return;
+    const j = await fs.toggle();
+    if (j && j.ok === false) msg(j.message || "Didn't work.", 'err');
+  };
+  document.querySelectorAll('#sTimes button').forEach(x => x.onclick = async () => {
+    const t = Number(x.dataset.t);
+    if (S) { S.timeout = t; render(); }
+    const j = await window.fieldnoteScreen.post('timeout', { seconds: t }).catch(() => ({ ok: false }));
+    msg(j.ok ? (t ? 'Screen turns off after ' + human(t) + ' without a touch.' : 'Screen never turns off by itself.') : (j.message || "Not saved (the box didn't answer)."), j.ok ? 'ok' : 'err');
+  });
+  function sendBri() {
+    clearTimeout(briTo); briBusy = true;
+    briTo = setTimeout(async () => {
+      await window.fieldnoteScreen.post('brightness', { value: Number($('sBri').value) }).catch(() => {});
+      briBusy = false;
+    }, 200);
+    render();
+  }
+  $('sBri').addEventListener('input', sendBri);
+  $('sDim').onclick = () => { $('sBri').stepDown(Math.max(1, Math.round($('sBri').max / 10))); sendBri(); };
+  $('sBright').onclick = () => { $('sBri').stepUp(Math.max(1, Math.round($('sBri').max / 10))); sendBri(); };
+})();
+</script>
+<script>
+// 1.0.8.2 desktop edition: HDMI output is fixed at 720p landscape (Pi 4 limit). Read-only info card.
+(function(){
+  fetch('/api/display/resolution', {cache:'no-store'}).then(r => r.ok ? r.json() : null).then(j => {
+    if(!j || !j.ok) return;
+    const c = document.createElement('div'); c.className = 'card';
+    c.innerHTML = '<h2>HDMI output</h2><div class="seg" id="resSel"><button type="button" class="big on" data-r="720p" disabled>720p &middot; 1280&times;720 landscape</button></div><p class="note" id="resN">Fixed at 720p: the smoothest the Pi 4 can drive the full-screen display.</p>';
+    (document.querySelector('.wrap') || document.body).appendChild(c);
+  }).catch(() => {});
+})();
+</script>
+</body>
+</html>

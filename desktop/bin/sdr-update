@@ -1,0 +1,1024 @@
+#!/usr/bin/env python3
+"""Stillwave Trace over-the-air updates. The ONLY part of the station that ever goes online,
+and only when someone runs it (Updates page buttons or this command). Nothing checks by itself.
+
+  sdr-update version                      installed version
+  sdr-update status [--json]              version, update source, running/last update
+  sdr-update check [URL] [--json]         read latest.json from UPDATE_URL (or URL) and compare
+  sdr-update apply [--expect VER] [--foreground] [--json]
+                                          download, verify, install, health-check, roll back on failure
+  sdr-update verify-file PATH [--sig SIG] [--json]   check a bundle file (USB / phone upload), install nothing
+  sdr-update apply-file PATH [--sig SIG] [--foreground] [--no-follow] [--json]   install a bundle file (no internet);
+                                       prints step-by-step progress until it finishes (1.0.9, no flag needed)
+  sdr-update set-url URL | get-url        update source in /etc/sdr/update.env
+  sdr-update last [--json]                result of the last update
+
+Bundle: trace-update-<ver>.tar.gz (sdr-station/ tree + sdr-station/MANIFEST.json with per-file
+sha256) plus trace-update-<ver>.tar.gz.sig (Ed25519 over the .tar.gz, base64), or one .ota file
+holding both. latest.json carries version / min_version / notes / sha256 / size, Ed25519-signed
+("manifest_sig"); its "url" / "sig_url" may be absolute or relative to latest.json.
+Only bundles signed by the Stillwave key baked into the installed package are accepted.
+apply runs detached (systemd-run) so it survives the web page and sdr-web restarting.
+"""
+import base64, fcntl, hashlib, io, json, os, re, shutil, socket, subprocess, sys, tarfile, tempfile, time
+import urllib.error, urllib.parse, urllib.request
+
+E = os.environ.get
+STATE = E("SDR_UPDATE_DIR", "/var/lib/sdr-update")
+CONF = E("SDR_UPDATE_CONF", "/etc/sdr/update.env")
+PUBKEY = E("SDR_UPDATE_PUBKEY", "/usr/local/lib/sdr-station/keys/stillwave-update.pub")
+VERSION_FILE = E("SDR_VERSION_FILE", "/usr/local/lib/sdr-station/VERSION")
+LOG = E("SDR_UPDATE_LOG", "/var/log/sdr-update.log")
+LOCK = E("SDR_UPDATE_LOCK", "/run/sdr-update.lock")
+SELF = os.path.realpath(E("SDR_UPDATE_SELF", "/usr/local/sbin/sdr-update" if os.path.exists("/usr/local/sbin/sdr-update") else sys.argv[0]))
+# How a staged tree is installed / checked. {src} = staged sdr-station dir, {version} = its version.
+INSTALL_CMD = E("SDR_UPDATE_INSTALL", "bash {src}/install.sh --upgrade")
+HEALTH_CMD = E("SDR_UPDATE_HEALTH", "bash {src}/verify.sh --health {version}")
+DETACH = E("SDR_UPDATE_DETACH", "systemd-run")      # systemd-run | fork (tests)
+# Edition. Desktop packages say product "stillwave-trace-desktop", edition "desktop", channel "desktop" and carry
+# versions like 1.0.9-desktop; handheld packages say product "stillwave-trace" with plain x.y.z versions. Each
+# updater only takes its own edition's packages (both directions). 1.0.9: one shared updater, edition set here.
+EDITION = "desktop"
+DESKTOP_PRODUCT = "stillwave-trace-desktop"
+HANDHELD_PRODUCT = "stillwave-trace"
+PRODUCT = DESKTOP_PRODUCT if EDITION == "desktop" else HANDHELD_PRODUCT
+EDITION_FILE = E("SDR_EDITION_FILE", os.path.join(os.path.dirname(VERSION_FILE), "EDITION"))
+SIGNED_KEYS = ("product", "format", "version", "min_version", "notes", "released", "file", "sha256", "size", "key_id", "edition", "channel")
+MAX_MANIFEST = 256 * 1024
+MAX_BUNDLE = 300 * 1024 * 1024
+UA = PRODUCT + "-update"
+JSON_OUT = "--json" in sys.argv
+
+
+class Fail(Exception):
+    """A user-facing failure: message is plain language, detail is for the log / 'Show details'."""
+    def __init__(self, reason, message, detail=""):
+        super().__init__(message)
+        self.reason, self.message, self.detail = reason, message, detail
+
+
+# ---------------------------------------------------------------- small helpers
+def log(msg):
+    line = time.strftime("%Y-%m-%d %H:%M:%S ") + msg
+    try:
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        new = not os.path.exists(LOG)
+        with open(LOG, "a") as f:
+            f.write(line + "\n")
+        if new:
+            os.chmod(LOG, 0o644)
+    except OSError:
+        pass
+    if not JSON_OUT and E("SDR_UPDATE_QUIET") != "1":
+        print(line, file=sys.stderr)
+
+
+def out(obj, text=None):
+    if JSON_OUT:
+        print(json.dumps(obj))
+    else:
+        print(text if text is not None else json.dumps(obj, indent=1))
+
+
+def vtuple(v):
+    # desktop versions carry the edition suffix (1.0.7-desktop); it is required there and compared away.
+    # Handheld versions are plain x.y.z; a -desktop version is refused.
+    if EDITION == "desktop":
+        if isinstance(v, str) and v.strip().endswith("-desktop"):
+            v = v.strip()[:-len("-desktop")]
+        elif isinstance(v, str) and v.strip() in ("0.0.0", "0.0"):
+            pass
+        else:
+            raise Fail("wrong_edition", "That update is not for Trace Desktop (version %r). Nothing was installed." % (v,), repr(v))
+    elif isinstance(v, str) and v.strip().endswith("-desktop"):
+        raise Fail("wrong_edition", "That is a Trace Desktop update; this box runs handheld Trace. Nothing was installed.", repr(v))
+    if not isinstance(v, str) or not re.fullmatch(r"\d{1,4}(\.\d{1,6}){1,3}", v.strip()):
+        raise Fail("bad_manifest", "The update has an invalid version number.", repr(v))
+    t = tuple(int(x) for x in v.strip().split("."))
+    return t + (0,) * (4 - len(t))
+
+
+def installed_edition():
+    try:
+        return open(EDITION_FILE).read().strip() or "handheld"
+    except OSError:
+        return "handheld"   # boxes from before editions existed are handheld Trace
+
+
+def edition_guard(pkg_product, pkg_edition):
+    """Refuse a package whose edition does not match this box (both directions)."""
+    here = installed_edition()
+    if here != EDITION:
+        raise Fail("wrong_edition", "This box runs %s Trace, but this updater is for %s Trace. Nothing was installed." % (here, EDITION),
+                   "installed edition %r" % here)
+    if EDITION == "desktop":
+        if pkg_product == HANDHELD_PRODUCT or (pkg_edition or "") != EDITION or pkg_product != PRODUCT:
+            raise Fail("wrong_edition", "That is a handheld Trace update; this box runs Trace Desktop. Nothing was installed.",
+                       "package product=%r edition=%r" % (pkg_product, pkg_edition))
+    elif pkg_product == DESKTOP_PRODUCT or pkg_edition not in (None, "", "handheld") or pkg_product != PRODUCT:
+        raise Fail("wrong_edition", "That is a Trace Desktop update; this box runs handheld Trace. Nothing was installed.",
+                   "package product=%r edition=%r" % (pkg_product, pkg_edition))
+
+
+def current_version():
+    try:
+        v = open(VERSION_FILE).read().strip()
+        vtuple(v)
+        return v
+    except (OSError, Fail):
+        return "0.0.0"
+
+
+def read_conf():
+    kv = {}
+    try:
+        for line in open(CONF):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                kv[k.strip()] = v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return kv
+
+
+def write_conf_key(key, value):
+    lines, found = [], False
+    try:
+        lines = open(CONF).read().splitlines()
+    except OSError:
+        lines = ["# Stillwave Trace updates. Only used when you tap Check / Install on the Updates page.",
+                 "# UPDATE_URL: folder (or full URL of latest.json), e.g. http://192.168.1.50:8000/"]
+    for i, line in enumerate(lines):
+        if line.split("=", 1)[0].strip() == key:
+            lines[i] = f'{key}="{value}"'; found = True
+    if not found:
+        lines.append(f'{key}="{value}"')
+    os.makedirs(os.path.dirname(CONF), exist_ok=True)
+    tmp = CONF + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, CONF)
+
+
+def normalize_url(u):
+    """1.1.0: '192.168.1.50 8000', '192.168.1.50;8000', '192.168.1.50:8000' or a missing http:// -> http://192.168.1.50:8000/"""
+    u = (u or "").strip()
+    if not u:
+        return ""
+    m = re.fullmatch(r"(?i)(https?://)?([A-Za-z0-9.\-]+|\[[0-9A-Fa-f:]+\])\s*[;, ]\s*(\d{1,5})/?", u)
+    if m:
+        u = (m.group(1) or "http://") + m.group(2) + ":" + m.group(3) + "/"
+    elif not re.match(r"(?i)https?://", u):
+        u = "http://" + u.lstrip("/")
+    p = urllib.parse.urlparse(u)
+    if p.netloc and p.path in ("",):
+        u += "/"
+    elif p.path and not p.path.endswith("/") and not p.path.split("?")[0].endswith(".json"):
+        u += "/"
+    return u
+
+
+def valid_url(u):
+    p = urllib.parse.urlparse(u or "")
+    return p.scheme in ("http", "https") and bool(p.netloc) and not re.search(r"[\s\"'\\]", u)
+
+
+def manifest_url(base):
+    """UPDATE_URL may be a folder or the latest.json URL itself."""
+    if base.split("?")[0].endswith(".json"):
+        return base
+    return base.rstrip("/") + "/latest.json"
+
+
+def atomic_json(path, obj, mode=0o644):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(obj, f)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def set_status(state, **kw):
+    st = {"state": state, "t": round(time.time(), 1)}
+    try:
+        prev = json.load(open(os.path.join(STATE, "status.json")))
+        if prev.get("op") == kw.get("op", prev.get("op")):
+            for k in ("op", "version", "from", "source", "started"):
+                if k in prev and k not in kw:
+                    st[k] = prev[k]
+    except (OSError, ValueError):
+        pass
+    st.update(kw)
+    atomic_json(os.path.join(STATE, "status.json"), st)
+    return st
+
+
+def finish(ok, state, message, detail="", **kw):
+    st = set_status(state, ok=ok, message=message, detail=detail, finished=round(time.time(), 1), **kw)
+    atomic_json(os.path.join(STATE, "last.json"), st)
+    log(f"RESULT {state.upper()} {message}" + (f" ({detail})" if detail else ""))
+    return st
+
+
+def require_root():
+    if os.geteuid() != 0 and E("SDR_UPDATE_ALLOW_NONROOT") != "1":
+        print("run as root: sudo sdr-update ...", file=sys.stderr)
+        sys.exit(1)
+
+
+class Lock:
+    def __enter__(self):
+        os.makedirs(os.path.dirname(LOCK), exist_ok=True)
+        self.f = open(LOCK, "w")
+        try:
+            fcntl.flock(self.f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Fail("busy", "Another update is already running. Wait for it to finish.")
+        return self
+
+    def __exit__(self, *a):
+        fcntl.flock(self.f, fcntl.LOCK_UN); self.f.close()
+
+
+def busy():
+    try:
+        f = open(LOCK, "w")
+    except OSError:
+        return False
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(f, fcntl.LOCK_UN)
+        return False
+    except BlockingIOError:
+        return True
+    finally:
+        f.close()
+
+
+# ---------------------------------------------------------------- signatures (Ed25519)
+def _sig_bytes(raw):
+    raw = raw.strip() if isinstance(raw, bytes) else raw.encode().strip()
+    if len(raw) == 64 and not re.fullmatch(rb"[A-Za-z0-9+/=]+", raw):
+        return raw
+    try:
+        b = base64.b64decode(raw, validate=True)
+    except Exception:
+        raise Fail("bad_signature", "The update's signature file is damaged. Nothing was installed.")
+    if len(b) != 64:
+        raise Fail("bad_signature", "The update's signature file is damaged. Nothing was installed.")
+    return b
+
+
+def _pub_raw():
+    pem = open(PUBKEY).read()
+    body = "".join(l for l in pem.splitlines() if l and not l.startswith("-----"))
+    der = base64.b64decode(body)
+    if len(der) != 44 or der[:12] != bytes.fromhex("302a300506032b6570032100"):
+        raise Fail("no_key", "The Stillwave update key on this box is damaged. Reinstall the station package.", "not an Ed25519 key")
+    return der[12:]
+
+
+def _ed25519_pure(pub, sig, msg):
+    """RFC 8032 Ed25519 verification in plain Python (last-resort fallback, no dependencies)."""
+    p = 2 ** 255 - 19
+    q = 2 ** 252 + 27742317777372353535851937790883648493
+    d = -121665 * pow(121666, p - 2, p) % p
+    sqrt_m1 = pow(2, (p - 1) // 4, p)
+
+    def rx(y, sign):
+        if y >= p:
+            return None
+        x2 = (y * y - 1) * pow(d * y * y + 1, p - 2, p)
+        if x2 % p == 0:
+            return None if sign else 0
+        x = pow(x2, (p + 3) // 8, p)
+        if (x * x - x2) % p:
+            x = x * sqrt_m1 % p
+        if (x * x - x2) % p:
+            return None
+        return p - x if (x & 1) != sign else x
+
+    def add(P, Q):
+        A, B = (P[1] - P[0]) * (Q[1] - Q[0]) % p, (P[1] + P[0]) * (Q[1] + Q[0]) % p
+        C, D = 2 * P[3] * Q[3] * d % p, 2 * P[2] * Q[2] % p
+        E, F, G, H = B - A, D - C, D + C, B + A
+        return (E * F % p, G * H % p, F * G % p, E * H % p)
+
+    def mul(k, P):
+        Q = (0, 1, 1, 0)
+        while k:
+            if k & 1:
+                Q = add(Q, P)
+            P, k = add(P, P), k >> 1
+        return Q
+
+    def dec(b):
+        y = int.from_bytes(b, "little"); sign = y >> 255; y &= (1 << 255) - 1
+        x = rx(y, sign)
+        return None if x is None else (x, y, 1, x * y % p)
+    gy = 4 * pow(5, p - 2, p) % p
+    G = (rx(gy, 0), gy, 1, rx(gy, 0) * gy % p)
+    A, R = dec(pub), dec(sig[:32])
+    s_ = int.from_bytes(sig[32:], "little")
+    if A is None or R is None or s_ >= q:
+        return False
+    h = int.from_bytes(hashlib.sha512(sig[:32] + pub + msg).digest(), "little") % q
+    P1, P2 = mul(s_, G), add(R, mul(h, A))
+    return (P1[0] * P2[2] - P2[0] * P1[2]) % p == 0 and (P1[1] * P2[2] - P2[1] * P1[2]) % p == 0
+
+
+def verify_sig(data_path, sig):
+    """True only for a valid Stillwave Ed25519 signature. Tries openssl (always on Ubuntu 24.04,
+    3.0+ supports Ed25519 -rawin), then python3-cryptography, then a plain-Python verifier."""
+    sig = _sig_bytes(sig)
+    if not os.path.isfile(PUBKEY):
+        raise Fail("no_key", "This box has no Stillwave update key, so it can't check updates. Reinstall the station package.", PUBKEY)
+    pub = _pub_raw()
+    how = E("SDR_UPDATE_VERIFIER", "auto")       # tests only (sudo resets the environment)
+    if how in ("auto", "openssl"):
+        with tempfile.NamedTemporaryFile(delete=False) as sf:
+            sf.write(sig); sigpath = sf.name
+        try:
+            r = subprocess.run(["openssl", "pkeyutl", "-verify", "-pubin", "-inkey", PUBKEY, "-rawin",
+                                "-in", data_path, "-sigfile", sigpath], capture_output=True, text=True, timeout=60)
+            o = r.stdout + r.stderr
+            if r.returncode == 0 and "Verified Successfully" in o:
+                return True
+            if "Verification Failure" in o or "verification failure" in o.lower():
+                return False
+            log(f"openssl could not verify ({o.strip()[:200]}); trying the next verifier")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log(f"openssl not usable ({exc}); trying the next verifier")
+        finally:
+            os.unlink(sigpath)
+    data = open(data_path, "rb").read()
+    if how in ("auto", "cryptography"):
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+            from cryptography.exceptions import InvalidSignature
+            try:
+                Ed25519PublicKey.from_public_bytes(pub).verify(sig, data)
+                return True
+            except InvalidSignature:
+                return False
+        except ImportError:
+            pass
+    return _ed25519_pure(pub, sig, data)
+
+
+def canonical(manifest):
+    signed = {k: manifest[k] for k in SIGNED_KEYS if k in manifest}
+    return json.dumps(signed, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+def verify_manifest(m):
+    if isinstance(m, dict) and m.get("product") in (DESKTOP_PRODUCT, HANDHELD_PRODUCT):
+        edition_guard(m.get("product"), m.get("edition"))
+        if EDITION == "desktop" and m.get("channel") != EDITION:
+            raise Fail("wrong_edition", "That update channel is not the Trace Desktop channel. Nothing was checked.", "channel=%r" % m.get("channel"))
+    if not isinstance(m, dict) or m.get("product") != PRODUCT:
+        raise Fail("bad_manifest", "That address doesn't hold a Stillwave Trace update.", "product=%r" % (m.get("product") if isinstance(m, dict) else None))
+    if not m.get("manifest_sig"):
+        raise Fail("bad_signature", "The update isn't signed by Stillwave, so it was ignored. Nothing was installed.", "no manifest_sig")
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        f.write(canonical(m)); p = f.name
+    try:
+        if not verify_sig(p, m["manifest_sig"]):
+            raise Fail("bad_signature", "The update isn't signed by Stillwave, so it was ignored. Nothing was installed.", "manifest signature invalid")
+    finally:
+        os.unlink(p)
+    vtuple(m.get("version")); vtuple(m.get("min_version") or "0.0")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(m.get("sha256", ""))) or not isinstance(m.get("size"), int):
+        raise Fail("bad_manifest", "The update description is incomplete.", "sha256/size")
+    return m
+
+
+# ---------------------------------------------------------------- network (only here, only on request)
+def _net_fail(url, exc):
+    host = urllib.parse.urlparse(url).hostname or url
+    reason = getattr(exc, "reason", exc)
+    txt = f"{type(reason).__name__}: {reason}"
+    if isinstance(exc, urllib.error.HTTPError):
+        if exc.code == 404:
+            return Fail("not_found", f"No update found at {host} (nothing at that address). Check the update source.", f"HTTP 404 {url}")
+        return Fail("http_error", f"The update server at {host} answered with an error ({exc.code}). Try again later.", f"HTTP {exc.code} {url}")
+    if isinstance(reason, socket.gaierror) or "Name or service not known" in txt or "Temporary failure in name resolution" in txt:
+        return Fail("offline", "Needs internet: connect to home Wi‑Fi, then try again.", f"can't resolve {host}: {txt}")
+    if isinstance(reason, (ConnectionRefusedError,)) or "Connection refused" in txt:
+        return Fail("unreachable", f"Couldn't reach the update server at {host}. Is it running and on the same Wi‑Fi?", txt)
+    if isinstance(reason, (socket.timeout, TimeoutError)) or "timed out" in txt:
+        return Fail("unreachable", f"The update server at {host} didn't answer. Check the Wi‑Fi and the address.", txt)
+    if "Network is unreachable" in txt or "No route to host" in txt:
+        return Fail("offline", "Needs internet: connect to home Wi‑Fi, then try again.", txt)
+    return Fail("unreachable", f"Couldn't reach the update server at {host}.", txt)
+
+
+def have_route():
+    try:
+        r = subprocess.run(["ip", "-4", "route", "show", "default"], capture_output=True, text=True, timeout=5)
+        return bool(r.stdout.strip()) or r.returncode != 0
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+
+
+def fetch(url, limit, dest=None, progress=None, timeout=20):
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Cache-Control": "no-cache"})
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+    except Exception as exc:
+        raise _net_fail(url, exc)
+    with resp:
+        total = int(resp.headers.get("Content-Length") or 0)
+        if total and total > limit:
+            raise Fail("too_big", "The update file is larger than expected. Nothing was installed.", f"{total} > {limit}")
+        got, h, buf = 0, hashlib.sha256(), io.BytesIO()
+        f = open(dest, "wb") if dest else None
+        try:
+            while True:
+                try:
+                    chunk = resp.read(65536)
+                except Exception as exc:
+                    raise _net_fail(url, exc)
+                if not chunk:
+                    break
+                got += len(chunk)
+                if got > limit:
+                    raise Fail("too_big", "The update file is larger than expected. Nothing was installed.", f">{limit} bytes")
+                h.update(chunk)
+                (f.write(chunk) if f else buf.write(chunk))
+                if progress:
+                    progress(got, total)
+        finally:
+            if f:
+                f.close()
+    return (got, h.hexdigest()) if dest else buf.getvalue()
+
+
+def get_manifest(url):
+    if not valid_url(url):
+        raise Fail("no_url", "No update source is set. Add one under “Update source” on this page.", url or "")
+    murl = manifest_url(url)
+    raw = fetch(murl, MAX_MANIFEST, timeout=15)
+    try:
+        m = json.loads(raw.decode("utf-8"))
+    except Exception:
+        raise Fail("bad_manifest", "The update server sent something that isn't an update description.", murl)
+    return verify_manifest(m), murl
+
+
+# ---------------------------------------------------------------- bundle checks
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def inspect_bundle(tgz, sig):
+    """Verify signature, then read the inner manifest (nothing extracted yet)."""
+    log(f"verifying {os.path.basename(tgz)} ({os.path.getsize(tgz)} bytes, sha256 {sha256_file(tgz)[:16]}…)")
+    if not verify_sig(tgz, sig):
+        raise Fail("bad_signature", "This update isn't signed by Stillwave (signature check failed). Nothing was installed.", "bundle signature invalid")
+    try:
+        with tarfile.open(tgz, "r:gz") as t:
+            names = t.getnames()
+            for n in names:
+                if not (n == "sdr-station" or n.startswith("sdr-station/")) or ".." in n.split("/") or n.startswith("/"):
+                    raise Fail("bad_bundle", "The update file has an unexpected layout. Nothing was installed.", n)
+            mf = t.extractfile("sdr-station/MANIFEST.json")
+            inner = json.loads(mf.read().decode())
+    except Fail:
+        raise
+    except Exception as exc:
+        raise Fail("corrupt", "The update file is damaged (can't be read). Nothing was installed.", str(exc))
+    if inner.get("product") in (DESKTOP_PRODUCT, HANDHELD_PRODUCT):
+        edition_guard(inner.get("product"), inner.get("edition"))
+    if inner.get("product") != PRODUCT or not isinstance(inner.get("files"), dict):
+        raise Fail("bad_bundle", "That file isn't a Stillwave Trace update.", "inner manifest")
+    vtuple(inner.get("version")); vtuple(inner.get("min_version") or "0.0")
+    return inner
+
+
+def check_versions(inner, reinstall=False):
+    cur = current_version()
+    v = inner["version"]
+    if vtuple(v) < vtuple(cur):
+        raise Fail("older", f"That update is version {v}, older than this box ({cur}). Nothing was installed.")
+    if vtuple(v) == vtuple(cur) and not reinstall:
+        raise Fail("same", f"This box already runs {v}. Nothing to install.")
+    mv = inner.get("min_version") or "0.0"
+    if vtuple(cur) < vtuple(mv):
+        raise Fail("too_old", f"Version {v} needs version {mv} or later first (this box has {cur}).")
+    return cur
+
+
+def extract(tgz, inner, dest_root):
+    if os.path.exists(dest_root):
+        shutil.rmtree(dest_root)
+    os.makedirs(dest_root, mode=0o755)
+    with tarfile.open(tgz, "r:gz") as t:
+        try:
+            t.extractall(dest_root, filter="data")
+        except TypeError:   # python without tar filters (pre-3.12): names were checked in inspect_bundle
+            for m in t.getmembers():
+                if m.issym() or m.islnk() or m.isdev():
+                    raise Fail("bad_bundle", "The update file has an unexpected layout. Nothing was installed.", m.name)
+            t.extractall(dest_root)
+    src = os.path.join(dest_root, "sdr-station")
+    seen = set()
+    for root, dirs, files in os.walk(src):
+        for fn in files:
+            rel = os.path.relpath(os.path.join(root, fn), src)
+            if rel == "MANIFEST.json":
+                continue
+            seen.add(rel)
+            want = inner["files"].get(rel)
+            if want is None:
+                raise Fail("bad_bundle", "The update file contains unexpected files. Nothing was installed.", rel)
+            if sha256_file(os.path.join(root, fn)) != want:
+                raise Fail("corrupt", "The update file is damaged (a file doesn't match). Nothing was installed.", rel)
+    missing = set(inner["files"]) - seen
+    if missing:
+        raise Fail("corrupt", "The update file is incomplete. Nothing was installed.", ", ".join(sorted(missing)[:5]))
+    v = open(os.path.join(src, "VERSION")).read().strip()
+    if v != inner["version"]:
+        raise Fail("bad_bundle", "The update file's version doesn't match its manifest.", f"{v} vs {inner['version']}")
+    for need in ("install.sh", "verify.sh"):
+        if not os.path.isfile(os.path.join(src, need)):
+            raise Fail("bad_bundle", "The update file is missing its installer.", need)
+    return src
+
+
+def split_input(path, sig_path):
+    """-> (tgz path, signature bytes). Accepts a .ota (tar of .tar.gz + .sig) or .tar.gz + .sig."""
+    if not os.path.isfile(path):
+        raise Fail("no_file", "That update file doesn't exist.", path)
+    if os.path.getsize(path) > MAX_BUNDLE:
+        raise Fail("too_big", "That file is too large to be a Trace update.", str(os.path.getsize(path)))
+    inc = os.path.join(STATE, "incoming")
+    os.makedirs(inc, mode=0o700, exist_ok=True)
+    tgz_dst = os.path.join(inc, "bundle.tar.gz")
+    is_ota = False
+    try:
+        with open(path, "rb") as f:
+            head = f.read(2)
+        is_ota = head != b"\x1f\x8b" and tarfile.is_tarfile(path)
+    except OSError:
+        pass
+    if is_ota:
+        try:
+            with tarfile.open(path, "r:") as t:
+                mem = {m.name: m for m in t.getmembers() if m.isfile()}
+                tg = [n for n in mem if re.fullmatch(r"trace-(desktop-)?update-[\w.\-]+\.tar\.gz", n)]
+                sg = [n for n in mem if n.endswith(".tar.gz.sig")]
+                if len(tg) != 1 or len(sg) != 1 or len(mem) > 4:
+                    raise Fail("bad_bundle", "That .ota file doesn't hold one Trace update and its signature.", ",".join(mem))
+                with t.extractfile(mem[tg[0]]) as src, open(tgz_dst, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                sig = t.extractfile(mem[sg[0]]).read(4096)
+        except Fail:
+            raise
+        except Exception as exc:
+            raise Fail("corrupt", "The update file is damaged (can't be read). Nothing was installed.", str(exc))
+        return tgz_dst, sig
+    sig_path = sig_path or path + ".sig"
+    if not os.path.isfile(sig_path):
+        raise Fail("no_sig", "The signature file (.sig) is missing. Pick both files, or the single .ota file.", sig_path)
+    shutil.copyfile(path, tgz_dst)
+    with open(sig_path, "rb") as f:
+        sig = f.read(4096)
+    return tgz_dst, sig
+
+
+# ---------------------------------------------------------------- install + rollback
+def releases():
+    return os.path.join(STATE, "releases")
+
+
+def release_src(ver):
+    return os.path.join(releases(), ver, "sdr-station")
+
+
+# 1.0.8.2: step-by-step progress. Overall percent bands: verify 0-15, extract 15-25, install.sh 25-85, health 85-100.
+PROG_BANDS = {"verify": (2, 15), "extract": (15, 25), "install": (25, 85), "restart": (80, 85), "check": (85, 99), "rollback": (85, 99)}
+
+
+def progress(step, pct, message, **kw):
+    """Print one progress line (terminal with --foreground) and publish it in status.json for the Updates page."""
+    pct = max(0, min(100, int(pct)))
+    log(f"[{pct:3d}%] {step}: {message}")
+    st_map = {"verify": "verifying", "extract": "staging", "install": "installing", "restart": "installing",
+              "check": "checking", "rollback": "rolling_back"}
+    set_status(st_map.get(step, "installing"), step=step, pct=pct, message=message, **kw)
+
+
+_APT_RX = re.compile(r"^(Get:\d+|Unpacking |Setting up |Preparing to unpack )(\S+)?")
+_SNAP_RX = re.compile(r"snap (install|refresh)|Download snap|Setup snap|Mount snap", re.I)
+
+
+def health_timeout():
+    """1.1.0.1: 600 s (was 240). verify.sh --health gets a budget 30 s shorter, so it always prints its own HEALTH line."""
+    t = int(E("SDR_UPDATE_HEALTH_TIMEOUT", "600"))
+    os.environ.setdefault("SDR_HEALTH_BUDGET", str(max(60, t - 30)))
+    return t
+
+
+def run_logged(cmd_tpl, src, version, timeout, step=None):
+    """Run a shell command, stream its output into the log; when step is set, turn installer markers into progress."""
+    cmd = cmd_tpl.format(src=src, version=version)
+    log(f"$ {cmd}")
+    env = dict(os.environ, SDR_UPDATE_RUN="1", DEBIAN_FRONTEND="noninteractive")
+    lo, hi = PROG_BANDS.get(step or "", (0, 100))
+    last_note = 0.0
+    deadline = time.time() + timeout
+    with open(LOG, "a") as lf:
+        p = subprocess.Popen(["bash", "-c", cmd], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                             cwd=src, env=env, text=True, errors="replace", bufsize=1)
+        import threading
+        killer = threading.Timer(max(1, timeout), lambda: p.kill())
+        killer.start()
+        try:
+            for line in p.stdout:
+                lf.write(line); lf.flush()
+                if not step:
+                    continue
+                t = line.strip()
+                m = re.match(r"^\[progress\]\s+(\d+)\s+(.*)$", t)
+                if m:
+                    progress(step, lo + (hi - lo) * int(m.group(1)) / 100, m.group(2))
+                    continue
+                if time.time() - last_note < 3:      # throttle the noisy ones
+                    continue
+                a = _APT_RX.match(t)
+                if a:
+                    last_note = time.time()
+                    progress(step, json.load(open(os.path.join(STATE, "status.json"))).get("pct") or lo,
+                             f"apt: {a.group(1).strip()} {a.group(2) or ''}".strip())
+                elif _SNAP_RX.search(t):
+                    last_note = time.time()
+                    progress(step, json.load(open(os.path.join(STATE, "status.json"))).get("pct") or lo, "snap: " + t[:80])
+            rc = p.wait()
+        finally:
+            killer.cancel()
+        took = int(time.time() - (deadline - timeout))
+        if time.time() >= deadline and rc != 0:
+            log(f"timed out after {timeout}s ({step or 'step'}; last output above)")
+            return 124
+        log(f"{step or 'step'} finished: exit {rc} in {took}s")
+        return rc
+
+
+def prune(keep):
+    try:
+        for d in os.listdir(releases()):
+            if d not in keep:
+                shutil.rmtree(os.path.join(releases(), d), ignore_errors=True)
+    except OSError:
+        pass
+
+
+def set_link(name, ver):
+    p = os.path.join(STATE, name)
+    tmp = p + ".tmp"
+    if os.path.lexists(tmp):
+        os.unlink(tmp)
+    os.symlink(os.path.join("releases", ver), tmp)
+    os.replace(tmp, p)
+
+
+def install_verified(tgz, inner, source, reinstall=False):
+    """tgz signature already verified; inner = its manifest."""
+    cur = check_versions(inner, reinstall)
+    ver = inner["version"]
+    prev_src = release_src(cur)
+    if not os.path.isfile(os.path.join(prev_src, "install.sh")):
+        raise Fail("no_rollback", f"This box has no saved copy of {cur} to fall back to, so the update was not started. "
+                   "Install the current zip once with install.sh, then try again.", prev_src)
+    need = os.path.getsize(tgz) * 4 + 50 * 1024 * 1024
+    if shutil.disk_usage(STATE).free < need:
+        raise Fail("disk_full", "Not enough free space on the SD card for the update.", f"need {need} bytes")
+    progress("extract", 16, "Unpacking the update")
+    stage = os.path.join(STATE, "staging", ver)
+    src = extract(tgz, inner, stage)
+    dst_root = os.path.join(releases(), ver)
+    if ver != cur:
+        if os.path.exists(dst_root):
+            shutil.rmtree(dst_root)
+        os.makedirs(releases(), exist_ok=True)
+        shutil.move(stage, dst_root)
+        src = release_src(ver)
+    log(f"installing {ver} (from {cur}, {source})")
+    progress("extract", 25, f"Unpacked {ver}")
+    progress("install", 26, f"Installing {ver} (install.sh). The radio and this page pause for a few minutes")
+    rc = run_logged(INSTALL_CMD, src, ver, timeout=int(E("SDR_UPDATE_INSTALL_TIMEOUT", "1200")), step="install")
+    healthy = False
+    if rc == 0:
+        progress("check", 86, f"Health check: making sure {ver} works")
+        healthy = run_logged(HEALTH_CMD, src, ver, timeout=health_timeout(), step="check") == 0
+        if healthy:
+            progress("check", 99, "Health check passed")
+        why = "health check failed"
+    else:
+        why = f"installer exit code {rc}"
+    if healthy:
+        if ver != cur:
+            set_link("previous", cur)
+            set_link("current", ver)
+            prune({ver, cur})
+        shutil.rmtree(os.path.join(STATE, "staging"), ignore_errors=True)
+        return finish(True, "done", f"Updated to {ver}.", version=ver, **{"from": cur})
+    # ---- automatic rollback to the saved copy of the version that was running
+    log(f"{ver} failed ({why}); rolling back to {cur}")
+    progress("rollback", 88, f"{ver} didn't pass its checks. Going back to {cur}")
+    rc2 = run_logged(INSTALL_CMD, prev_src, cur, timeout=int(E("SDR_UPDATE_INSTALL_TIMEOUT", "1200")))
+    ok2 = rc2 == 0 and run_logged(HEALTH_CMD, prev_src, cur, timeout=health_timeout()) == 0
+    if ver != cur:
+        shutil.rmtree(dst_root, ignore_errors=True)
+    if ok2:
+        return finish(False, "rolled_back", f"Version {ver} didn't pass its checks, so Trace went back to {cur}. Nothing else changed.",
+                      why, version=ver, **{"from": cur})
+    return finish(False, "failed", f"Version {ver} failed and going back to {cur} also reported a problem. "
+                  "Power-cycle the box; if the page doesn't come back, reinstall the zip.", why + "; rollback check failed",
+                  version=ver, **{"from": cur})
+
+
+# ---------------------------------------------------------------- commands
+def cmd_check(url_arg):
+    cur = current_version()
+    url = url_arg or read_conf().get("UPDATE_URL", "")
+    if not url:
+        raise Fail("no_url", "No update source is set. Add one under “Update source” on this page.")
+    if not valid_url(url):
+        raise Fail("no_url", "The update source isn't a valid http:// or https:// address.", url)
+    if not have_route():
+        raise Fail("offline", "Needs internet: connect to home Wi‑Fi, then try again.", "no default route")
+    log(f"check {manifest_url(url)} (installed {cur})")
+    m, murl = get_manifest(url)
+    avail = vtuple(m["version"]) > vtuple(cur)
+    blocked = avail and vtuple(cur) < vtuple(m.get("min_version") or "0.0")
+    res = {"ok": True, "current": cur, "latest": m["version"], "available": avail and not blocked,
+           "min_version": m.get("min_version"), "notes": m.get("notes", ""), "size": m["size"],
+           "released": m.get("released", ""), "source": murl}
+    if blocked:
+        res["message"] = f"Version {m['version']} needs {m['min_version']} or later first."
+    elif avail:
+        res["message"] = f"Version {m['version']} is available."
+    else:
+        res["message"] = f"Up to date ({cur})."
+    log(f"check result: latest {m['version']}, installed {cur}, available={res['available']}")
+    return res
+
+
+def cmd_apply_url(expect, reinstall=False):
+    url = read_conf().get("UPDATE_URL", "")
+    if not valid_url(url):
+        raise Fail("no_url", "No update source is set. Add one under “Update source” on this page.", url)
+    if not have_route():
+        raise Fail("offline", "Needs internet: connect to home Wi‑Fi, then try again.", "no default route")
+    set_status("checking_source", message="Contacting the update server…")
+    m, murl = get_manifest(url)
+    if expect and m["version"] != expect:
+        raise Fail("changed", f"The server now offers {m['version']}, not {expect}. Check again before installing.")
+    check_versions(m, reinstall)
+    if m["size"] > MAX_BUNDLE:
+        raise Fail("too_big", "The update is too large.", str(m["size"]))
+    burl = urllib.parse.urljoin(murl, m.get("url") or m["file"])
+    surl = urllib.parse.urljoin(murl, m.get("sig_url") or (m.get("file") + ".sig"))
+    dl = os.path.join(STATE, "downloads")
+    shutil.rmtree(dl, ignore_errors=True)
+    os.makedirs(dl, mode=0o700)
+    tgz = os.path.join(dl, "bundle.tar.gz")
+    log(f"downloading {burl} ({m['size']} bytes)")
+    last = [0.0]
+
+    def prog(got, total):
+        if time.time() - last[0] > 0.7:
+            last[0] = time.time()
+            t = total or m["size"]
+            set_status("downloading", message=f"Downloading {m['version']}…", pct=min(99, int(got * 100 / t)) if t else None,
+                       bytes=got, total=t)
+    set_status("downloading", message=f"Downloading {m['version']}…", pct=0, bytes=0, total=m["size"])
+    got, digest = fetch(burl, m["size"] + 1024, dest=tgz, progress=prog, timeout=30)
+    if got != m["size"] or digest != m["sha256"]:
+        raise Fail("corrupt", "The download was damaged (checksum mismatch), so it was thrown away. Nothing was installed. Try again.",
+                   f"got {got} bytes sha256 {digest[:16]}…, expected {m['size']} / {m['sha256'][:16]}…")
+    sig = fetch(surl, 4096, timeout=15)
+    progress("verify", 5, "Checking the Stillwave signature")
+    inner = inspect_bundle(tgz, sig)
+    if inner["version"] != m["version"] or (inner.get("min_version") or "0.0") != (m.get("min_version") or "0.0"):
+        raise Fail("bad_bundle", "The update file doesn't match its description. Nothing was installed.", "inner/outer manifest mismatch")
+    try:
+        return install_verified(tgz, inner, f"download {burl}", reinstall)
+    finally:
+        shutil.rmtree(dl, ignore_errors=True)
+
+
+def cmd_apply_file(path, sig_path, reinstall=False, staged=False):
+    if staged:
+        tgz = os.path.join(STATE, "incoming", "bundle.tar.gz")
+        sig = open(os.path.join(STATE, "incoming", "bundle.sig"), "rb").read()
+    else:
+        progress("verify", 2, f"Reading {os.path.basename(path)}")
+        tgz, sig = split_input(path, sig_path)
+    progress("verify", 5, "Checking the Stillwave signature")
+    inner = inspect_bundle(tgz, sig)
+    progress("verify", 15, f"Signature OK: {inner.get('version')}")
+    try:
+        return install_verified(tgz, inner, f"file {os.path.basename(path or 'upload')}", reinstall)
+    finally:
+        shutil.rmtree(os.path.join(STATE, "incoming"), ignore_errors=True)
+
+
+def detach(argv, op, version_hint, source):
+    """Run `sdr-update <argv> --foreground` outside the caller (web request / SSH session)."""
+    st = set_status("queued", op=op, version=version_hint, source=source, started=round(time.time(), 1),
+                    message="Starting the update…", ok=None, **{"from": current_version()})
+    cmd = [sys.executable, SELF, *argv, "--foreground"]
+    unit = f"sdr-update-{int(time.time())}"
+    if DETACH == "systemd-run" and shutil.which("systemd-run"):
+        r = subprocess.run(["systemd-run", f"--unit={unit}", "--description=Trace update", "--collect", "--quiet",
+                            "--property=TimeoutStartSec=infinity", *cmd], capture_output=True, text=True, timeout=20)
+        if r.returncode == 0:
+            log(f"started {unit}: {' '.join(argv)}")
+            return {"ok": True, "accepted": True, "unit": unit, "op": op}
+        log(f"systemd-run failed ({r.stderr.strip()}); starting detached instead")
+    subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True, env=dict(os.environ, SDR_UPDATE_QUIET="1"))
+    log(f"started detached: {' '.join(argv)}")
+    return {"ok": True, "accepted": True, "op": op}
+
+
+def follow(timeout=3600):
+    """1.0.9: after starting an update from a terminal (SSH), print its progress until it ends (no flag needed).
+    Ctrl-C only stops watching; the update carries on (sdr-update status / tail -f the log)."""
+    TERMINAL = ("done", "rolled_back", "failed", "error", "idle")
+    print("Trace update started. Progress (Ctrl-C stops watching; the update keeps going):", flush=True)
+    last, t0, seen_run = None, time.time(), False
+    try:
+        while time.time() - t0 < timeout:
+            try:
+                st = json.load(open(os.path.join(STATE, "status.json")))
+            except (OSError, ValueError):
+                st = {}
+            state = st.get("state") or "queued"
+            pct = st.get("pct")
+            if state in ("done", "rolled_back"):
+                pct = 100
+            key = (state, pct, st.get("message"))
+            if key != last:
+                last = key
+                bar = ""
+                if isinstance(pct, (int, float)):
+                    n = int(max(0, min(100, pct)) / 5)
+                    bar = "[" + "#" * n + "." * (20 - n) + "] %3d%% " % int(pct)
+                print(time.strftime("%H:%M:%S ") + bar + (st.get("step") + ": " if st.get("step") else "") + (st.get("message") or state), flush=True)
+            if state not in TERMINAL:
+                seen_run = True
+            elif seen_run or time.time() - t0 > 15:
+                ok = bool(st.get("ok"))
+                print(("DONE: " if ok else "NOT INSTALLED: ") + (st.get("message") or state) +
+                      (" (" + st["detail"] + ")" if st.get("detail") and not ok else ""), flush=True)
+                print("Full log: " + LOG, flush=True)
+                return 0 if ok else 1
+            time.sleep(0.5)
+        print("Still running after %d min; check: sudo sdr-update status" % (timeout // 60), flush=True)
+        return 2
+    except KeyboardInterrupt:
+        print("\nStopped watching. The update keeps going: sudo sdr-update status   (log: %s)" % LOG, flush=True)
+        return 0
+
+
+def status_obj():
+    def rj(n):
+        try:
+            return json.load(open(os.path.join(STATE, n)))
+        except (OSError, ValueError):
+            return None
+    st = rj("status.json")
+    running = busy()
+    if st and st.get("state") not in ("done", "rolled_back", "failed", "error", "idle") and not running \
+            and time.time() - st.get("t", 0) > 30:
+        st = dict(st, state="error", ok=False, message="The last update stopped unexpectedly. Check the log.")
+    return {"version": current_version(), "update_url": read_conf().get("UPDATE_URL", ""),
+            "running": running, "status": st, "last": rj("last.json")}
+
+
+def main(argv):
+    args = [a for a in argv if a not in ("--json", "--foreground", "--reinstall", "--staged", "--no-follow")]
+    fg, reinstall, staged = "--foreground" in argv, "--reinstall" in argv, "--staged" in argv
+
+    def opt(name):
+        if name in args:
+            i = args.index(name)
+            v = args[i + 1] if i + 1 < len(args) else ""
+            del args[i:i + 2]
+            return v
+        return None
+    expect, sig = opt("--expect"), opt("--sig")
+    cmd = args[0] if args else "help"
+    rest = args[1:]
+    try:
+        if cmd == "version":
+            return out({"version": current_version()}, current_version()) or 0
+        if cmd in ("status",):
+            return out(status_obj()) or 0
+        if cmd == "last":
+            return out(status_obj()["last"] or {}) or 0
+        if cmd == "get-url":
+            u = read_conf().get("UPDATE_URL", "")
+            return out({"update_url": u}, u) or 0
+        if cmd == "set-url":
+            require_root()
+            u = normalize_url(" ".join(rest))
+            if u and not valid_url(u):
+                raise Fail("bad_url", "That isn't a valid http:// or https:// address.", u)
+            write_conf_key("UPDATE_URL", u)
+            log(f"update source set to {u or '(none)'}")
+            return out({"ok": True, "update_url": u}, f"UPDATE_URL={u}") or 0
+        if cmd == "check":
+            require_root()
+            res = cmd_check(rest[0] if rest else "")
+            return out(res, f"{res['message']}\n{res.get('notes','')}".strip()) or 0
+        if cmd == "verify-file":
+            require_root()
+            if not rest:
+                raise Fail("usage", "usage: sdr-update verify-file PATH [--sig SIG]")
+            with Lock():
+                tgz, s = split_input(rest[0], sig)
+                inner = inspect_bundle(tgz, s)
+                with open(os.path.join(STATE, "incoming", "bundle.sig"), "wb") as f:
+                    f.write(s)
+            cur = current_version()
+            res = {"ok": True, "verified": True, "version": inner["version"], "current": cur, "notes": inner.get("notes", ""),
+                   "min_version": inner.get("min_version"), "released": inner.get("released", ""),
+                   "installable": True, "message": f"Signed Stillwave update {inner['version']}."}
+            try:
+                check_versions(inner, reinstall)
+            except Fail as f:
+                res.update(installable=False, message=f.message, reason=f.reason)
+            log(f"verify-file {os.path.basename(rest[0])}: {res['message']}")
+            return out(res, res["message"]) or 0
+        if cmd in ("apply", "apply-file"):
+            require_root()
+            if cmd == "apply-file" and not rest and not staged:
+                raise Fail("usage", "usage: sdr-update apply-file PATH [--sig SIG]")
+            if not fg:
+                if busy():
+                    raise Fail("busy", "Another update is already running. Wait for it to finish.")
+                a = [cmd] + rest
+                if cmd == "apply-file" and not staged:
+                    # copy + verify as root now, so the worker never reads a file the caller can change
+                    with Lock():
+                        tgz, s = split_input(rest[0], sig)
+                        inner = inspect_bundle(tgz, s)
+                        check_versions(inner, reinstall)
+                        with open(os.path.join(STATE, "incoming", "bundle.sig"), "wb") as f:
+                            f.write(s)
+                    a = ["apply-file", os.path.basename(rest[0]), "--staged"]
+                    hint = inner["version"]
+                else:
+                    hint = expect or ""
+                    if staged:
+                        a.append("--staged")
+                if expect:
+                    a += ["--expect", expect]
+                if reinstall:
+                    a.append("--reinstall")
+                res = detach(a, cmd, hint, "file" if cmd == "apply-file" else "url")
+                # 1.0.9: from a terminal (SSH) show step-by-step progress by default; --json (web app) / --no-follow return at once
+                if not JSON_OUT and "--no-follow" not in argv and E("SDR_UPDATE_FOLLOW", "1") != "0":
+                    return follow()
+                return out(res, "Update started; follow it with: sdr-update status  (log: %s)" % LOG) or 0
+            with Lock():
+                set_status("starting", op=cmd, ok=None, started=round(time.time(), 1), message="Starting the update…",
+                           **{"from": current_version()})
+                log(f"==== {cmd} {' '.join(rest)} (installed {current_version()})")
+                try:
+                    if cmd == "apply":
+                        res = cmd_apply_url(expect, reinstall)
+                    else:
+                        res = cmd_apply_file(rest[0] if rest else "", sig, reinstall, staged)
+                except Fail as f:
+                    res = finish(False, "error", f.message, f.detail, reason=f.reason)
+                except Exception as exc:  # never leave the page spinning
+                    res = finish(False, "error", "The update stopped because of an unexpected error. Nothing was installed.",
+                                 f"{type(exc).__name__}: {exc}", reason="internal")
+            out(res, res.get("message"))
+            return 0 if res.get("ok") else 1
+        print(__doc__)
+        return 0 if cmd in ("help", "-h", "--help") else 2
+    except Fail as f:
+        if cmd not in ("check",):
+            log(f"{cmd}: {f.message}" + (f" ({f.detail})" if f.detail else ""))
+        else:
+            log(f"check failed: {f.reason}: {f.detail or f.message}")
+        out({"ok": False, "reason": f.reason, "message": f.message, "detail": f.detail}, f.message)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

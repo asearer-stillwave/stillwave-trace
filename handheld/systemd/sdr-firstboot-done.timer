@@ -1,0 +1,10 @@
+[Unit]
+Description=Stillwave Trace: end the first-boot grace 10 min after boot (does not hold boot)
+
+[Timer]
+OnBootSec=10min
+AccuracySec=15s
+Unit=sdr-firstboot-done.service
+
+[Install]
+WantedBy=timers.target

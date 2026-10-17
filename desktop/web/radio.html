@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trace">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Stillwave Trace · Radio</title>
+<link rel="stylesheet" href="/fieldnote.css">
+</head>
+<body class="page-radio" data-mode="fm">
+<script src="/nav.js"></script>
+<div class="card home">
+  <div class="brand">
+    <h1>FM <span class="acc">radio</span></h1>
+  </div>
+  <p class="lead">Local-network FM receiver. Choosing a station retunes the shared RTL-SDR.</p>
+  <div class="now" id="now">Now playing: …</div>
+  <div class="fmdial" id="fmdial" aria-hidden="true"></div>
+  <div class="row" id="buttons"></div>
+  <audio id="player" controls preload="none"></audio>
+  <p class="status" id="msg"></p>
+  <p class="note">Live radio has no track length, so the bar may stay 0:00. Changing stations drops audio for a couple of seconds, then it should resume on its own.</p>
+</div>
+<script src="/mode.js"></script>
+<script src="/power.js"></script>
+<script src="/screen.js"></script>
+<script src="/kbd.js"></script>
+<script>
+document.addEventListener('sdr-mode', e => {
+  const s = e.detail;
+  if(s && s.mode && s.mode !== 'fm'){
+    setMsg('The dongle is in '+s.mode+' mode, so there is no FM audio. Tap a station or "FM radio" above to switch back.', 'err');
+  }
+});
+const FALLBACK = [
+  {id:'alt987', name:'ALT 98.7', frequency:'98.705M', gain:'4'},
+  {id:'klos955', name:'KLOS 95.5', frequency:'95.5M', gain:'4'},
+  {id:'kroq1067', name:'KROQ 106.7', frequency:'106.7M', gain:'4'}
+];
+// Night Ops mockup: static FM band dial (88–108 MHz), station peaks, current station highlighted. Pure SVG, drawn once per render.
+function fmMHz(st){ const v = parseFloat(String(st && st.frequency || '').replace(/[^0-9.]/g,'')); return isFinite(v) ? v : null; }
+function drawDial(stations, current){
+  const el = document.getElementById('fmdial'); if(!el) return;
+  const W = 1000, X = f => 20 + (f - 88) / 20 * (W - 40), base = 118;
+  const peaks = stations.map(st => ({f: fmMHz(st), on: current && current.id === st.id, name: nameOf(st)})).filter(p => p.f && p.f >= 87.5 && p.f <= 108);
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  let d = '';
+  for(let x = 20; x <= W - 20; x += 4){
+    const f = 88 + (x - 20) / (W - 40) * 20; let y = 2.5 + rnd() * 3;
+    for(const p of peaks){ const k = (f - p.f) / 0.18; y += (p.on ? 46 : 30) * Math.exp(-k * k); }
+    d += (d ? 'L' : 'M') + x + ' ' + (base - y).toFixed(1);
+  }
+  let t = '';
+  for(let f = 88; f <= 108.001; f += 0.5){
+    const x = X(f), major = Math.abs(f % 2) < 0.01, mid = Math.abs(f % 1) < 0.01;
+    t += '<line x1="' + x + '" x2="' + x + '" y1="' + (base + 6) + '" y2="' + (base + (major ? 20 : mid ? 14 : 10)) + '"/>';
+    if(major) t += '<text x="' + x + '" y="' + (base + 42) + '">' + f.toFixed(0) + '</text>';
+  }
+  // 1.0.4: preset ticks only; the full name is drawn once, above the tuned station (clamped inside the dial).
+  let m = '', lab = '';
+  for(const p of peaks){
+    const x = X(p.f).toFixed(1);
+    m += '<g class="' + (p.on ? 'st on' : 'st') + '"><line x1="' + x + '" x2="' + x + '" y1="' + (p.on ? 34 : 70) + '" y2="' + (base + 4) + '"/>' +
+         (p.on ? '' : '<path class="pk" d="M' + (X(p.f) - 6).toFixed(1) + ' ' + (base + 4) + 'h12"/>') + '</g>';
+    if(p.on){
+      const xa = X(p.f), anchor = xa < 220 ? 'start' : xa > W - 220 ? 'end' : 'middle', xt = anchor === 'start' ? Math.max(xa - 10, 4) : anchor === 'end' ? Math.min(xa + 10, W - 4) : xa;
+      lab = '<text class="stlab" x="' + xt.toFixed(1) + '" y="24" text-anchor="' + anchor + '">' + p.name + '</text>';
+    }
+  }
+  m += lab;
+  el.innerHTML = '<div class="fmhead"><span>// FM band</span><b>88–108 MHz</b></div>' +
+    '<svg viewBox="0 0 ' + W + ' 170" preserveAspectRatio="xMidYMid meet"><path class="ax" d="M20 ' + (base + 4) + 'H' + (W - 20) + '"/>' +
+    '<g class="tk">' + t + '</g><path class="sp" d="' + d + '"/>' + m + '</svg>';
+}
+function shortOf(st){
+  const n = nameOf(st), call = n.split(/\s+/)[0], f = fmMHz(st);
+  if(f == null) return n;
+  const mhz = (f >= 87.5 && f <= 108) ? f.toFixed(1) : String(parseFloat(f.toFixed(3)));
+  return call + ' ' + mhz;
+}
+function nameOf(st){ return (st && st.name) ? st.name : 'Unknown'; }
+function setMsg(t,k){ const el=document.getElementById('msg'); el.className='status '+(k||''); el.textContent=t||''; }
+
+function freshPlayer(){
+  const old = document.getElementById('player');
+  const neu = old.cloneNode(false);
+  neu.id = 'player';
+  neu.controls = true;
+  neu.preload = 'none';
+  old.replaceWith(neu);
+  neu.addEventListener('error', () => setMsg('Stream dropped. Reconnecting…', 'err'));
+  return neu;
+}
+
+async function streamReady(){
+  try{
+    const r = await fetch('/api/stream-ready', {cache:'no-store'});
+    const j = await r.json();
+    return !!(j && j.ok);
+  }catch(e){ return false; }
+}
+
+async function waitReady(ms){
+  const end = Date.now() + (ms || 12000);
+  while(Date.now() < end){
+    if(await streamReady()) return true;
+    await new Promise(r => setTimeout(r, 400));
+  }
+  return false;
+}
+
+async function attach(autoplay){
+  const p = freshPlayer();
+  p.src = '/play.mp3?ts=' + Date.now();
+  p.load();
+  if(!autoplay) return;
+  for(let i=0;i<8;i++){
+    try{
+      await p.play();
+      setMsg('Live', 'ok');
+      return;
+    }catch(e){
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
+  setMsg('▶ Tap play to start the audio (this browser blocked autoplay).', 'tip');
+}
+
+async function status(){
+  const r=await fetch('/api/status',{cache:'no-store'});
+  if(!r.ok) throw new Error('status '+r.status);
+  return r.json();
+}
+function render(s){
+  const stations=(s&&Array.isArray(s.stations)&&s.stations.length)?s.stations:FALLBACK;
+  const current=(s&&s.current&&s.current.name)?s.current:null;
+  document.getElementById('now').textContent='Now playing: '+(current?nameOf(current):'none yet');
+  drawDial(stations, current);
+  const box=document.getElementById('buttons'); box.innerHTML='';
+  for(const st of stations){
+    if(!st||!st.id) continue;
+    const b=document.createElement('button');
+    b.className='station'+(current&&current.id===st.id?' active':'');
+    b.textContent=shortOf(st);
+    b.title=nameOf(st); b.setAttribute('aria-label', nameOf(st));
+    b.onclick=()=>tune(st);
+    box.appendChild(b);
+  }
+}
+async function tune(st){
+  setMsg('Tuning '+nameOf(st)+'…','ok');
+  document.querySelectorAll('button.station').forEach(b=>b.disabled=true);
+  try{
+    const r=await fetch('/api/station/'+encodeURIComponent(st.id),{method:'POST'});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+    document.getElementById('now').textContent='Now playing: '+nameOf(st)+' (reconnecting)';
+    await waitReady(15000);
+    try{ render(await status()); }catch(e){}
+    if(window.sdrMode) window.sdrMode.refresh();
+    await attach(true);
+  }catch(e){ setMsg(e.message,'err'); }
+  document.querySelectorAll('button.station').forEach(b=>b.disabled=false);
+}
+async function boot(){
+  attach(false);
+  try{ render(await status()); }
+  catch(e){ render({stations:FALLBACK,current:null}); setMsg('API not ready: '+e.message,'err'); }
+}
+boot();
+</script>
+</body>
+</html>

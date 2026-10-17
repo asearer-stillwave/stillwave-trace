@@ -1,0 +1,21 @@
+[Unit]
+Description=Stillwave Trace network mode restore at boot (home Wi-Fi or Trace hotspot)
+Documentation=file:///usr/local/sbin/sdr-net-mode
+After=NetworkManager.service
+Wants=NetworkManager.service
+Before=sdr-web.service nginx.service
+
+[Service]
+# 1.2.0: Type=exec, not oneshot: the Wi-Fi / hotspot restore (up to ~45 s) runs in the background instead of holding
+# multi-user.target and the web UI. The UI works on localhost meanwhile and the strip shows "Switching…".
+Type=exec
+RemainAfterExit=yes
+# MODE=wifi: wait for NetworkManager, else join the saved home profile (~45 s); if that fails the
+# hotspot comes up for this boot only. MODE=ap: start the hotspot. Details: /var/log/sdr-net.log
+ExecStart=/usr/local/sbin/sdr-net-mode boot
+TimeoutStartSec=240
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

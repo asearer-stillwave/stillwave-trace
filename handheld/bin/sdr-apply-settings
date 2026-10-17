@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Write live stream settings and restart sdr-fm.
+# Usage: sdr-apply-settings id name freq gain audio_rate mp3_bitrate highpass lowpass ppm
+set -eu
+SID="${1:?id}"
+NAME="${2:?name}"
+FREQ="${3:?freq}"
+GAIN="${4:?gain}"
+RATE="${5:-32000}"
+BR="${6:-128k}"
+HP="${7:-30}"
+LP="${8:-15000}"
+PPM="${9:-0}"
+ENV_FILE="${SDR_ENV_FILE:-/etc/sdr/fm.env}"
+SERVICE="${SDR_STREAM_SERVICE:-sdr-fm.service}"
+
+FM_ENV_BIN="${SDR_FM_ENV_BIN:-/usr/local/sbin/sdr-fm-env}"
+# 1.0.8.2: update only these keys, keep everything else (FM presets are always wideband FM)
+SDR_ENV_FILE="$ENV_FILE" "$FM_ENV_BIN" set "STATION_ID=${SID}" "STATION_NAME=${NAME}" "FREQ=${FREQ}" "GAIN=${GAIN}" \
+  "AUDIO_RATE=${RATE}" "MP3_BITRATE=${BR}" "HIGHPASS_HZ=${HP}" "LOWPASS_HZ=${LP}" "RTL_PPM=${PPM}" -DEMOD -SQUELCH -BAND
+timeout 6 systemctl stop "$SERVICE" || systemctl kill "$SERVICE" || true
+systemctl start "$SERVICE"
+echo "Applied ${NAME} ${FREQ} gain=${GAIN} ${RATE}Hz ${BR} hp=${HP} lp=${LP} ppm=${PPM}"

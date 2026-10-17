@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -eu
+ID="${1:?usage: sdr-select-station <station_id>}"
+CONF="${SDR_STATIONS_CONF:-/etc/sdr/stations.conf}"
+
+line="$(grep -E "^${ID}\|" "$CONF" | grep -v '^#' | head -n1 || true)"
+if [[ -z "$line" ]]; then
+  echo "Unknown station: $ID" >&2
+  exit 2
+fi
+IFS='|' read -r sid name freq gain rate br hp lp ppm <<<"$line"
+rate="${rate:-32000}"
+br="${br:-128k}"
+hp="${hp:-30}"
+lp="${lp:-15000}"
+ppm="${ppm:-0}"
+exec /usr/local/sbin/sdr-apply-settings "$sid" "$name" "$freq" "$gain" "$rate" "$br" "$hp" "$lp" "$ppm"

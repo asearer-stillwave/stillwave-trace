@@ -1,0 +1,9 @@
+[Unit]
+Description=Stillwave Trace: retry home Wi-Fi every 4 minutes while on the fallback hotspot
+
+[Timer]
+OnBootSec=6min
+OnUnitInactiveSec=4min
+
+[Install]
+WantedBy=timers.target

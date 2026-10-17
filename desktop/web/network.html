@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trace">
+<title>Stillwave Trace · Network</title>
+<link rel="stylesheet" href="/fieldnote.css">
+</head>
+<body>
+<script src="/nav.js"></script>
+<div class="wrap">
+  <div class="brand">
+    <h1>Network & <span class="acc">services</span></h1>
+  </div>
+  <p class="lead">Move this box between your home Wi‑Fi and its own hotspot (for a phone with no router). The choice is saved and comes back after a reboot. If joining Wi‑Fi fails, the box brings the hotspot back by itself, so you are never locked out.</p>
+
+  <div class="card">
+    <div class="now" id="netnow">Network: …</div>
+    <p class="note" id="netdetail"></p>
+    <p class="note" id="netlast"></p>
+  </div>
+
+  <div class="card" id="joincard">
+    <h2>Join Wi‑Fi</h2>
+    <p class="note">Pick a network (saved ones first) or type its name. The password is only sent to this box and is never shown again. Leave it empty for a saved network.</p>
+    <div class="ctl">
+      <label class="grow">Network <input id="ssid" placeholder="Wi‑Fi name" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label class="grow">Password
+        <span class="pwrow"><input id="psk" placeholder="Password" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="button" id="pskshow" class="sm">Show</button></span>
+      </label>
+    </div>
+    <div class="row netactions">
+      <button id="join" class="primary">Join Wi‑Fi</button>
+      <button id="toap">Switch to hotspot</button>
+    </div>
+
+    <div id="confirm" class="confirm hide" role="alertdialog" aria-live="assertive">
+      <p id="confirmtext"></p>
+      <div class="row">
+        <button id="confirmgo" class="primary">Switch now</button>
+        <button id="confirmno">Cancel</button>
+      </div>
+    </div>
+    <div id="switching" class="confirm hide" aria-live="polite">
+      <p id="switchtext"></p>
+      <p class="note" id="switchstate"></p>
+    </div>
+
+    <h2 class="sub">Saved networks</h2>
+    <div class="netlist" id="saved"><p class="note">Loading…</p></div>
+    <h2 class="sub">Nearby <button type="button" id="scanwifi" class="sm">Scan for networks</button></h2>
+    <div class="netlist" id="wifis"><p class="note">Tap “Scan for networks”. While the hotspot is on, the radio may not see other networks; type the name instead.</p></div>
+  </div>
+
+  <div class="card" id="apcard">
+    <h2>Hotspot</h2>
+    <p class="note" id="apinfo">Hotspot <b>Trace</b> at <b>http://10.42.0.1/</b></p>
+    <div class="ctl apform">
+      <label class="grow">Name <input id="apSsid" maxlength="32" placeholder="Trace" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label class="grow">Password
+        <span class="pwrow"><input id="apPsk" type="password" maxlength="63" placeholder="Saved – leave empty to keep" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="button" id="apPskShow" class="sm">Show</button></span></label>
+    </div>
+    <div class="v-lbl">Band</div>
+    <div class="seg apband" id="apBand"><button type="button" data-b="bg">2.4 GHz</button><button type="button" data-b="a">5 GHz</button></div>
+    <div class="aprow"><span>Start hotspot at boot</span><button type="button" class="v-sw" id="apBoot" role="switch" aria-checked="false" aria-label="Start hotspot at boot"></button></div>
+    <div class="row"><button type="button" class="primary" id="apSave">Save hotspot</button>
+      <button type="button" id="appwshow" class="sm">Show hotspot password</button></div>
+    <p class="note">2.4 GHz works with every phone; 5 GHz is faster but not every device (or country channel) supports it. Password: at least 8 characters. If the hotspot is on now it restarts with the new settings, so rejoin it.</p>
+    <p class="now hide" id="appw"></p>
+    <p class="status" id="apMsg"></p>
+  </div>
+
+  <div class="card">
+    <h2>Logs</h2>
+    <p class="note">If a switch fails, tap Show logs and copy the text. On the box: <code>sudo sdr-net-mode last</code> or <code>tail -100 /var/log/sdr-net.log</code></p>
+    <p><button type="button" id="showlog">Show logs</button></p>
+    <pre id="netlog" style="display:none;white-space:pre-wrap;max-height:22rem;overflow:auto;background:var(--night);border:1px solid var(--line);font-family:var(--mono);padding:.7rem;border-radius:8px;line-height:1.35;"></pre>
+  </div>
+
+  <div class="card">
+    <h2>Services</h2>
+    <p class="note" id="svcnow">…</p>
+    <div class="row">
+      <button data-svc="radio">Restart radio stream</button>
+      <button data-svc="sdr-fm">Restart sdr-fm</button>
+      <button data-svc="icecast2">Restart Icecast</button>
+      <button data-svc="nginx">Restart nginx</button>
+      <button data-svc="sdr-web" class="danger">Restart web UI</button>
+      <button data-svc="all" class="danger">Restart all</button>
+    </div>
+    <p class="note">Restart web UI / all will briefly disconnect this page. Restart all keeps the current dongle mode; "Restart radio stream" and "Restart sdr-fm" switch the dongle back to FM.</p>
+  </div>
+  <p class="status" id="msg"></p>
+</div>
+<script src="/mode.js"></script>
+<script src="/power.js"></script>
+<script src="/screen.js"></script>
+<script src="/kbd.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let NET = {};
+function setMsg(t,k){ const el=$('msg'); el.className='status '+(k||''); el.textContent=t||''; }
+async function jfetch(url, opt){
+  const r = await fetch(url, Object.assign({cache:'no-store'}, opt||{}));
+  const t = await r.text();
+  let j={}; try{ j=JSON.parse(t);}catch(e){ j={error:t||r.statusText}; }
+  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+function host(){
+  if (NET.hostname) return NET.hostname;
+  const h = location.hostname;
+  return (h && !/^[\d.]+$/.test(h) && h !== 'localhost') ? h.replace(/\.local$/,'') : 'SDRpi';
+}
+function apSsid(){ return NET.ap_ssid || 'Trace'; }
+const onBox = ['localhost','127.0.0.1'].includes(location.hostname);
+function el(tag, cls, text){ const e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; }
+function link(url){ const a=el('a',null,url); a.href=url; return a; }
+
+function renderNet(n){
+  NET = n || {};
+  const mode = NET.mode || 'unknown';
+  let label = mode;
+  if (mode==='ap') label = 'Hotspot “'+apSsid()+'” (10.42.0.1)';
+  else if (mode==='wifi') label = 'Wi‑Fi “'+(NET.home_ssid || NET.active_connection || '?')+'”';
+  else if (mode==='offline') label = 'Not connected';
+  $('netnow').textContent = 'Network: ' + label + (NET.switching ? ' · switching…' : '');
+  const bits = [];
+  if (mode==='wifi') bits.push('open http://'+host()+'.local/' + (NET.wifi_ip ? ' or http://'+NET.wifi_ip+'/' : ''));
+  if (mode==='ap') bits.push('join '+apSsid()+' and open http://10.42.0.1/');
+  if (NET.saved_mode==='ap') bits.push('after a reboot: hotspot');
+  else if (NET.saved_mode==='wifi') bits.push('after a reboot: rejoins ' + (NET.home_ssid || 'saved Wi‑Fi'));
+  if (NET.addresses && NET.addresses.length) bits.push('addresses ' + NET.addresses.join(', '));
+  $('netdetail').textContent = bits.join(' · ');
+  const L = NET.last;
+  $('netlast').textContent = L ? ('Last switch ('+(L.time||'').replace('T',' ').slice(0,16)+'): '+(L.ok?'OK – ':'FAILED – ')+(L.message||'')) : '';
+  $('netlast').className = 'note ' + (L ? (L.ok ? 'ok' : 'err') : '');
+  $('apinfo').textContent = 'Hotspot “'+apSsid()+'” · open http://10.42.0.1/ after joining it' + (mode==='ap' ? ' (on now)' : '');
+  try { apPaint(); } catch (e) {}
+}
+
+function pick(ssid, saved){
+  $('ssid').value = ssid;
+  $('psk').value = '';
+  $('psk').placeholder = saved ? 'Saved – leave empty' : 'Password';
+  if (!saved) $('psk').focus();
+  $('ssid').scrollIntoView({block:'center', behavior:'smooth'});
+}
+function netButton(name, meta, saved, onTap, active){
+  const b = el('button', 'net' + (active ? ' on' : ''));
+  b.type = 'button';
+  b.appendChild(el('span','nname', name));
+  b.appendChild(el('span','nmeta', meta));
+  b.onclick = onTap;
+  return b;
+}
+let SAVED = [];
+async function loadSaved(){
+  const box = $('saved');
+  try {
+    const j = await jfetch('/api/net/saved');
+    SAVED = j.networks || [];
+    box.textContent = '';
+    if (!SAVED.length) { box.appendChild(el('p','note','No saved networks yet.')); return; }
+    SAVED.forEach(n => {
+      const meta = [n.active ? 'connected' : '', n.name !== n.ssid ? 'profile '+n.name : '', 'saved'].filter(Boolean).join(' · ');
+      box.appendChild(netButton(n.ssid || n.name, meta, true, () => pick(n.ssid || n.name, true), n.active));
+    });
+  } catch(e) { box.textContent=''; box.appendChild(el('p','note err', 'Saved networks: '+e.message)); }
+}
+$('scanwifi').onclick = async () => {
+  const box = $('wifis');
+  box.textContent=''; box.appendChild(el('p','note','Looking for networks…'));
+  try {
+    const j = await jfetch('/api/net/scan');
+    box.textContent = '';
+    (j.networks||[]).forEach(n => {
+      const meta = [n.signal ? n.signal+'%' : '', (n.bands||[]).join('/'), n.security || 'open', n.saved ? 'saved' : ''].filter(Boolean).join(' · ');
+      box.appendChild(netButton(n.ssid, meta, n.saved, () => pick(n.ssid, n.saved)));
+    });
+    if (!(j.networks||[]).length) box.appendChild(el('p','note', j.note || 'No networks found.'));
+  } catch(e){ box.textContent=''; box.appendChild(el('p','note err', e.message)); }
+};
+$('pskshow').onclick = () => {
+  const i = $('psk'); const show = i.type === 'password';
+  i.type = show ? 'text' : 'password'; $('pskshow').textContent = show ? 'Hide' : 'Show';
+};
+
+// ---- switching ----
+let pending = null;
+function askConfirm(kind){
+  const ssid = $('ssid').value.trim();
+  const homeSsid = NET.home_ssid || '';
+  let text;
+  if (kind === 'wifi') {
+    const isHome = !ssid || ssid === homeSsid;
+    text = (onBox ? 'Phones on the current network will disconnect. ' : 'Your phone will disconnect. ')
+      + (isHome ? 'Rejoin your home Wi‑Fi' : 'Connect your phone to “'+ssid+'”')
+      + ' and open http://'+host()+'.local (or '+apSsid()+' hotspot at 10.42.0.1 if it falls back).';
+    pending = {kind, ssid, password: $('psk').value};
+  } else {
+    text = (onBox ? 'Phones on the current network will disconnect. ' : 'Your phone will disconnect. ')
+      + 'Join the '+apSsid()+' hotspot and open http://10.42.0.1 (if the hotspot fails, the box goes back to your home Wi‑Fi at http://'+host()+'.local).';
+    pending = {kind};
+  }
+  $('confirmtext').textContent = text;
+  $('confirm').classList.remove('hide');
+  $('switching').classList.add('hide');
+  $('confirm').scrollIntoView({block:'center', behavior:'smooth'});
+}
+$('join').onclick = () => askConfirm('wifi');
+$('toap').onclick = () => askConfirm('ap');
+$('confirmno').onclick = () => { pending = null; $('confirm').classList.add('hide'); };
+$('confirmgo').onclick = async () => {
+  if (!pending) return;
+  const p = pending; pending = null;
+  $('confirmgo').disabled = true;
+  try {
+    let prev = NET.last || null;
+    try { prev = (await jfetch('/api/net/last')).last || null; } catch(e) {}
+    const body = p.kind === 'wifi' ? JSON.stringify({ssid: p.ssid, password: p.password}) : '{}';
+    const j = await jfetch(p.kind === 'wifi' ? '/api/net/wifi' : '/api/net/ap',
+                           {method:'POST', headers:{'Content-Type':'application/json'}, body});
+    $('psk').value = '';
+    $('confirm').classList.add('hide');
+    showSwitching(p.kind, j, JSON.stringify(prev));
+  } catch(e) {
+    setMsg(e.message, 'err');
+  } finally { $('confirmgo').disabled = false; }
+};
+function showSwitching(kind, j, prevKey){
+  const box = $('switchtext'); box.textContent = '';
+  const h = 'http://'+host()+'.local/';
+  if (kind === 'wifi') {
+    box.append('Switching now. ', onBox ? '' : 'Rejoin your Wi‑Fi on the phone, then open ', link(h),
+               '. If it cannot join within about 45 seconds the '+apSsid()+' hotspot comes back: join it and open ', link('http://10.42.0.1/'), '.');
+  } else {
+    box.append('Starting the hotspot. Join ', el('b',null,apSsid()), ' on the phone and open ', link('http://10.42.0.1/'),
+               '. If it fails, the box goes back to your home Wi‑Fi: ', link(h), '.');
+  }
+  $('switching').classList.remove('hide');
+  $('switching').scrollIntoView({block:'center', behavior:'smooth'});
+  pollResult(prevKey);
+}
+async function pollResult(prevKey){
+  const st = $('switchstate');
+  const t0 = Date.now(); let misses = 0;
+  while (Date.now() - t0 < 150000) {
+    await new Promise(r => setTimeout(r, 3000));
+    try {
+      const j = await jfetch('/api/net/last');
+      misses = 0;
+      const L = j.last;
+      const fresh = L && JSON.stringify(L) !== prevKey;   // box clock may be off in hotspot mode
+      if (fresh && !j.switching) {
+        st.textContent = (L.ok ? 'Done: ' : 'Did not work: ') + L.message;
+        st.className = 'note ' + (L.ok ? 'ok' : 'err');
+        refresh(); loadSaved();
+        return;
+      }
+      st.textContent = 'Still switching…'; st.className = 'note';
+    } catch(e) {
+      misses++;
+      st.textContent = 'This page lost its connection to the box. That is expected: follow the steps above.';
+      st.className = 'note';
+    }
+  }
+}
+
+// ---- 1.2.0 hotspot settings ----
+let apForm = null;
+function apPaint(force){
+  if (!NET) return;
+  if (!apForm || force) apForm = {band: NET.ap_band === 'a' ? 'a' : 'bg', boot: !!NET.ap_boot};
+  if (document.activeElement !== $('apSsid') && (force || !$('apSsid').value)) $('apSsid').value = NET.ap_ssid || 'Trace';
+  document.querySelectorAll('#apBand button').forEach(b => b.classList.toggle('on', b.dataset.b === apForm.band));
+  $('apBoot').classList.toggle('on', apForm.boot); $('apBoot').setAttribute('aria-checked', apForm.boot);
+}
+$('apBand').onclick = e => { const b = e.target.closest('button'); if (!b) return; apPaint(); apForm.band = b.dataset.b; apPaint(); };
+$('apBoot').onclick = () => { apPaint(); apForm.boot = !apForm.boot; apPaint(); };
+$('apPskShow').onclick = () => { const i = $('apPsk'), show = i.type === 'password'; i.type = show ? 'text' : 'password'; $('apPskShow').textContent = show ? 'Hide' : 'Show'; };
+$('apSave').onclick = async () => {
+  const m = $('apMsg'), ssid = $('apSsid').value.trim(), pw = $('apPsk').value;
+  m.className = 'status';
+  if (!ssid) { m.className = 'status err'; m.textContent = 'Enter a hotspot name.'; return; }
+  if (pw && (pw.length < 8 || pw.length > 63)) { m.className = 'status err'; m.textContent = 'Hotspot password must be 8-63 characters.'; return; }
+  apPaint();
+  $('apSave').disabled = true; m.textContent = 'Saving…';
+  try {
+    const j = await jfetch('/api/net/ap-config', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ssid, password: pw, band: apForm.band, boot: apForm.boot})});
+    $('apPsk').value = ''; m.className = 'status ok';
+    m.textContent = 'Saved: ' + j.ap_ssid + ' · ' + (j.ap_band === 'a' ? '5 GHz' : '2.4 GHz') + (j.saved_mode === 'ap' ? ' · starts at boot' : '') + (j.restarted ? '. The hotspot is restarting: rejoin ' + j.ap_ssid + '.' : '.');
+    try { await refresh(); } catch (e) {}
+    apPaint(true);
+  } catch (e) { m.className = 'status err'; m.textContent = e.message; }
+  finally { $('apSave').disabled = false; }
+};
+// ---- hotspot password (only on request) ----
+$('appwshow').onclick = async () => {
+  const out = $('appw');
+  if (!out.classList.contains('hide')) { out.classList.add('hide'); out.textContent=''; $('appwshow').textContent='Show hotspot password'; return; }
+  try {
+    const j = await jfetch('/api/net/ap-password', {method:'POST'});
+    out.textContent = (j.ap_ssid || apSsid()) + ' · password: ' + (j.ap_password || '(not set yet – it is created the first time the hotspot starts)');
+    out.classList.remove('hide');
+    $('appwshow').textContent = 'Hide hotspot password';
+  } catch(e) { setMsg(e.message, 'err'); }
+};
+
+async function refresh(){
+  try { renderNet(await jfetch('/api/net')); } catch(e) { setMsg(e.message,'err'); }
+  try {
+    const s = await jfetch('/api/services');
+    const units = s.units || {};
+    $('svcnow').textContent = Object.keys(units).map(k=>k+': '+units[k]).join('  ·  ') || 'no status';
+  } catch(e) {}
+}
+document.querySelectorAll('button[data-svc]').forEach(btn => {
+  btn.onclick = async () => {
+    const which = btn.getAttribute('data-svc');
+    setMsg('Restarting '+which+'…','ok');
+    try {
+      const j = await jfetch('/api/services/restart',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({which})});
+      setMsg(j.message||('restarted '+which),'ok');
+      setTimeout(refresh, 1500);
+    } catch(e){ setMsg(e.message,'err'); }
+  };
+});
+$('showlog').onclick = async () => {
+  const pre = $('netlog');
+  pre.style.display = 'block';
+  pre.textContent = 'Loading…';
+  try {
+    const j = await jfetch('/api/net/log');
+    pre.textContent = j.log || JSON.stringify(j, null, 2);
+  } catch(e) { pre.textContent = e.message; }
+};
+refresh();
+loadSaved();
+</script>
+</body>
+</html>

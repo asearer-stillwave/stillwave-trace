@@ -1,0 +1,1090 @@
+#!/usr/bin/env python3
+"""Stillwave Trace kiosk screen: turn-off timeout, wake on touch (the waking touch is swallowed),
+brightness, and the dark screen at power-off. Works with no network at all.
+
+  sudo sdr-screen status [--json]
+  sudo sdr-screen off | on | toggle            (off waits ~1 s so the tap that asked for it can end)
+  sudo sdr-screen timeout never|30s|1m|2m|5m|10m|30m   (or seconds: 0 30 60 120 300 600 1800)
+  sudo sdr-screen brightness N | P%
+  sudo sdr-screen probe [--test] [--json]      what this box has (backlight, touch, DSI, kiosk);
+                                               --test turns the screen off for 3 s, then on again
+  sdr-screen daemon                            sdr-screen.service
+  sdr-screen notice                            ExecStop of sdr-screen.service: "Shutting down…" on the kiosk
+  sdr-screen final                             ExecStop of sdr-screen-final.service: backlight off as the last
+                                               step of a power-off; makes sure it is ON for a reboot
+
+Settings: /etc/sdr/screen.env (kept by updates). Live state: /run/sdr-screen/state.json.
+How the screen is turned off, best first: the panel backlight (/sys/class/backlight/*: bl_power, else
+brightness 0), display power through wlopm or wlr-randr in the kiosk session, else a black overlay
+that the kiosk page draws. While the screen is off the touch device is grabbed (EVIOCGRAB), so the
+touch that wakes it never reaches the browser; it is let go only after the finger lifts.
+"""
+import errno
+import fcntl
+import glob
+import json
+import os
+import pwd
+import re
+import select
+import shutil
+import signal
+import socket
+import stat
+import struct
+import subprocess
+import sys
+import time
+
+E = os.environ.get
+CONF = E("SDR_SCREEN_CONF", "/etc/sdr/screen.env")
+RUN = E("SDR_SCREEN_RUN", "/run/sdr-screen")
+STATE = os.path.join(RUN, "state.json")
+SOCK = os.path.join(RUN, "ctl.sock")
+NOTICE = os.path.join(RUN, "shutdown.json")
+LIB = E("SDR_SCREEN_LIB", "/var/lib/sdr-screen")
+BL_DIR = E("SDR_SCREEN_BACKLIGHT_DIR", "/sys/class/backlight")
+INPUT_SYS = E("SDR_SCREEN_INPUT_SYS", "/sys/class/input")
+DEV_DIR = E("SDR_SCREEN_DEV_DIR", "/dev/input")
+DRM_DIR = E("SDR_SCREEN_DRM_DIR", "/sys/class/drm")
+PROC = E("SDR_SCREEN_PROC", "/proc")
+GRAB = E("SDR_SCREEN_GRAB", "ioctl")             # ioctl | none | log:PATH (tests)
+SYSTEMCTL = E("SDR_SCREEN_SYSTEMCTL", "systemctl")
+NOTICE_WAIT = float(E("SDR_SCREEN_NOTICE_WAIT", "4"))
+OFF_DELAY = float(E("SDR_SCREEN_OFF_DELAY", "0.8"))
+QUIET = float(E("SDR_SCREEN_RELEASE_QUIET", "0.3"))
+RESCAN = float(E("SDR_SCREEN_RESCAN", "10"))
+ANY_TIMEOUT = E("SDR_SCREEN_ANY_TIMEOUT") == "1"
+ALLOW_NONROOT = E("SDR_SCREEN_ALLOW_NONROOT") == "1"
+TIMEOUTS = [0, 30, 60, 120, 300, 600, 1800]
+DEFAULT_TIMEOUT = 300
+EVIOCGRAB = 0x40044590
+EV_FMT = "llHHi"
+EV_SIZE = struct.calcsize(EV_FMT)
+EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
+BTN_TOUCH, ABS_MT_SLOT, ABS_MT_TRACKING_ID = 0x14A, 0x2F, 0x39
+LONG_BITS = struct.calcsize("l") * 8
+CONF_KEYS = ("SCREEN_TIMEOUT", "SCREEN_BRIGHTNESS", "SCREEN_METHOD", "SCREEN_BACKLIGHT", "SCREEN_TOUCH")
+METHODS = ("auto", "backlight", "wlopm", "wlr-randr", "overlay")
+
+
+def log(msg):
+    print("sdr-screen: " + msg, flush=True)
+
+
+def rd(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def wr(path, value):
+    with open(path, "w") as f:
+        f.write(str(value))
+
+
+def atomic_write(path, text, mode=0o644):
+    d = os.path.dirname(path) or "."
+    os.makedirs(d, exist_ok=True)
+    tmp = os.path.join(d, ".%s.%d.tmp" % (os.path.basename(path), os.getpid()))
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+# ---------------- settings ----------------
+def read_conf():
+    d = {"SCREEN_TIMEOUT": str(DEFAULT_TIMEOUT), "SCREEN_BRIGHTNESS": "", "SCREEN_METHOD": "auto",
+         "SCREEN_BACKLIGHT": "", "SCREEN_TOUCH": ""}
+    try:
+        for line in open(CONF):
+            m = re.match(r"^\s*([A-Z_]+)=(.*)$", line)
+            if not m or m.group(1) not in CONF_KEYS:
+                continue
+            v = re.sub(r"\s+#.*$", "", m.group(2)).strip().strip('"').strip("'")
+            d[m.group(1)] = v
+    except OSError:
+        pass
+    return d
+
+
+def conf_timeout(d):
+    try:
+        t = int(d.get("SCREEN_TIMEOUT") or DEFAULT_TIMEOUT)
+    except ValueError:
+        return DEFAULT_TIMEOUT
+    if t < 0:
+        return DEFAULT_TIMEOUT
+    return t if (ANY_TIMEOUT or t in TIMEOUTS) else DEFAULT_TIMEOUT
+
+
+def write_conf_key(key, value):
+    try:
+        lines = open(CONF).read().splitlines()
+    except OSError:
+        lines = ["# Stillwave Trace kiosk screen (sdr-screen). Kept by updates."]
+    out, done = [], False
+    for line in lines:
+        if re.match(r"^\s*%s=" % key, line):
+            if not done:
+                out.append('%s=%s' % (key, value))
+                done = True
+            continue
+        out.append(line)
+    if not done:
+        out.append('%s=%s' % (key, value))
+    atomic_write(CONF, "\n".join(out) + "\n", 0o644)
+
+
+def parse_timeout(s):
+    s = str(s).strip().lower()
+    if s in ("never", "off", "0", "none"):
+        return 0
+    m = re.fullmatch(r"(\d+)\s*(s|sec|secs|m|min|mins)?", s)
+    if not m:
+        raise ValueError(s)
+    n = int(m.group(1)) * (60 if (m.group(2) or "s").startswith("m") else 1)
+    if not ANY_TIMEOUT and n not in TIMEOUTS:
+        raise ValueError(s)
+    return n
+
+
+def human_timeout(t):
+    if not t:
+        return "never"
+    return "%d s" % t if t < 60 else "%d min" % (t // 60)
+
+
+# ---------------- backlight ----------------
+class Backlight:
+    def __init__(self, path):
+        self.path = path
+        self.name = os.path.basename(path)
+        try:
+            self.max = int(rd(os.path.join(path, "max_brightness"), "0") or 0)
+        except ValueError:
+            self.max = 0
+        self.has_power = os.path.exists(os.path.join(path, "bl_power"))
+
+    def f(self, n):
+        return os.path.join(self.path, n)
+
+    def level(self):
+        try:
+            return int(rd(self.f("brightness"), "0"))
+        except ValueError:
+            return 0
+
+    def levels_ok(self):
+        return self.max >= 2
+
+    def min_level(self):
+        return max(1, round(self.max * 0.05))
+
+    def off(self):
+        if self.has_power:
+            wr(self.f("bl_power"), 4)
+        wr(self.f("brightness"), 0)
+
+    def on(self, level):
+        lv = level if level and level > 0 else self.max
+        if self.max > 0:
+            wr(self.f("brightness"), max(1, min(self.max, lv)))
+        if self.has_power:
+            wr(self.f("bl_power"), 0)
+
+    def describe(self):
+        how = "bl_power + brightness" if self.has_power else "brightness"
+        return "%s (%s, levels 0-%d)" % (self.name, how, self.max)
+
+
+def list_backlights():
+    out = []
+    for p in sorted(glob.glob(os.path.join(BL_DIR, "*"))):
+        if os.path.isdir(p) and os.path.exists(os.path.join(p, "brightness")):
+            out.append(p)
+    return out
+
+
+def find_backlight(pref=""):
+    paths = list_backlights()
+    if pref:
+        p = os.path.join(BL_DIR, pref)
+        if p in paths:
+            return Backlight(p)
+    def rank(p):
+        b = Backlight(p)
+        t = rd(os.path.join(p, "type"))
+        return (b.max <= 0, not re.fullmatch(r"\d+-0045", b.name), {"raw": 0, "platform": 1, "firmware": 2}.get(t, 3), b.name)
+    paths.sort(key=rank)
+    for p in paths:
+        b = Backlight(p)
+        if b.max > 0:
+            return b
+    return None
+
+
+def saved_level():
+    try:
+        return int(rd(os.path.join(LIB, "level"), "0"))
+    except ValueError:
+        return 0
+
+
+def save_level(n):
+    try:
+        os.makedirs(LIB, exist_ok=True)
+        atomic_write(os.path.join(LIB, "level"), "%d\n" % n)
+    except OSError:
+        pass
+
+
+def start_level(bl, conf):
+    for v in (conf.get("SCREEN_BRIGHTNESS"), saved_level()):
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            return max(bl.min_level(), min(bl.max, n))
+    cur = bl.level()
+    return cur if cur > 0 else bl.max
+
+
+# ---------------- input (evdev) ----------------
+def _bits(s):
+    v = 0
+    for w in s.split():
+        v = (v << LONG_BITS) | int(w, 16)
+    return v
+
+
+def input_devices():
+    out = []
+    def num(p):
+        m = re.search(r"(\d+)$", p)
+        return int(m.group(1)) if m else 0
+    for ev in sorted(glob.glob(os.path.join(INPUT_SYS, "event*")), key=num):
+        dev = os.path.join(ev, "device")
+        name = rd(os.path.join(dev, "name"), "?")
+        try:
+            props = int(rd(os.path.join(dev, "properties"), "0") or "0", 16)
+        except ValueError:
+            props = 0
+        try:
+            absb = _bits(rd(os.path.join(dev, "capabilities", "abs"), "0") or "0")
+        except ValueError:
+            absb = 0
+        direct = bool(props & 0x2)
+        mt = bool(absb >> 0x35 & 1)
+        out.append({"event": os.path.basename(ev), "path": os.path.join(DEV_DIR, os.path.basename(ev)), "name": name,
+                    "direct": direct, "multitouch": mt, "touch": direct and (mt or bool(absb & 1))})
+    return out
+
+
+def pick_touch(conf):
+    want = (conf.get("SCREEN_TOUCH") or "").lower()
+    devs = input_devices()
+    if want:
+        return [d for d in devs if want in d["name"].lower()]
+    return [d for d in devs if d["touch"]]
+
+
+class Gone(Exception):
+    pass
+
+
+class Input:
+    def __init__(self, info):
+        self.info = info
+        self.path = info["path"]
+        self.name = info["name"]
+        flags = os.O_RDONLY | os.O_NONBLOCK
+        try:
+            if stat.S_ISFIFO(os.stat(self.path).st_mode):
+                flags = os.O_RDWR | os.O_NONBLOCK      # test devices: a FIFO never reports EOF this way
+        except OSError:
+            pass
+        self.fd = os.open(self.path, flags | getattr(os, "O_CLOEXEC", 0))
+        self.buf = b""
+        self.slots, self.slot, self.btn = set(), 0, False
+        self.grabbed = False
+        self.last = 0.0
+
+    def fileno(self):
+        return self.fd
+
+    def close(self):
+        try:
+            if self.grabbed:
+                self.grab(False)
+        finally:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+
+    def read(self):
+        try:
+            data = os.read(self.fd, EV_SIZE * 64)
+        except BlockingIOError:
+            return []
+        except OSError as e:
+            raise Gone(str(e))
+        if not data:
+            raise Gone("end of file")
+        self.buf += data
+        evs = []
+        while len(self.buf) >= EV_SIZE:
+            _s, _u, t, c, v = struct.unpack(EV_FMT, self.buf[:EV_SIZE])
+            self.buf = self.buf[EV_SIZE:]
+            evs.append((t, c, v))
+            self.feed(t, c, v)
+        self.last = time.monotonic()
+        return evs
+
+    def feed(self, t, c, v):
+        if t == EV_KEY and c == BTN_TOUCH:
+            self.btn = v != 0
+        elif t == EV_ABS and c == ABS_MT_SLOT:
+            self.slot = v
+        elif t == EV_ABS and c == ABS_MT_TRACKING_ID:
+            if v < 0:
+                self.slots.discard(self.slot)
+            else:
+                self.slots.add(self.slot)
+
+    def touching(self, now):
+        if now - self.last > 30:          # a lost "finger up": don't wait forever
+            self.btn = False
+            self.slots.clear()
+        return self.btn or bool(self.slots)
+
+    def grab(self, on):
+        if GRAB == "none":
+            return False
+        if GRAB.startswith("log:"):
+            with open(GRAB[4:], "a") as f:
+                f.write("%.3f %s %s\n" % (time.time(), "grab" if on else "ungrab", os.path.basename(self.path)))
+            self.grabbed = on
+            return True
+        try:
+            fcntl.ioctl(self.fd, EVIOCGRAB, 1 if on else 0)
+            self.grabbed = on
+            return True
+        except OSError as e:
+            if on:
+                log("could not grab %s (%s); the kiosk page's black overlay catches the waking touch instead" % (self.name, e))
+            self.grabbed = False
+            return False
+
+
+# ---------------- kiosk session (for wlopm / wlr-randr) ----------------
+def cage_session():
+    for d in glob.glob(os.path.join(PROC, "[0-9]*")):
+        if rd(os.path.join(d, "comm")) != "cage":
+            continue
+        uid = None
+        for line in rd(os.path.join(d, "status")).splitlines():
+            if line.startswith("Uid:"):
+                uid = int(line.split()[1])
+        if uid is None:
+            continue
+        env = {}
+        try:
+            for kv in open(os.path.join(d, "environ"), "rb").read().split(b"\0"):
+                if b"=" in kv:
+                    k, v = kv.split(b"=", 1)
+                    env[k.decode(errors="replace")] = v.decode(errors="replace")
+        except OSError:
+            pass
+        rt = env.get("XDG_RUNTIME_DIR") or "/run/user/%d" % uid
+        socks = sorted(p for p in glob.glob(os.path.join(rt, "wayland-*")) if not p.endswith(".lock"))
+        try:
+            user = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            user = str(uid)
+        return {"pid": int(os.path.basename(d)), "uid": uid, "user": user, "runtime": rt,
+                "display": os.path.basename(socks[0]) if socks else ""}
+    return None
+
+
+def run_wl(sess, args):
+    env = ["XDG_RUNTIME_DIR=" + sess["runtime"], "WAYLAND_DISPLAY=" + sess["display"]]
+    cmd = ["env", *env, *args]
+    if os.geteuid() == 0 and sess["uid"] != 0:
+        ru = shutil.which("runuser", path="/usr/sbin:/sbin:/usr/bin:/bin") or "runuser"
+        cmd = [ru, "-u", sess["user"], "--", *cmd]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+    return r.returncode == 0, (r.stdout or "") + (r.stderr or "")
+
+
+class Output:
+    """How 'off' is done: backlight | wlopm | wlr-randr | overlay."""
+
+    def __init__(self, conf):
+        self.conf = conf
+        self.failed = set()
+        self.bl = None
+        self.level = 0
+        self.method = "overlay"
+        self.detail = ""
+        self.detect()
+
+    def detect(self):
+        want = (self.conf.get("SCREEN_METHOD") or "auto").lower()
+        want = want if want in METHODS else "auto"
+        self.bl = find_backlight(self.conf.get("SCREEN_BACKLIGHT", ""))
+        if self.bl and not self.level:
+            self.level = start_level(self.bl, self.conf)
+        order = ["backlight", "wlopm", "wlr-randr", "overlay"] if want == "auto" else [want, "overlay"]
+        for m in order:
+            if m in self.failed:
+                continue
+            if m == "backlight" and self.bl:
+                self.method, self.detail = m, self.bl.describe()
+                return
+            if m in ("wlopm", "wlr-randr") and shutil.which(m):
+                s = cage_session()
+                if s and s["display"]:
+                    self.method, self.detail = m, "%s in the kiosk session (%s, %s)" % (m, s["user"], s["display"])
+                    return
+            if m == "overlay":
+                self.method, self.detail = m, "black overlay drawn by the kiosk page (no backlight control found)"
+                return
+
+    def _wl(self, on):
+        s = cage_session()
+        if not s or not s["display"]:
+            raise RuntimeError("kiosk session not running")
+        if self.method == "wlopm":
+            ok, out = run_wl(s, ["wlopm", "--on" if on else "--off", "*"])
+        else:
+            ok, out = run_wl(s, ["wlr-randr"])
+            name = next((l.split()[0] for l in out.splitlines() if l and not l[0].isspace()), "") if ok else ""
+            if not name:
+                raise RuntimeError("wlr-randr shows no output")
+            ok, out = run_wl(s, ["wlr-randr", "--output", name, "--on" if on else "--off"])
+        if not ok:
+            raise RuntimeError(out.strip()[-200:] or "failed")
+
+    def off(self):
+        try:
+            if self.method == "backlight":
+                cur = self.bl.level()
+                if cur > 0:
+                    self.level = cur
+                    save_level(cur)
+                self.bl.off()
+            elif self.method in ("wlopm", "wlr-randr"):
+                self._wl(False)
+        except Exception as e:  # fall back to the next way; the overlay always works
+            log("turning the screen off with %s failed (%s); falling back" % (self.method, e))
+            self.failed.add(self.method)
+            self.detect()
+            if self.method != "overlay":
+                self.off()
+
+    def on(self):
+        try:
+            if self.method == "backlight":
+                self.bl.on(self.level)
+            elif self.method in ("wlopm", "wlr-randr"):
+                self._wl(True)
+        except Exception as e:
+            log("turning the screen on with %s failed (%s)" % (self.method, e))
+
+    def set_level(self, n, lit):
+        if not (self.bl and self.bl.levels_ok()):
+            return None
+        n = max(self.bl.min_level(), min(self.bl.max, int(n)))
+        self.level = n
+        save_level(n)
+        if lit and self.method == "backlight":
+            self.bl.on(n)
+        return n
+
+    def info(self):
+        bl = self.bl
+        return {
+            "method": self.method, "detail": self.detail,
+            "backlight": {"name": bl.name, "bl_power": bl.has_power, "max": bl.max} if bl else None,
+            "brightness": {"supported": bool(bl and bl.levels_ok() and self.method == "backlight"),
+                           "value": self.level if bl else None, "max": bl.max if bl else None,
+                           "min": bl.min_level() if bl else None},
+        }
+
+
+def drm_dsi():
+    out = []
+    for p in sorted(glob.glob(os.path.join(DRM_DIR, "card*-DSI-*"))):
+        out.append({"name": os.path.basename(p), "status": rd(os.path.join(p, "status"), "?"),
+                    "enabled": rd(os.path.join(p, "enabled"), "?"), "dpms": rd(os.path.join(p, "dpms"), "?")})
+    return out
+
+
+# ---------------- shutdown helpers ----------------
+def shutdown_kind():
+    """'poweroff' / 'reboot' while systemd is shutting down, else None."""
+    try:
+        r = subprocess.run([SYSTEMCTL, "list-jobs", "--no-legend", "--no-pager"], capture_output=True, text=True, timeout=5)
+        jobs = r.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if re.search(r"\b(reboot|kexec|soft-reboot)\.target\b", jobs):
+        return "reboot"
+    if re.search(r"\b(poweroff|halt)\.target\b", jobs):
+        return "poweroff"
+    return None
+
+
+# ---------------- daemon ----------------
+class Daemon:
+    def __init__(self):
+        self.conf = read_conf()
+        self.timeout = conf_timeout(self.conf)
+        self.out = Output(self.conf)
+        self.state, self.reason = "on", "start"
+        self.since = time.time()
+        now = time.monotonic()
+        self.last_input = now
+        self.off_at = None
+        self.off_reason = "button"
+        self.inputs = {}
+        self.hold = False
+        self.wake_at = 0.0
+        self.release_at = None
+        self.shutdown = None
+        self.grab_status = "none"
+        self.next_scan = 0.0
+        self.last_write = 0.0
+        self.dirty = True
+        self.stop = False
+        self.srv = None
+
+    # -- devices --
+    def rescan(self):
+        now = time.monotonic()
+        self.next_scan = now + RESCAN
+        want = {d["path"]: d for d in pick_touch(self.conf)}
+        for p in list(self.inputs):
+            if p not in want:
+                self.drop(p, "no longer a touch device")
+        for p, d in want.items():
+            if p in self.inputs:
+                continue
+            try:
+                self.inputs[p] = Input(d)
+                log("watching touch input %s (%s)" % (d["name"], p))
+                if self.state == "off" and self.out.method != "overlay":
+                    self.inputs[p].grab(True)
+                self.dirty = True
+            except OSError as e:
+                log("cannot open %s (%s)" % (p, e))
+        if self.out.method != "backlight":
+            old = self.out.method
+            self.out.detect()
+            if self.out.method != old:
+                log("screen control: %s" % self.out.detail)
+                self.dirty = True
+
+    def drop(self, p, why):
+        inp = self.inputs.pop(p, None)
+        if inp:
+            log("stopped watching %s (%s)" % (inp.name, why))
+            inp.close()
+            self.dirty = True
+
+    def touching(self, now):
+        return any(i.touching(now) for i in self.inputs.values())
+
+    def grab_all(self, on):
+        if not self.inputs or (on and self.out.method == "overlay"):
+            for i in self.inputs.values():      # overlay: the page takes the waking touch, so never hold it
+                if i.grabbed:
+                    i.grab(False)
+            if on:
+                self.grab_status = "none"
+            return
+        res = [i.grab(on) for i in self.inputs.values() if on or i.grabbed]
+        if on:
+            self.grab_status = "ok" if res and all(res) else "failed"
+
+    # -- screen --
+    def turn_off(self, reason):
+        if self.state == "off" or self.shutdown:
+            return
+        self.out.off()
+        self.grab_all(True)
+        self.state, self.reason, self.since = "off", reason, time.time()
+        self.hold = False
+        self.dirty = True
+        log("screen off (%s, %s)" % (reason, self.out.method))
+
+    def wake(self, reason):
+        now = time.monotonic()
+        self.off_at = None
+        self.last_input = now
+        if self.state == "on":
+            return
+        self.out.on()
+        self.state, self.reason, self.since = "on", reason, time.time()
+        if any(i.grabbed for i in self.inputs.values()):
+            if self.touching(now) or reason == "touch":
+                self.hold, self.wake_at = True, now      # let go only after the finger lifts
+                self.release_at = None if self.touching(now) else now
+            else:
+                self.grab_all(False)
+        self.dirty = True
+        log("screen on (%s)" % reason)
+
+    # -- control socket --
+    def handle(self, req):
+        cmd = req.get("cmd")
+        now = time.monotonic()
+        if cmd == "status":
+            return self.status()
+        if cmd == "off":
+            if self.shutdown:
+                return dict(self.status(), ok=False, message="Trace is shutting down.")
+            self.off_reason = req.get("reason") or "button"
+            self.off_at = now + (OFF_DELAY if req.get("delay", True) else 0)
+            self.dirty = True
+            return dict(self.status(), ok=True, message="Screen turning off.")
+        if cmd == "on":
+            self.wake(req.get("reason") or "button")
+            return dict(self.status(), ok=True, message="Screen on.")
+        if cmd == "toggle":
+            return self.handle({"cmd": "on" if (self.state == "off" or self.off_at) else "off"})
+        if cmd == "reload":
+            self.conf = read_conf()
+            self.timeout = conf_timeout(self.conf)
+            self.out.conf = self.conf
+            n = self.conf.get("SCREEN_BRIGHTNESS")
+            if n and n.isdigit() and self.out.bl:
+                self.out.set_level(int(n), self.state == "on")
+            if self.out.method != "backlight":
+                self.out.detect()
+            self.last_input = now          # a new setting starts a fresh countdown
+            self.next_scan = 0
+            self.dirty = True
+            return dict(self.status(), ok=True)
+        if cmd == "brightness":
+            n = self.out.set_level(req.get("value", 0), self.state == "on")
+            if n is None:
+                return dict(self.status(), ok=False, message="This screen has no brightness levels.")
+            self.dirty = True
+            return dict(self.status(), ok=True)
+        if cmd == "shutdown":
+            kind = req.get("kind") or "poweroff"
+            self.off_at = None
+            if self.state == "off":
+                self.wake("shutdown")
+            self.grab_all(False)
+            self.hold = False
+            self.shutdown = kind
+            self.dirty = True
+            self.write_state()
+            return dict(self.status(), ok=True)
+        return {"ok": False, "message": "unknown command"}
+
+    def serve_client(self, conn):
+        conn.settimeout(1.0)
+        data = b""
+        try:
+            while not data.endswith(b"\n") and len(data) < 4096:
+                chunk = conn.recv(1024)
+                if not chunk:
+                    break
+                data += chunk
+            try:
+                req = json.loads(data.decode() or "{}")
+            except ValueError:
+                req = {}
+            resp = self.handle(req if isinstance(req, dict) else {})
+            conn.sendall((json.dumps(resp) + "\n").encode())
+        except OSError:
+            pass
+        finally:
+            conn.close()
+
+    # -- state --
+    def status(self):
+        now = time.monotonic()
+        d = {"ok": True, "running": True, "pid": os.getpid(), "state": self.state, "since": round(self.since, 1),
+             "reason": self.reason, "turning_off": self.off_at is not None, "timeout": self.timeout,
+             "timeouts": TIMEOUTS, "idle": round(now - self.last_input, 1),
+             "touch": [i.name for i in self.inputs.values()], "touch_ok": bool(self.inputs),
+             "grab": self.grab_status, "shutdown": self.shutdown, "updated": round(time.time(), 1), "dsi": drm_dsi()}
+        d.update(self.out.info())
+        d["off_in"] = None
+        if self.state == "on" and self.timeout and self.inputs and not self.shutdown:
+            d["off_in"] = max(0, round(self.timeout - (now - self.last_input)))
+        return d
+
+    def write_state(self):
+        try:
+            atomic_write(STATE, json.dumps(self.status()) + "\n", 0o644)
+        except OSError as e:
+            log("cannot write %s (%s)" % (STATE, e))
+        self.last_write = time.monotonic()
+        self.dirty = False
+
+    # -- main loop --
+    def tick(self):
+        now = time.monotonic()
+        if self.off_at is not None and now >= self.off_at:
+            self.off_at = None
+            self.turn_off(self.off_reason)
+        if (self.state == "on" and self.timeout and self.inputs and not self.shutdown and self.off_at is None
+                and not self.touching(now) and now - self.last_input >= self.timeout):
+            self.turn_off("timeout")
+        if self.hold:
+            if self.touching(now):
+                self.release_at = None
+            elif self.release_at is None:
+                self.release_at = now
+            if (self.release_at is not None and now - self.release_at >= QUIET) or now - self.wake_at > 15:
+                self.grab_all(False)
+                self.hold, self.release_at = False, None
+                self.dirty = True
+
+    def wait_time(self):
+        now = time.monotonic()
+        t = [1.0, max(0.0, self.next_scan - now)]
+        if self.off_at is not None:
+            t.append(self.off_at - now)
+        if self.state == "on" and self.timeout and self.inputs:
+            t.append(self.timeout - (now - self.last_input))
+        if self.hold:
+            t.append(0.05)
+        return max(0.02, min(t))
+
+    def run(self):
+        os.makedirs(RUN, exist_ok=True)
+        os.chmod(RUN, 0o755)
+        try:
+            os.unlink(SOCK)
+        except FileNotFoundError:
+            pass
+        self.srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.srv.bind(SOCK)
+        os.chmod(SOCK, 0o600)
+        self.srv.listen(8)
+        for s in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(s, lambda *_: setattr(self, "stop", True))
+        signal.signal(signal.SIGHUP, lambda *_: self.handle({"cmd": "reload"}))
+        if os.path.exists(NOTICE) and not shutdown_kind():
+            try:
+                os.unlink(NOTICE)      # left from a shutdown that didn't happen
+            except OSError:
+                pass
+        self.out.on()
+        log("started; screen control: %s; timeout %s" % (self.out.detail, human_timeout(self.timeout)))
+        self.rescan()
+        if not self.inputs:
+            log("no touchscreen input found yet; the timeout waits until one shows up (checks every %ds)" % RESCAN)
+        self.write_state()
+        while not self.stop:
+            if time.monotonic() >= self.next_scan:
+                self.rescan()
+            fds = [self.srv] + list(self.inputs.values())
+            try:
+                ready, _, _ = select.select(fds, [], [], self.wait_time())
+            except InterruptedError:
+                ready = []
+            except (OSError, ValueError):
+                ready = []
+                for p, i in list(self.inputs.items()):
+                    try:
+                        os.fstat(i.fd)
+                    except OSError:
+                        self.drop(p, "closed")
+            for r in ready:
+                if r is self.srv:
+                    try:
+                        conn, _ = self.srv.accept()
+                    except OSError:
+                        continue
+                    self.serve_client(conn)
+                    continue
+                try:
+                    evs = r.read()
+                except Gone as e:
+                    self.drop(r.path, str(e))
+                    continue
+                if not evs:
+                    continue
+                now = time.monotonic()
+                if self.state == "off" and not self.shutdown and self.off_at is None:
+                    self.wake("touch")
+                elif self.off_at is None:
+                    self.last_input = now
+                if self.hold:
+                    self.release_at = None if self.touching(now) else now
+            try:
+                self.tick()
+            except Exception as e:      # never die over one bad step
+                log("tick error: %s" % e)
+            if self.dirty or time.monotonic() - self.last_write >= 10:
+                self.write_state()
+        log("stopping")
+        for p in list(self.inputs):
+            self.drop(p, "service stopping")
+        if not self.shutdown:
+            self.out.on()
+        try:
+            os.unlink(SOCK)
+        except OSError:
+            pass
+        st = self.status()
+        st["running"] = False
+        try:
+            atomic_write(STATE, json.dumps(st) + "\n", 0o644)
+        except OSError:
+            pass
+
+
+# ---------------- CLI ----------------
+def send(req, timeout=4.0):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect(SOCK)
+        s.sendall((json.dumps(req) + "\n").encode())
+        data = b""
+        while not data.endswith(b"\n"):
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+        return json.loads(data.decode())
+    finally:
+        s.close()
+
+
+def try_send(req):
+    try:
+        return send(req)
+    except (OSError, ValueError):
+        return None
+
+
+def offline_status(msg=None):
+    conf = read_conf()
+    out = Output(conf)
+    d = {"ok": True, "running": False, "state": "on", "timeout": conf_timeout(conf), "timeouts": TIMEOUTS,
+         "touch": [x["name"] for x in pick_touch(conf)], "shutdown": None, "dsi": drm_dsi(),
+         "message": msg or "The screen service (sdr-screen) isn't running."}
+    d.update(out.info())
+    return d
+
+
+def need_root(args):
+    if os.geteuid() != 0 and not ALLOW_NONROOT:
+        print("Run: sudo sdr-screen " + " ".join(args), file=sys.stderr)
+        sys.exit(1)
+
+
+def emit(d, as_json, text=None):
+    if as_json:
+        print(json.dumps(d))
+    else:
+        print(text if text is not None else d.get("message") or json.dumps(d, indent=1))
+    return 0 if d.get("ok", True) else 1
+
+
+def status_text(d):
+    lines = ["Screen: %s%s" % (d.get("state", "?"), " (turning off)" if d.get("turning_off") else ""),
+             "Service: %s" % ("running" if d.get("running") else "not running"),
+             "Turns off after: %s without a touch" % human_timeout(d.get("timeout")),
+             "Control: %s" % (d.get("detail") or d.get("method")),
+             "Touch input: %s" % (", ".join(d.get("touch") or []) or "none found (timeout paused)")]
+    b = d.get("brightness") or {}
+    if b.get("supported"):
+        lines.append("Brightness: %s of %s" % (b.get("value"), b.get("max")))
+    if d.get("shutdown"):
+        lines.append("Shutting down: %s" % d["shutdown"])
+    return "\n".join(lines)
+
+
+def probe(as_json, test):
+    conf = read_conf()
+    bls = []
+    for p in list_backlights():
+        bls.append({"name": os.path.basename(p), "path": p, "type": rd(os.path.join(p, "type")),
+                    "max_brightness": rd(os.path.join(p, "max_brightness")), "brightness": rd(os.path.join(p, "brightness")),
+                    "actual_brightness": rd(os.path.join(p, "actual_brightness")),
+                    "bl_power": rd(os.path.join(p, "bl_power"), "(none)"),
+                    "device": os.path.realpath(os.path.join(p, "device"))})
+    out = Output(conf)
+    sess = cage_session()
+    d = {"backlights": bls, "chosen_backlight": out.bl.name if out.bl else None, "inputs": input_devices(),
+         "touch": [x["name"] for x in pick_touch(conf)], "dsi": drm_dsi(), "kiosk": sess,
+         "tools": {t: shutil.which(t) for t in ("wlopm", "wlr-randr")}, "method": out.method, "detail": out.detail,
+         "settings": conf, "service": try_send({"cmd": "status"}) is not None}
+    if test:
+        r = try_send({"cmd": "off", "delay": False, "reason": "probe"})
+        if r is None:
+            out.off()
+        time.sleep(3)
+        if try_send({"cmd": "on", "reason": "probe"}) is None:
+            out.on()
+        d["test"] = "screen was turned off for 3 s with: " + out.method
+    if as_json:
+        print(json.dumps(d))
+        return 0
+    print("Backlight devices (%s):" % BL_DIR)
+    for b in bls or [None]:
+        if not b:
+            print("  none")
+            continue
+        print("  %-10s type=%s max_brightness=%s brightness=%s actual=%s bl_power=%s" % (
+            b["name"], b["type"] or "?", b["max_brightness"], b["brightness"], b["actual_brightness"] or "?", b["bl_power"]))
+        print("             device: %s" % b["device"])
+    print("Input devices:")
+    for i in d["inputs"] or [None]:
+        if not i:
+            print("  none")
+            continue
+        print("  %-8s %-40s %s" % (i["event"], i["name"], "TOUCHSCREEN" if i["touch"] else ""))
+    print("DSI connectors: %s" % (", ".join("%s %s (dpms %s)" % (x["name"], x["status"], x["dpms"]) for x in d["dsi"]) or "none"))
+    print("Kiosk (cage): %s" % ("pid %d user %s %s" % (sess["pid"], sess["user"], sess["display"] or "(no wayland socket)") if sess else "not running"))
+    print("Tools: " + ", ".join("%s=%s" % (k, v or "missing") for k, v in d["tools"].items()))
+    print("Screen off will use: %s — %s" % (out.method, out.detail))
+    print("Touch used for wake/idle: %s" % (", ".join(d["touch"]) or "none found"))
+    print("Settings (%s): timeout %s, brightness %s, method %s" % (
+        CONF, human_timeout(conf_timeout(conf)), conf.get("SCREEN_BRIGHTNESS") or "(as is)", conf.get("SCREEN_METHOD")))
+    print("Service: %s" % ("running" if d["service"] else "not running"))
+    if test:
+        print(d["test"] + ". Did it go dark?")
+    return 0
+
+
+def final():
+    kind = shutdown_kind()
+    conf = read_conf()
+    bl = find_backlight(conf.get("SCREEN_BACKLIGHT", ""))
+    if not bl:
+        log("final: no backlight device; nothing to do (%s)" % (kind or "not shutting down"))
+        return 0
+    if kind == "poweroff":
+        cur = bl.level()
+        if cur > 0:
+            save_level(cur)
+        try:
+            bl.off()
+            log("final: power-off, backlight %s off" % bl.name)
+        except OSError as e:
+            log("final: could not turn the backlight off (%s)" % e)
+    else:
+        try:
+            bl.on(start_level(bl, conf))
+            log("final: %s, backlight %s left on" % (kind or "not shutting down", bl.name))
+        except OSError as e:
+            log("final: could not turn the backlight on (%s)" % e)
+    return 0
+
+
+def notice():
+    kind = shutdown_kind()
+    if not kind:
+        return 0
+    try:
+        os.makedirs(RUN, exist_ok=True)
+        atomic_write(NOTICE, json.dumps({"kind": kind, "t": round(time.time(), 1)}) + "\n", 0o644)
+    except OSError as e:
+        log("notice: cannot write %s (%s)" % (NOTICE, e))
+    if try_send({"cmd": "shutdown", "kind": kind}) is None:
+        try:
+            Output(read_conf()).on()
+        except Exception:
+            pass
+    log("notice: %s; showing it on the kiosk" % kind)
+    time.sleep(NOTICE_WAIT)
+    return 0
+
+
+def main(argv):
+    as_json = "--json" in argv
+    args = [a for a in argv if a != "--json"]
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    cmd = args[0]
+    if cmd == "daemon":
+        need_root(args)
+        Daemon().run()
+        return 0
+    if cmd == "status":
+        d = try_send({"cmd": "status"}) or offline_status()
+        return emit(d, as_json, status_text(d))
+    if cmd == "probe":
+        if "--test" in args:
+            need_root(args)
+        return probe(as_json, "--test" in args)
+    need_root(args)
+    if cmd in ("off", "on", "toggle"):
+        if cmd == "on" and "--direct" in args:
+            try:
+                Output(read_conf()).on()
+            except Exception as e:
+                log("on --direct: %s" % e)
+            return 0
+        r = try_send({"cmd": cmd, "delay": "--now" not in args, "reason": "phone" if "--phone" in args else "button"})
+        if r is None:
+            if cmd == "on":
+                Output(read_conf()).on()
+                return emit(offline_status("Screen on (the screen service isn't running)."), as_json)
+            d = offline_status()
+            d["ok"] = False
+            d["message"] = "The screen service isn't running, so the screen couldn't wake on touch. Not turning it off."
+            return emit(d, as_json)
+        return emit(r, as_json, status_text(r))
+    if cmd == "timeout":
+        if len(args) < 2:
+            print("usage: sdr-screen timeout never|30s|1m|2m|5m|10m|30m", file=sys.stderr)
+            return 2
+        try:
+            t = parse_timeout(args[1])
+        except ValueError:
+            return emit({"ok": False, "message": "Use one of: never, 30s, 1m, 2m, 5m, 10m, 30m."}, as_json)
+        write_conf_key("SCREEN_TIMEOUT", t)
+        r = try_send({"cmd": "reload"}) or offline_status("Saved; the screen service isn't running.")
+        r["message"] = "Screen turns off after %s without a touch." % human_timeout(t) if t else "Screen never turns off by itself."
+        return emit(r, as_json)
+    if cmd == "brightness":
+        if len(args) < 2:
+            print("usage: sdr-screen brightness N|P%", file=sys.stderr)
+            return 2
+        conf = read_conf()
+        bl = find_backlight(conf.get("SCREEN_BACKLIGHT", ""))
+        if not bl or not bl.levels_ok():
+            return emit({"ok": False, "message": "This screen has no brightness levels."}, as_json)
+        v = args[1].strip()
+        try:
+            n = round(bl.max * float(v[:-1]) / 100) if v.endswith("%") else int(v)
+        except ValueError:
+            return emit({"ok": False, "message": "Give a number 1-%d or a percentage." % bl.max}, as_json)
+        n = max(bl.min_level(), min(bl.max, n))
+        write_conf_key("SCREEN_BRIGHTNESS", n)
+        r = try_send({"cmd": "brightness", "value": n})
+        if r is None:
+            save_level(n)
+            bl.on(n)
+            r = offline_status("Brightness set (the screen service isn't running).")
+        r.setdefault("message", "Brightness %d of %d." % (n, bl.max))
+        return emit(r, as_json)
+    if cmd == "notice":
+        return notice()
+    if cmd == "final":
+        return final()
+    print("unknown command: %s (try --help)" % cmd, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

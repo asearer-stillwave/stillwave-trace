@@ -1,0 +1,15 @@
+[Unit]
+Description=Stillwave Trace restore last dongle mode (fm / spectrum / detect / adsb)
+# 1.2.0: boot is idle by default (nothing starts until START), so no wait for network-online (NetworkManager-wait-online)
+After=icecast2.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/sdr-mode boot
+TimeoutStartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

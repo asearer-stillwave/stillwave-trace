@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Append a station to stations.conf. Usage: sdr-add-station id name freq gain
+set -eu
+ID="${1:?id}"; NAME="${2:?name}"; FREQ="${3:?freq}"; GAIN="${4:-4}"
+CONF="${SDR_STATIONS_CONF:-/etc/sdr/stations.conf}"
+if grep -qE "^${ID}\|" "$CONF" 2>/dev/null; then
+  echo "Station id already exists: $ID" >&2
+  exit 2
+fi
+printf '%s|%s|%s|%s\n' "$ID" "$NAME" "$FREQ" "$GAIN" >> "$CONF"
+echo "Added ${ID} ${NAME} ${FREQ}"

@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+# Stillwave Trace dongle owner switch: status | set MODE | off | on | boot | restart | stop-all | current | mark MODE
+# There is one RTL-SDR, so only one of these units may run at a time:
+#   fm       -> sdr-fm.service        (rtl_fm -> Icecast stream)
+#   spectrum -> sdr-spectrum.service  (live spectrum + waterfall)
+#   detect   -> sdr-detect.service    (RF detection sweep)
+#   adsb     -> sdr-adsb.service      (ADS-B aircraft decoder)
+# The units also declare Conflicts= on each other, so a plain "systemctl start sdr-fm"
+# (station buttons, tune, presets) still kicks out whatever held the dongle.
+# Last chosen mode is stored as MODE=... in /etc/sdr/mode.env and restored on boot (default fm).
+# 1.0.9: "off" stops every SDR service and releases the dongle (SDR_OFF=1, safe to swap the antenna; stays off across a
+# reboot); "on" resumes the last mode. Dual dongle (sdr-dongles): with STILLWAVE-ADSB + STILLWAVE-RADIO plugged in, the
+# map runs full time on its own dongle (sdr-adsb-dual.service, no Conflicts=) and fm/spectrum/detect use the radio dongle.
+set -u
+DONGLES="${SDR_DONGLES_BIN:-/usr/local/sbin/sdr-dongles}"
+DONGLES_ENV="${SDR_DONGLES_ENV:-/etc/sdr/dongles.env}"
+
+STATE="${SDR_MODE_FILE:-/etc/sdr/mode.env}"
+ADSB_RUN="${SDR_ADSB_RUN:-/usr/local/lib/sdr-station/bin/adsb_run.sh}"
+MODES="fm spectrum detect adsb"
+
+valid() {
+  case "${1:-}" in
+    fm|spectrum|detect|adsb) return 0 ;;
+  esac
+  return 1
+}
+
+saved_mode() {
+  local m
+  m="$(awk -F= '$1=="MODE"{print $2; exit}' "$STATE" 2>/dev/null || true)"
+  if valid "$m"; then echo "$m"; else echo fm; fi
+}
+
+mark() {
+  local m="$1" tmp
+  valid "$m" || { echo "unknown mode: $m" >&2; exit 2; }
+  if [[ -f "$STATE" ]] && [[ "$(awk -F= '$1=="MODE"{print $2; exit}' "$STATE" 2>/dev/null)" == "$m" ]]; then
+    return 0
+  fi
+  install -d -m 755 "$(dirname "$STATE")"
+  tmp="$(mktemp)"
+  grep -v '^MODE=' "$STATE" >"$tmp" 2>/dev/null || true
+  echo "MODE=${m}" >>"$tmp"
+  install -m 644 "$tmp" "$STATE"
+  rm -f "$tmp"
+}
+
+getkey() { awk -F= -v k="$1" '$1==k{print $2; exit}' "$STATE" 2>/dev/null || true; }
+setkey() {   # setkey KEY VALUE (empty VALUE removes the key)
+  local tmp; install -d -m 755 "$(dirname "$STATE")"; tmp="$(mktemp)"
+  grep -v "^$1=" "$STATE" >"$tmp" 2>/dev/null || true
+  [[ -n "$2" ]] && echo "$1=$2" >>"$tmp"
+  install -m 644 "$tmp" "$STATE"; rm -f "$tmp"
+}
+is_off() { [[ "$(getkey SDR_OFF)" == 1 ]]; }
+refresh_dongles() { [[ -x "$DONGLES" ]] && "$DONGLES" env >/dev/null 2>&1 || true; }
+is_dual() { [[ "$(awk -F= '$1=="DUAL"{print $2; exit}' "$DONGLES_ENV" 2>/dev/null)" == 1 ]]; }
+dongle_count() { if [[ -x "$DONGLES" ]]; then "$DONGLES" list --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["count"])' 2>/dev/null || echo -1; else echo -1; fi; }
+start_dual_adsb() {
+  [[ -n "$(adsb_decoder)" ]] || return 0
+  systemctl stop sdr-adsb.service 2>/dev/null || true
+  systemctl reset-failed sdr-adsb-dual.service 2>/dev/null || true
+  systemctl start --no-block sdr-adsb-dual.service || true
+}
+stop_dual_adsb() { timeout 12 systemctl stop sdr-adsb-dual.service 2>/dev/null || systemctl kill sdr-adsb-dual.service 2>/dev/null || true; }
+
+unit_state() { systemctl is-active "sdr-$1.service" 2>/dev/null || true; }
+
+active_mode() {
+  local m
+  for m in $MODES; do
+    if systemctl is-active --quiet "sdr-$m.service" 2>/dev/null; then
+      echo "$m"
+      return
+    fi
+  done
+  echo none
+}
+
+adsb_decoder() {
+  if [[ -x "$ADSB_RUN" ]]; then
+    "$ADSB_RUN" --which 2>/dev/null || true
+  fi
+}
+
+status_json() {
+  local active saved dec m first=1 units="" off=false dual=false live=false n
+  active="$(active_mode)"
+  saved="$(saved_mode)"
+  dec="$(adsb_decoder)"
+  for m in $MODES; do
+    [[ $first -eq 1 ]] || units+=","
+    first=0
+    units+="\"$m\":\"$(unit_state "$m")\""
+  done
+  is_off && off=true
+  is_dual && dual=true
+  systemctl is-active --quiet sdr-adsb-dual.service 2>/dev/null && live=true
+  [[ "$active" == adsb ]] && live=true
+  n="$(dongle_count)"
+  printf '{"ok":true,"mode":"%s","saved":"%s","units":{%s},"adsb_decoder":"%s","adsb_available":%s,"modes":["fm","spectrum","detect","adsb"],"off":%s,"resume":"%s","dual":%s,"adsb_live":%s,"dongles":%s}\n' \
+    "$active" "$saved" "$units" "$dec" "$([[ -n "$dec" ]] && echo true || echo false)" "$off" "$(getkey OFF_RESUME)" "$dual" "$live" "$n"
+}
+
+stop_others() {
+  local keep="$1" m
+  for m in $MODES; do
+    [[ "$m" == "$keep" ]] && continue
+    if systemctl is-active --quiet "sdr-$m.service" 2>/dev/null || systemctl is-failed --quiet "sdr-$m.service" 2>/dev/null; then
+      timeout 12 systemctl stop "sdr-$m.service" || systemctl kill "sdr-$m.service" || true
+    fi
+  done
+}
+
+start_mode() {
+  local m="$1"
+  if [[ "$m" == "fm" ]]; then
+    systemctl start icecast2 || true
+  fi
+  systemctl reset-failed "sdr-$m.service" 2>/dev/null || true
+  systemctl start "sdr-$m.service" || return 1
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    systemctl is-active --quiet "sdr-$m.service" && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+ACTION="${1:-status}"
+case "$ACTION" in
+  status)
+    status_json
+    ;;
+  current)
+    m="$(active_mode)"
+    [[ "$m" == "none" ]] && m="$(saved_mode)"
+    echo "$m"
+    ;;
+  mark)
+    mark "${2:-}"
+    ;;
+  set)
+    M="${2:-}"
+    valid "$M" || { echo "unknown mode '${M}'. Use: fm, spectrum, detect, adsb" >&2; exit 2; }
+    if [[ "$M" == "adsb" && -z "$(adsb_decoder)" ]]; then
+      echo "No ADS-B decoder installed (readsb or dump1090-mutability). Re-run install.sh with internet, or: sudo apt-get install --no-install-recommends dump1090-mutability" >&2
+      exit 3
+    fi
+    is_off && { setkey SDR_OFF ""; setkey OFF_RESUME ""; }
+    refresh_dongles
+    if [[ "$(dongle_count)" == 0 ]]; then
+      echo "No radio detected: no RTL-SDR dongle on USB. Plug it in (try another port), then try again." >&2
+      exit 4
+    fi
+    if is_dual; then
+      if [[ "$M" == adsb ]]; then start_dual_adsb; status_json; exit 0; fi   # the map has its own dongle; the radio keeps going
+      start_dual_adsb
+    else
+      stop_dual_adsb
+    fi
+    stop_others "$M"
+    mark "$M"
+    if ! start_mode "$M"; then
+      echo "sdr-$M did not start. Check: journalctl -u sdr-$M -n 40 --no-pager" >&2
+      exit 1
+    fi
+    status_json
+    ;;
+  off)
+    # 1.0.9 SDR OFF: stop every dongle user cleanly and release the USB device (safe to swap the antenna)
+    cur="$(active_mode)"; [[ "$cur" == none ]] && cur="$(saved_mode)"
+    is_off || setkey OFF_RESUME "$cur"
+    setkey SDR_OFF 1
+    for m in $MODES; do timeout 12 systemctl stop "sdr-$m.service" 2>/dev/null || systemctl kill "sdr-$m.service" 2>/dev/null || true; done
+    stop_dual_adsb
+    for _ in 1 2 3 4 5 6 7 8 9 10; do   # wait until no process holds the dongle
+      pgrep -x 'rtl_fm|rtl_sdr|rtl_power|readsb|dump1090|dump1090-mutability|dump1090-fa' >/dev/null 2>&1 || break
+      sleep 0.5
+    done
+    status_json
+    ;;
+  on)
+    R="$(getkey OFF_RESUME)"; valid "$R" || R="$(saved_mode)"
+    setkey SDR_OFF ""; setkey OFF_RESUME ""
+    exec "$0" set "$R"
+    ;;
+  boot)
+    refresh_dongles
+    if is_off; then echo "sdr-mode boot: SDR is OFF (turn it on from More > SDR power or: sudo sdr-mode on)"; exit 0; fi
+    # 1.2.0: boot default is IDLE: nothing tunes and no decoder starts; the UI opens on Map/ADS-B with a START button.
+    # BOOT_MODE=saved in mode.env restores the last mode, BOOT_MODE=fm|spectrum|detect|adsb always starts that one.
+    B="$(awk -F= '$1=="BOOT_MODE"{print $2; exit}' "$STATE" 2>/dev/null || true)"
+    if [[ -z "$B" || "$B" == idle ]]; then mark adsb; echo "sdr-mode boot: idle (tap START on the Map tab)"; exit 0; fi
+    if [[ "$B" == saved ]]; then M="$(saved_mode)"; elif valid "$B"; then M="$B"; else M=spectrum; fi
+    if is_dual; then
+      start_dual_adsb
+      [[ "$M" == adsb ]] && M=spectrum
+    fi
+    mark "$M"
+    if [[ "$M" == "adsb" && -z "$(adsb_decoder)" ]]; then
+      M=fm
+    fi
+    echo "sdr-mode boot: starting $M$(is_dual && echo ' (dual dongle: map on STILLWAVE-ADSB)')"
+    [[ "$M" == "fm" ]] && systemctl start --no-block icecast2
+    systemctl start --no-block "sdr-$M.service"
+    ;;
+  restart)
+    M="$(active_mode)"
+    [[ "$M" == "none" ]] && M="$(saved_mode)"
+    stop_others "$M"
+    systemctl restart "sdr-$M.service"
+    echo "restarted sdr-$M"
+    ;;
+  stop-all)
+    for m in $MODES; do
+      timeout 12 systemctl stop "sdr-$m.service" 2>/dev/null || systemctl kill "sdr-$m.service" 2>/dev/null || true
+    done
+    [[ "${2:-}" == radio ]] || stop_dual_adsb   # "stop-all radio": keep the dual-dongle map running
+    echo "stopped all dongle users"
+    ;;
+  *)
+    echo "usage: sdr-mode status|set fm|spectrum|detect|adsb|off|on|boot|restart|stop-all|current|mark MODE" >&2
+    exit 2
+    ;;
+esac

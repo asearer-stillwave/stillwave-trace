@@ -1,0 +1,58 @@
+# Stillwave Trace boot / shutdown screen (Plymouth script plugin).
+# bg.png / bg-shutdown.png: the whole 720x1280 picture baked in (grid, rings, STILLWAVE, TRACE, caption).
+# sweep.png turns around the radar center; hub.png (circle + wave mark) sits on top. Scales to any screen size.
+Window.SetBackgroundTopColor(0.043, 0.059, 0.047);
+Window.SetBackgroundBottomColor(0.043, 0.059, 0.047);
+
+W = Window.GetWidth();
+H = Window.GetHeight();
+mode = Plymouth.GetMode();
+if (mode == "shutdown" || mode == "reboot") {
+  bg_image = Image("bg-shutdown.png");
+} else {
+  bg_image = Image("bg.png");
+}
+
+s = Math.Min(W / bg_image.GetWidth(), H / bg_image.GetHeight());
+bw = Math.Int(bg_image.GetWidth() * s);
+bh = Math.Int(bg_image.GetHeight() * s);
+bx = Math.Int((W - bw) / 2);
+by = Math.Int((H - bh) / 2);
+bg_sprite = Sprite(bg_image.Scale(bw, bh));
+bg_sprite.SetPosition(bx, by, 0);
+
+# radar center in the 720x1280 art: (360, 500); sweep 600x600, hub 200x200
+cx = bx + 360 * s;
+cy = by + 500 * s;
+sweep_image = Image("sweep.png");
+sw = Math.Int(600 * s);
+sweep_scaled = sweep_image.Scale(sw, sw);
+sweep_sprite = Sprite(sweep_scaled);
+sweep_sprite.SetPosition(Math.Int(cx - sw / 2), Math.Int(cy - sw / 2), 1);
+
+hub_image = Image("hub.png");
+hw = Math.Int(200 * s);
+hub_sprite = Sprite(hub_image.Scale(hw, hw));
+hub_sprite.SetPosition(Math.Int(cx - hw / 2), Math.Int(cy - hw / 2), 2);
+
+angle = 0;
+tick = 0;
+fun refresh_callback() {
+  # Rotate() turns clockwise. Redraw every 2nd refresh (25 frames/s, light on the Pi CPU): one turn every 3.6 s
+  tick = tick + 1;
+  if (tick >= 2) {
+    tick = 0;
+    angle = angle + 0.07;
+    if (angle > 6.2832) {
+      angle = angle - 6.2832;
+    }
+    r = sweep_scaled.Rotate(angle);
+    sweep_sprite.SetImage(r);
+    sweep_sprite.SetPosition(Math.Int(cx - r.GetWidth() / 2), Math.Int(cy - r.GetHeight() / 2), 1);
+  }
+}
+Plymouth.SetRefreshFunction(refresh_callback);
+
+# No text on the screen: boot messages stay hidden (quiet); a password prompt is never used on Trace.
+fun message_callback(text) { }
+Plymouth.SetMessageFunction(message_callback);

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Remove a preset from stations.conf. Usage: sdr-delete-preset <id>
+set -eu
+ID="${1:?usage: sdr-delete-preset <id>}"
+CONF="${SDR_STATIONS_CONF:-/etc/sdr/stations.conf}"
+
+if [[ ! -f "$CONF" ]]; then
+  echo "No stations.conf" >&2
+  exit 1
+fi
+if ! grep -qE "^${ID}\|" "$CONF"; then
+  echo "Unknown station: $ID" >&2
+  exit 2
+fi
+
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+grep -vE "^${ID}\|" "$CONF" > "$tmp"
+install -m 644 "$tmp" "$CONF"
+echo "Deleted ${ID}"

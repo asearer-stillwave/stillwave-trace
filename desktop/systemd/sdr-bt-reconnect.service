@@ -1,0 +1,17 @@
+[Unit]
+Description=Stillwave Trace: reconnect the saved Bluetooth speaker
+Documentation=file:///usr/local/lib/sdr-station/README.md
+After=bluetooth.service user@FIELDNOTE_UID.service
+Wants=bluetooth.service user@FIELDNOTE_UID.service
+
+[Service]
+# 1.2.0: Type=exec: reconnects in the background, does not hold boot (was ~9 s)
+Type=exec
+RemainAfterExit=no
+# Tries for about a minute; if the speaker is off, audio stays on the onboard output.
+ExecStart=/usr/local/sbin/sdr-bt autoconnect
+Environment=SDR_BT_QUIET=1
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

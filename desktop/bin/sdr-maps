@@ -1,0 +1,256 @@
+#!/usr/bin/env bash
+# Stillwave Trace offline map tiles (ADS-B map) + receiver position. Run as root (web UI uses sudo).
+#
+#   sdr-maps status                 JSON: installed?, size, build, manifest (add --verify to hash the file)
+#   sdr-maps verify                 check la.pmtiles against its manifest checksum
+#   sdr-maps install-local FILE     install a shipped la.pmtiles (+ FILE's .json manifest); no-op if identical
+#   sdr-maps fetch [--build YYYYMMDD] [--force]
+#                                   needs internet once: cut the LA extract from the public Protomaps
+#                                   build with the pmtiles CLI (downloaded + checksum-pinned) and install it
+#   sdr-maps receiver LAT LON       save the receiver position (ADSB_LAT/ADSB_LON in /etc/sdr/adsb.env)
+#   sdr-maps receiver --clear       back to the default (LAX) for map centering and distances
+#   sdr-maps gain DB|auto           ADS-B decoder gain (ADSB_GAIN), restarts the decoder if running (1.2.0)
+#   sdr-maps rings COUNT SPACING    ADS-B map range rings: COUNT 0|2|3|4|6, SPACING auto|1|2.5|5|10 (nm at the default zoom)
+#
+# Tiles: Protomaps basemap v4 (OpenStreetMap data, ODbL: "© OpenStreetMap contributors").
+# Layout: outer SoCal box at zoom 0-11 merged with the LA basin core at zoom 12-14.
+set -u
+
+MAPS_DIR="${SDR_MAPS_DIR:-/var/lib/sdr/maps}"
+TILES="$MAPS_DIR/la.pmtiles"
+MANIFEST="$MAPS_DIR/la.json"
+ADSB_ENV="${SDR_ADSB_ENV:-/etc/sdr/adsb.env}"
+BUILDS_URL="${SDR_MAPS_BUILDS_URL:-https://build-metadata.protomaps.dev/builds.json}"
+BUILD_BASE="${SDR_MAPS_BUILD_BASE:-https://build.protomaps.com}"
+PMTILES_VERSION=1.31.2
+declare -A PMTILES_SHA256=(
+  [arm64]=f8bd47e7ea866863489cad588fbaf2f31f42e5821f7a03f009b3769f05801cb1
+  [x86_64]=3ed7dbf4ec2e6dfe5e25b6f70d1ffc932729f93c86db353bf514dd71010a312f
+)
+BBOX_OUTER="-119.45,33.25,-117.30,34.80"   # Ventura .. Orange County, Catalina; zoom 0-11
+BBOX_CORE="-118.75,33.55,-117.90,34.30"    # LA basin around LAX; zoom 12-14
+OUTER_MAX=11
+CORE_MIN=12
+CORE_MAX=14
+
+say() { echo "[maps] $*" >&2; }
+die() { say "ERROR: $*"; exit 1; }
+
+sha_of() { sha256sum "$1" 2>/dev/null | awk '{print $1}'; }
+manifest_get() { # key
+  [[ -f "$MANIFEST" ]] || return 0
+  python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$MANIFEST" "$1" 2>/dev/null
+}
+
+cmd_status() {
+  local verify="${1:-}" installed=false bytes=0 sha_ok=null
+  if [[ -s "$TILES" ]]; then
+    installed=true
+    bytes="$(stat -c %s "$TILES")"
+    if [[ "$verify" == --verify ]]; then
+      if [[ "$(sha_of "$TILES")" == "$(manifest_get sha256)" ]]; then sha_ok=true; else sha_ok=false; fi
+    fi
+  fi
+  python3 - "$installed" "$bytes" "$sha_ok" "$TILES" "$MANIFEST" <<'PY'
+import json, sys
+inst, size, ok, path, man = sys.argv[1:6]
+try: m = json.load(open(man))
+except Exception: m = None
+print(json.dumps({"ok": True, "installed": inst == "true", "bytes": int(size), "path": path,
+                  "checksum_ok": None if ok == "null" else ok == "true", "manifest": m}))
+PY
+}
+
+cmd_verify() {
+  [[ -s "$TILES" ]] || die "no $TILES (run: sudo sdr-maps fetch, or reinstall the package)"
+  local want have
+  want="$(manifest_get sha256)"
+  have="$(sha_of "$TILES")"
+  [[ -n "$want" ]] || die "no checksum in $MANIFEST"
+  if [[ "$want" == "$have" ]]; then say "OK: $TILES matches its manifest ($have)"; return 0; fi
+  die "checksum mismatch: file $have, manifest $want"
+}
+
+write_manifest() { # file build source_url
+  python3 - "$1" "$2" "$3" "$(sha_of "$1")" "$(stat -c %s "$1")" "$BBOX_OUTER" "$BBOX_CORE" \
+    "$OUTER_MAX" "$CORE_MIN" "$CORE_MAX" <<'PY'
+import json, sys, time
+f, build, src, sha, size, bo, bc, omax, cmin, cmax = sys.argv[1:11]
+print(json.dumps({
+  "file": "la.pmtiles", "sha256": sha, "bytes": int(size), "build": build, "source": src,
+  "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+  "bbox_outer": [float(x) for x in bo.split(",")], "zoom_outer": [0, int(omax)],
+  "bbox_core": [float(x) for x in bc.split(",")], "zoom_core": [int(cmin), int(cmax)],
+  "center": [-118.4081, 33.9425],
+  "attribution": "© OpenStreetMap contributors (ODbL) · Protomaps",
+  "license": "Map data: OpenStreetMap contributors, Open Database License (ODbL) 1.0. Basemap: Protomaps.",
+}, indent=1))
+PY
+}
+
+build_of() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("build",""))' "$1" 2>/dev/null; }
+
+cmd_install_local() {
+  local src="${1:-}" srcman have want
+  [[ -s "$src" ]] || die "install-local: no such file: $src"
+  srcman="${src%.pmtiles}.json"
+  install -d -m 755 "$MAPS_DIR"
+  want="$(sha_of "$src")"
+  if [[ -s "$TILES" ]] && [[ "$(sha_of "$TILES")" == "$want" ]]; then
+    say "map tiles already installed (sha256 $want), not copied"
+  elif [[ -s "$TILES" && -s "$srcman" && "${SDR_MAPS_FORCE:-0}" != 1 ]] && \
+       [[ "$(build_of "$MANIFEST")" =~ ^[0-9]{8}$ && "$(build_of "$srcman")" =~ ^[0-9]{8}$ ]] && \
+       (( $(build_of "$MANIFEST") > $(build_of "$srcman") )); then
+    say "keeping the newer installed map (build $(build_of "$MANIFEST"); package has $(build_of "$srcman"))"
+    return 0
+  else
+    say "installing $(basename "$src") ($(( $(stat -c %s "$src") / 1048576 )) MB) -> $TILES"
+    if ! { install -m 644 "$src" "$TILES.tmp.$$" && mv -f "$TILES.tmp.$$" "$TILES"; }; then
+      rm -f "$TILES.tmp.$$"; die "copy failed"
+    fi
+  fi
+  if [[ -s "$srcman" ]]; then
+    have="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("sha256",""))' "$srcman" 2>/dev/null)"
+    [[ "$have" == "$want" ]] || say "WARNING: $srcman checksum does not match the tiles"
+    cmp -s "$srcman" "$MANIFEST" || install -m 644 "$srcman" "$MANIFEST"
+  else
+    write_manifest "$TILES" "unknown" "local:$src" >"$MANIFEST"
+  fi
+  chmod 755 "$MAPS_DIR"
+}
+
+pmtiles_bin() { # prints path to a checksum-verified pmtiles CLI, downloading it if needed
+  local arch tgz sha bin="$MAPS_DIR/bin/pmtiles" url tmp
+  if [[ -n "${SDR_MAPS_PMTILES:-}" ]]; then echo "$SDR_MAPS_PMTILES"; return 0; fi
+  case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; x86_64|amd64) arch=x86_64 ;; *) die "no pmtiles build for $(uname -m)" ;; esac
+  if [[ -x "$bin" ]] && "$bin" version 2>/dev/null | grep -q "pmtiles $PMTILES_VERSION"; then echo "$bin"; return 0; fi
+  tgz="go-pmtiles_${PMTILES_VERSION}_Linux_${arch}.tar.gz"
+  url="https://github.com/protomaps/go-pmtiles/releases/download/v${PMTILES_VERSION}/${tgz}"
+  tmp="$(mktemp -d)"
+  say "downloading pmtiles CLI $PMTILES_VERSION ($arch)"
+  curl -fsSL --retry 3 -o "$tmp/$tgz" "$url" || { rm -rf "$tmp"; die "download failed: $url (is the Pi online?)"; }
+  sha="$(sha_of "$tmp/$tgz")"
+  [[ "$sha" == "${PMTILES_SHA256[$arch]}" ]] || { rm -rf "$tmp"; die "pmtiles CLI checksum mismatch ($sha)"; }
+  tar -xzf "$tmp/$tgz" -C "$tmp" pmtiles || { rm -rf "$tmp"; die "could not unpack $tgz"; }
+  install -d -m 755 "$MAPS_DIR/bin"
+  install -m 755 "$tmp/pmtiles" "$bin"
+  rm -rf "$tmp"
+  echo "$bin"
+}
+
+latest_build() {
+  curl -fsSL --retry 3 "$BUILDS_URL" | python3 -c '
+import json, sys
+b = [x["key"] for x in json.load(sys.stdin) if x.get("key", "").endswith(".pmtiles") and str(x.get("version", "4")).startswith("4")]
+print(sorted(b)[-1].rsplit(".", 1)[0] if b else "")'
+}
+
+cmd_fetch() {
+  local build="" force=0 a
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --build) build="${2:?}"; shift ;;
+      --force) force=1 ;;
+      *) die "fetch: unknown option $1" ;;
+    esac
+    shift
+  done
+  if [[ $force -eq 0 && -s "$TILES" ]] && [[ -n "$(manifest_get sha256)" ]] && [[ "$(sha_of "$TILES")" == "$(manifest_get sha256)" ]]; then
+    say "map tiles already present and checksum matches (build $(manifest_get build)); use --force to refresh"
+    return 0
+  fi
+  command -v curl >/dev/null || die "curl missing"
+  install -d -m 755 "$MAPS_DIR"
+  a="$(df -Pk "$MAPS_DIR" | awk 'NR==2{print $4}')"
+  [[ "${a:-0}" -gt 300000 ]] || die "need about 300 MB free in $MAPS_DIR"
+  local bin; bin="$(pmtiles_bin)" || exit 1
+  [[ -n "$build" ]] || build="$(latest_build)"
+  [[ "$build" =~ ^[0-9]{8}$ ]] || die "could not find the current Protomaps build (is the Pi online?)"
+  local url="$BUILD_BASE/$build.pmtiles" w
+  FETCH_TMP="$MAPS_DIR/.fetch.$$"; w="$FETCH_TMP"
+  rm -rf "$MAPS_DIR"/.fetch.*   # leftovers from an interrupted fetch
+  mkdir -p "$w"
+  trap 'rm -rf "${FETCH_TMP:-/nonexistent}"' EXIT
+  say "build $build: outer box zoom 0-$OUTER_MAX"
+  "$bin" extract "$url" "$w/outer.pmtiles" --bbox="$BBOX_OUTER" --maxzoom="$OUTER_MAX" --download-threads=4 -q \
+    || die "extract (outer) failed"
+  say "build $build: LA core zoom $CORE_MIN-$CORE_MAX (about 50 MB)"
+  "$bin" extract "$url" "$w/core.pmtiles" --bbox="$BBOX_CORE" --minzoom="$CORE_MIN" --maxzoom="$CORE_MAX" --download-threads=4 -q \
+    || die "extract (core) failed"
+  "$bin" merge "$w/outer.pmtiles" "$w/core.pmtiles" "$w/la.pmtiles" >/dev/null 2>&1 || die "merge failed"
+  "$bin" verify "$w/la.pmtiles" >/dev/null 2>&1 || die "verify failed"
+  chmod 644 "$w/la.pmtiles"
+  write_manifest "$w/la.pmtiles" "$build" "$url" >"$w/la.json"
+  mv -f "$w/la.pmtiles" "$TILES" && mv -f "$w/la.json" "$MANIFEST"
+  say "installed $TILES ($(( $(stat -c %s "$TILES") / 1048576 )) MB, build $build)"
+}
+
+cmd_receiver() {
+  local lat="${1:-}" lon="${2:-}" tmp
+  if [[ "$lat" == --clear ]]; then lat=""; lon=""
+  else
+    python3 -c 'import sys; a,b=float(sys.argv[1]),float(sys.argv[2]); sys.exit(0 if -90<=a<=90 and -180<=b<=180 else 1)' "$lat" "$lon" 2>/dev/null \
+      || { echo '{"ok": false, "error": "latitude must be -90..90 and longitude -180..180"}'; exit 2; }
+    lat="$(printf '%.5f' "$lat")"; lon="$(printf '%.5f' "$lon")"
+  fi
+  install -d -m 755 "$(dirname "$ADSB_ENV")"
+  tmp="$(mktemp)"
+  [[ -f "$ADSB_ENV" ]] && grep -v '^ADSB_LAT=\|^ADSB_LON=' "$ADSB_ENV" >"$tmp"
+  printf 'ADSB_LAT=%s\nADSB_LON=%s\n' "$lat" "$lon" >>"$tmp"
+  install -m 644 "$tmp" "$ADSB_ENV"; rm -f "$tmp"
+  local restarted=false
+  if [[ -z "${SDR_MAPS_NO_SYSTEMD:-}" ]] && systemctl is-active --quiet sdr-adsb.service 2>/dev/null; then
+    systemctl restart sdr-adsb.service && restarted=true   # the decoder uses it for local position decoding
+  fi
+  printf '{"ok": true, "lat": %s, "lon": %s, "default": %s, "decoder_restarted": %s}\n' \
+    "${lat:-null}" "${lon:-null}" "$([[ -z "$lat" ]] && echo true || echo false)" "$restarted"
+}
+
+cmd_rings() {
+  local count="${1:-}" spacing="${2:-}" tmp
+  [[ "$count" =~ ^(0|2|3|4|6)$ && "$spacing" =~ ^(auto|1|2\.5|5|10)$ ]] \
+    || { echo '{"ok": false, "error": "rings must be 0, 2, 3, 4 or 6 and spacing auto, 1, 2.5, 5 or 10"}'; exit 2; }
+  install -d -m 755 "$(dirname "$ADSB_ENV")"
+  tmp="$(mktemp)"
+  [[ -f "$ADSB_ENV" ]] && grep -v '^ADSB_RINGS=\|^ADSB_RING_SPACING=' "$ADSB_ENV" >"$tmp"
+  printf 'ADSB_RINGS=%s\nADSB_RING_SPACING=%s\n' "$count" "$spacing" >>"$tmp"
+  install -m 644 "$tmp" "$ADSB_ENV"; rm -f "$tmp"
+  printf '{"ok": true, "count": %s, "spacing": "%s"}\n' "$count" "$spacing"   # map-only setting: no decoder restart
+}
+
+cmd_gain() {   # 1.2.0: ADS-B decoder gain from the Map page (- / + / Auto); restarts the running decoder
+  local g="${1:-}" tmp restarted=false u
+  if [[ "$g" =~ ^(auto|AUTO)$ ]]; then g=auto
+  else
+    python3 -c 'import sys; v=float(sys.argv[1]); sys.exit(0 if 0<=v<=50 else 1)' "$g" 2>/dev/null \
+      || { echo '{"ok": false, "error": "gain must be auto or 0..49.6 dB"}'; exit 2; }
+    g="$(printf '%.1f' "$g")"
+  fi
+  install -d -m 755 "$(dirname "$ADSB_ENV")"
+  tmp="$(mktemp)"
+  [[ -f "$ADSB_ENV" ]] && grep -v '^ADSB_GAIN=' "$ADSB_ENV" >"$tmp"
+  printf 'ADSB_GAIN=%s\n' "$g" >>"$tmp"
+  install -m 644 "$tmp" "$ADSB_ENV"; rm -f "$tmp"
+  if [[ -z "${SDR_MAPS_NO_SYSTEMD:-}" ]]; then
+    for u in sdr-adsb.service sdr-adsb-dual.service; do
+      if systemctl is-active --quiet "$u" 2>/dev/null; then systemctl restart --no-block "$u" && restarted=true; fi
+    done
+  fi
+  printf '{"ok": true, "gain": "%s", "decoder_restarted": %s}\n' "$g" "$restarted"
+}
+
+ACTION="${1:-status}"; shift || true
+case "$ACTION" in
+  status) cmd_status "$@"; exit $? ;;
+  help|-h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+if [[ "$(id -u)" != 0 && -z "${SDR_MAPS_ALLOW_USER:-}" ]]; then echo "sdr-maps: run with sudo" >&2; exit 1; fi
+case "$ACTION" in
+  verify) cmd_verify ;;
+  install-local) cmd_install_local "${1:-}" ;;
+  fetch) cmd_fetch "$@" ;;
+  receiver) cmd_receiver "$@" ;;
+  rings) cmd_rings "$@" ;;
+  gain) cmd_gain "$@" ;;
+  *) echo "usage: sdr-maps status [--verify] | verify | install-local FILE | fetch [--build YYYYMMDD] [--force] | receiver LAT LON | receiver --clear | rings COUNT SPACING | gain DB|auto" >&2; exit 2 ;;
+esac

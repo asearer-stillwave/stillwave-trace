@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trace">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Stillwave Trace · Updates</title>
+<link rel="icon" type="image/png" href="/img/trace-icon-192.png">
+<link rel="stylesheet" href="/fieldnote.css">
+</head>
+<body class="page-updates">
+<script src="/nav.js"></script>
+<div class="wrap">
+  <div class="brand">
+    <h1>Updates</h1>
+  </div>
+  <p class="lead">Everything on this box works offline. Updates are the only thing that ever uses the internet, and only when you tap a button below. Every update is checked for the Stillwave signature before it's installed.</p>
+
+  <div class="card">
+    <div class="uver"><span class="ulabel">Installed version</span><b id="uVer">—</b></div>
+    <p class="note" id="uSrc"></p>
+    <div class="row uact">
+      <button type="button" id="uCheck" class="primary">Check for updates</button>
+    </div>
+    <div id="uMsg" class="umsg hide" role="status" aria-live="polite"></div>
+    <div id="uAvail" class="hide">
+      <div class="unew"><span class="ulabel">Available</span><b id="uNewVer"></b><span class="note" id="uNewMeta"></span></div>
+      <div class="unotes" id="uNotes"></div>
+      <div class="row uact"><button type="button" id="uInstall" class="primary">Install</button></div>
+    </div>
+  </div>
+
+  <div id="uConfirm" class="confirm hide" role="alertdialog" aria-live="assertive">
+    <p id="uConfirmText"></p>
+    <div class="row uact">
+      <button type="button" id="uGo" class="primary">Install now</button>
+      <button type="button" id="uNo">Cancel</button>
+    </div>
+  </div>
+
+  <div id="uProg" class="card hide" aria-live="polite">
+    <h2 id="uProgTitle">Updating…</h2>
+    <div class="ubar" aria-hidden="true"><div id="uBarFill"></div></div>
+    <ol class="usteps" id="uSteps">
+      <li data-s="download">Download</li><li data-s="verify">Check signature</li><li data-s="install">Install</li><li data-s="check">Check it works</li>
+    </ol>
+    <p id="uProgMsg"></p>
+    <p class="note" id="uProgNote">Keep the box powered. You can close this page; the update carries on by itself.</p>
+  </div>
+
+  <div id="uResult" class="card hide" role="status" aria-live="polite">
+    <h2 id="uResTitle"></h2>
+    <p id="uResMsg"></p>
+    <div class="row uact">
+      <button type="button" id="uReload" class="primary hide">Reload page</button>
+      <button type="button" id="uDetails">Show details</button>
+    </div>
+    <pre id="uLog" class="ulog hide"></pre>
+  </div>
+
+  <div class="card">
+    <h2>Install from file</h2>
+    <p class="note">No internet needed. Pick the <b>.ota</b> file (or the <b>.tar.gz</b> and its <b>.sig</b> together) from your phone, laptop or a USB stick.</p>
+    <label class="filepick" id="uPickLbl"><input type="file" id="uFile" multiple><span id="uPickTxt">Choose update file…</span></label>
+    <div class="row uact"><button type="button" id="uUpload" disabled>Check file</button></div>
+    <div id="uFileMsg" class="umsg hide" role="status" aria-live="polite"></div>
+    <div id="uFileAvail" class="hide">
+      <div class="unotes" id="uFileNotes"></div>
+      <div class="row uact"><button type="button" id="uFileInstall" class="primary">Install from file</button></div>
+    </div>
+  </div>
+
+  <details class="card usrc">
+    <summary>Update source</summary>
+    <p class="note">Where “Check for updates” looks: a folder holding <code>latest.json</code>, e.g. <code>192.168.1.50 8000</code> (becomes <code>http://192.168.1.50:8000/</code>) (a laptop running <code>python3 -m http.server 8000</code> on the same Wi‑Fi) or a GitHub Releases address.</p>
+    <div class="ctl"><label class="grow">Address <input id="uUrl" placeholder="192.168.1.50 8000" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url"></label></div>
+    <div class="row uact"><button type="button" id="uUrlSave">Save address</button></div>
+    <p class="note" id="uUrlMsg"></p>
+  </details>
+</div>
+<script src="/mode.js"></script>
+<script src="/power.js"></script>
+<script src="/screen.js"></script>
+<script src="/kbd.js"></script>
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const show = (el, on) => $(el).classList.toggle('hide', !on);
+  let ST = {}, offer = null, fileTok = null, polling = false, failures = 0;
+
+  async function api(path, opt) {
+    const r = await fetch(path, Object.assign({cache: 'no-store'}, opt || {}));
+    let j = null; try { j = await r.json(); } catch (e) {}
+    if (!j) throw new Error('HTTP ' + r.status);
+    return j;
+  }
+  const post = (path, body) => api(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+  function msg(el, text, kind) { const m = $(el); m.textContent = text || ''; m.className = 'umsg ' + (kind || ''); m.classList.toggle('hide', !text); }
+  function mb(n) { return n ? (n / 1048576).toFixed(1) + ' MB' : ''; }
+
+  function render(d) {
+    ST = d || {};
+    $('uVer').textContent = ST.version || '—';
+    $('uSrc').textContent = ST.update_url ? 'Update source: ' + ST.update_url : 'No update source set yet (see “Update source” below), or install from a file.';
+    if ($('uUrl') !== document.activeElement) $('uUrl').value = ST.update_url || '';
+  }
+
+  // ---------- check (only on tap) ----------
+  $('uCheck').onclick = async () => {
+    show('uAvail', false); show('uResult', false); offer = null;
+    $('uCheck').disabled = true; msg('uMsg', 'Checking…');
+    try {
+      const d = await post('/api/update/check');
+      if (!d.ok) { msg('uMsg', d.message || 'Couldn’t check for updates.', d.reason === 'offline' ? 'warn' : 'err'); return; }
+      if (d.available) {
+        offer = d;
+        msg('uMsg', '');
+        $('uNewVer').textContent = d.latest;
+        $('uNewMeta').textContent = [mb(d.size), d.released ? d.released.slice(0, 10) : ''].filter(Boolean).join(' · ');
+        $('uNotes').textContent = d.notes || 'No release notes.';
+        $('uInstall').textContent = 'Install ' + d.latest;
+        show('uAvail', true);
+      } else {
+        msg('uMsg', d.message || ('Up to date (' + (d.current || ST.version) + ').'), d.latest && d.message && d.message.includes('needs') ? 'warn' : 'ok');
+      }
+    } catch (e) {
+      msg('uMsg', 'This box didn’t answer. Reload the page and try again.', 'err');
+    } finally { $('uCheck').disabled = false; }
+  };
+
+  // ---------- confirm + install ----------
+  let pending = null;
+  function confirmInstall(kind, ver) {
+    pending = {kind, ver};
+    $('uConfirmText').textContent = 'Install ' + ver + '? The radio and this page pause for about a minute while Trace updates. ' +
+      'Your map, Wi‑Fi, hotspot, speaker and kiosk settings are kept. If the new version doesn’t pass its checks, Trace goes back to ' + (ST.version || 'this version') + ' by itself.';
+    show('uConfirm', true);
+    $('uConfirm').scrollIntoView({block: 'center', behavior: 'smooth'});
+  }
+  $('uInstall').onclick = () => offer && confirmInstall('url', offer.latest);
+  $('uNo').onclick = () => { show('uConfirm', false); pending = null; };
+  $('uGo').onclick = async () => {
+    if (!pending) return;
+    const p = pending; pending = null;
+    show('uConfirm', false); show('uAvail', false); show('uFileAvail', false); show('uResult', false); msg('uMsg', ''); msg('uFileMsg', '');
+    try {
+      const d = p.kind === 'url' ? await post('/api/update/install', {version: p.ver}) : await post('/api/update/install-file', {token: fileTok});
+      if (!d.ok) { result(false, 'Not installed', d.message || 'The update could not start.'); return; }
+      startProgress(p.ver);
+    } catch (e) { result(false, 'Not installed', 'This box didn’t answer. Reload the page and try again.'); }
+  };
+
+  // ---------- progress ----------
+  const STEP = {queued: 'download', starting: 'download', checking_source: 'download', downloading: 'download', verifying: 'verify',
+                staging: 'verify', installing: 'install', checking: 'check', rolling_back: 'check'};
+  function startProgress(ver) {
+    show('uProg', true); show('uResult', false);
+    $('uProgTitle').textContent = 'Updating to ' + (ver || 'the new version') + '…';
+    $('uCheck').disabled = $('uUpload').disabled = true;
+    failures = 0;
+    if (!polling) { polling = true; poll(); }
+  }
+  function paint(s) {
+    const step = ({verify:'verify', extract:'verify', install:'install', restart:'install', check:'check', rollback:'check'})[s.step] || STEP[s.state] || 'download';
+    let past = true;
+    document.querySelectorAll('#uSteps li').forEach(li => {
+      const cur = li.dataset.s === step;
+      li.className = cur ? 'on' : (past ? 'done' : '');
+      if (cur) past = false;
+    });
+    // 1.0.8.2: sdr-update publishes an overall percent (s.step + s.pct) for verify / extract / install / health check
+    const pct = s.step && s.pct != null ? s.pct :
+      s.state === 'downloading' && s.pct != null ? s.pct * 0.35 :
+      ({queued: 2, starting: 3, checking_source: 4, verifying: 38, staging: 42, installing: 55, checking: 85, rolling_back: 90})[s.state] || 5;
+    $('uBarFill').style.width = Math.max(3, Math.min(100, pct)) + '%';
+    $('uProgMsg').textContent = (s.step && s.pct != null ? s.pct + '% · ' : '') + (s.message || '');
+    if (s.state === 'rolling_back') $('uProgTitle').textContent = 'Going back to ' + (s.from || 'the previous version') + '…';
+  }
+  async function poll() {
+    let s = null;
+    try {
+      const d = await api('/api/update');
+      render(d); s = d.status; failures = 0;
+    } catch (e) {
+      failures++;
+      $('uProgMsg').textContent = 'Trace is restarting its web app. This page reconnects by itself…';
+    }
+    if (s) {
+      if (['done', 'rolled_back', 'failed', 'error'].includes(s.state)) {
+        polling = false; show('uProg', false);
+        $('uCheck').disabled = false; $('uUpload').disabled = !$('uFile').files.length;
+        if (s.state === 'done') result(true, 'Updated to ' + (s.version || ST.version), (s.message || '') + ' Reload the page to see what’s new.', true);
+        else if (s.state === 'rolled_back') result(false, 'Went back to ' + (s.from || ST.version), s.message);
+        else result(false, 'Update not installed', s.message);
+        return;
+      }
+      paint(s);
+    }
+    if (failures > 400) { polling = false; result(false, 'Lost contact', 'The box hasn’t answered for a long time. Power-cycle it, then open this page again.'); return; }
+    setTimeout(poll, failures ? 2500 : 1200);
+  }
+  function result(ok, title, text, reload) {
+    show('uResult', true);
+    $('uResTitle').textContent = title; $('uResTitle').className = ok ? 'ok' : 'err';
+    $('uResMsg').textContent = text || '';
+    show('uReload', !!reload); show('uLog', false); $('uDetails').textContent = 'Show details';
+  }
+  $('uReload').onclick = () => location.reload();
+  $('uDetails').onclick = async () => {
+    const open = $('uLog').classList.contains('hide');
+    show('uLog', open); $('uDetails').textContent = open ? 'Hide details' : 'Show details';
+    if (open) {
+      try { const d = await api('/api/update/log'); $('uLog').textContent = (d.lines || []).join('\n') || '(log is empty)'; $('uLog').scrollTop = 1e9; }
+      catch (e) { $('uLog').textContent = 'Log not available.'; }
+    }
+  };
+
+  // ---------- install from file ----------
+  $('uFile').onchange = () => {
+    const fs = [...$('uFile').files];
+    $('uPickTxt').textContent = fs.length ? fs.map(f => f.name).join(' + ') : 'Choose update file…';
+    $('uUpload').disabled = !fs.length || polling;
+    show('uFileAvail', false); msg('uFileMsg', ''); fileTok = null;
+  };
+  $('uUpload').onclick = async () => {
+    const fs = [...$('uFile').files];
+    if (!fs.length) return;
+    const bad = fs.filter(f => !/\.(ota|tar\.gz|tgz|sig)$/i.test(f.name));
+    if (bad.length) { msg('uFileMsg', bad[0].name + ' is not a Trace update. Pick the .ota file (or the .tar.gz plus its .sig).', 'err'); return; }
+    const fd = new FormData(); fs.forEach(f => fd.append('file', f, f.name));
+    $('uUpload').disabled = true; msg('uFileMsg', 'Uploading ' + Math.round(fs.reduce((a, f) => a + f.size, 0) / 1048576) + ' MB and checking the signature (up to a minute)…');
+    try {
+      const r = await fetch('/api/update/upload', {method: 'POST', body: fd, cache: 'no-store'});
+      let d = null; try { d = await r.json(); } catch (e) {}
+      if (!d) { msg('uFileMsg', r.status === 413 ? 'That file is larger than this box accepts (over 400 MB). Use the SSH install instead.' : r.status === 504 ? 'The box took too long checking the file. Try again, or install over SSH.' : 'Upload failed (HTTP ' + r.status + '). Try again.', 'err'); return; }
+      if (!d.ok) { msg('uFileMsg', d.message || 'That file was rejected.', 'err'); return; }
+      fileTok = d.token;
+      $('uFileNotes').textContent = 'Version ' + d.version + (d.notes ? ' · ' + d.notes : '');
+      if (d.installable) {
+        msg('uFileMsg', d.message || 'Signed Stillwave update.', 'ok');
+        $('uFileInstall').textContent = 'Install ' + d.version;
+        $('uFileInstall').onclick = () => confirmInstall('file', d.version);
+        show('uFileAvail', true);
+      } else { msg('uFileMsg', d.message, 'warn'); $('uFileNotes').textContent && show('uFileAvail', false); }
+    } catch (e) { msg('uFileMsg', 'Upload failed (the box didn’t answer). Try again.', 'err'); }
+    finally { $('uUpload').disabled = !$('uFile').files.length; }
+  };
+
+  // ---------- update source ----------
+  $('uUrlSave').onclick = async () => {
+    $('uUrlMsg').textContent = 'Saving…';
+    try {
+      const d = await post('/api/update/url', {url: $('uUrl').value.trim()});
+      $('uUrlMsg').textContent = d.ok ? (d.update_url ? 'Saved. Tap “Check for updates”.' : 'Cleared.') : (d.message || 'Not saved.');
+      if (d.ok) { ST.update_url = d.update_url; $('uUrl').value = d.update_url || ''; render(ST); }   // 1.1.0: shows the normalized address
+    } catch (e) { $('uUrlMsg').textContent = 'Not saved (the box didn’t answer).'; }
+  };
+
+  // ---------- page load: local state only (no network check) ----------
+  api('/api/update').then(d => {
+    render(d);
+    const s = d.status;
+    if (d.running || (s && ['queued', 'starting', 'checking_source', 'downloading', 'verifying', 'staging', 'installing', 'checking', 'rolling_back'].includes(s.state))) {
+      startProgress(s && s.version);
+    } else if (d.last && d.last.finished && Date.now() / 1000 - d.last.finished < 900) {
+      const l = d.last;
+      if (l.state === 'done') result(true, 'Updated to ' + l.version, l.message);
+      else if (l.state === 'rolled_back') result(false, 'Went back to ' + (l.from || d.version), l.message);
+      else result(false, 'Last update not installed', l.message);
+    }
+  }).catch(() => $('uVer').textContent = '—');
+})();
+</script>
+</body>

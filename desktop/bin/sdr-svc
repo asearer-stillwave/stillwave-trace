@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -eu
+ACTION="${1:-}"
+UNIT="${2:-}"
+ALLOWED='^(sdr-fm|sdr-web|icecast2|nginx)$'
+MODE_BIN=/usr/local/sbin/sdr-mode
+case "$ACTION" in
+  status)
+    for u in sdr-fm sdr-spectrum sdr-detect sdr-adsb sdr-web icecast2 nginx; do
+      st="$(systemctl is-active "$u" 2>/dev/null || true)"
+      echo "$u=${st:-unknown}"
+    done
+    echo "dongle-mode=$("$MODE_BIN" current 2>/dev/null || echo unknown)"
+    ;;
+  restart)
+    [[ "$UNIT" =~ $ALLOWED ]] || { echo "unit not allowed: $UNIT" >&2; exit 2; }
+    systemctl restart "$UNIT"
+    echo "restarted $UNIT"
+    ;;
+  restart-radio)
+    systemctl restart icecast2 sdr-fm
+    echo "restarted icecast2 sdr-fm"
+    ;;
+  restart-all)
+    # Restart whatever owns the dongle (fm / spectrum / detect / adsb) instead of forcing FM.
+    # sdr-web goes last because it is the caller.
+    systemctl restart icecast2 nginx
+    "$MODE_BIN" restart || true
+    systemctl restart sdr-web
+    echo "restarted icecast2 nginx $("$MODE_BIN" current 2>/dev/null) sdr-web"
+    ;;
+  *)
+    echo "usage: sdr-svc status|restart UNIT|restart-radio|restart-all" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,22 @@
+[Unit]
+Description=SDR station control page
+After=network.target sdr-net.service
+Wants=sdr-net.service
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/local/lib/sdr-station/web
+Environment=PYTHONUNBUFFERED=1
+Environment=SDR_STATIONS_CONF=/etc/sdr/stations.conf
+Environment=SDR_ENV_FILE=/etc/sdr/fm.env
+Environment=SDR_STREAM_SERVICE=sdr-fm.service
+Environment=SDR_SELECT_BIN=/usr/local/sbin/sdr-select-station
+Environment=SDR_WEB_PORT=8080
+ExecStart=/usr/bin/python3 -u /usr/local/lib/sdr-station/web/radio_control.py
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

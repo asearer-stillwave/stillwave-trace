@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Create or replace a preset line, then apply it live.
+# Usage: sdr-save-preset id name freq gain audio_rate mp3_bitrate highpass lowpass ppm
+set -eu
+SID="${1:?id}"
+NAME="${2:?name}"
+FREQ="${3:?freq}"
+GAIN="${4:?gain}"
+RATE="${5:-32000}"
+BR="${6:-128k}"
+HP="${7:-30}"
+LP="${8:-15000}"
+PPM="${9:-0}"
+CONF="${SDR_STATIONS_CONF:-/etc/sdr/stations.conf}"
+LINE="${SID}|${NAME}|${FREQ}|${GAIN}|${RATE}|${BR}|${HP}|${LP}|${PPM}"
+
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+if [[ -f "$CONF" ]]; then
+  grep -vE "^${SID}\|" "$CONF" | grep -v '^$' > "$tmp" || true
+else
+  echo "# id|name|freq|gain|audio_rate|mp3_bitrate|highpass|lowpass|ppm" > "$tmp"
+fi
+echo "$LINE" >> "$tmp"
+install -m 644 "$tmp" "$CONF"
+
+/usr/local/sbin/sdr-apply-settings "$SID" "$NAME" "$FREQ" "$GAIN" "$RATE" "$BR" "$HP" "$LP" "$PPM"
+echo "Saved preset ${SID}"

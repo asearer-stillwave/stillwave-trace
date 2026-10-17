@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Stillwave Trace: reboot or shut down the Pi (used by the web Power menu and from SSH).
+#   sudo sdr-power reboot      reboot in about 1 second
+#   sudo sdr-power poweroff    shut down in about 1 second (wait for the green light to stop blinking)
+#   sudo sdr-power eeprom-status | eeprom-setup   Pi 4 bootloader: POWER_OFF_ON_HALT=1 + WAKE_ON_GPIO=0 (full power-off after a shutdown)
+# Only these exact arguments are accepted (the web page may only use reboot / poweroff). The action runs ~1 s later as a transient systemd timer,
+# so the caller (the web page) gets its answer before the network goes away.
+set -euo pipefail
+LOG="${SDR_POWER_LOG:-/var/log/sdr-power.log}"
+DRY="${SDR_POWER_DRY:-0}"     # test hook: print the command instead of running it
+
+usage() { sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; }
+case "${1:-}" in
+  eeprom-status|eeprom-setup)
+    if [[ $EUID -ne 0 && "$DRY" != 1 ]]; then echo "Run: sudo sdr-power $*" >&2; exit 1; fi
+    exec python3 "${SDR_BOOT_SETUP:-/usr/local/lib/sdr-station/bin/sdr-boot-setup}" "$@" ;;
+esac
+[[ $# -eq 1 ]] || { usage >&2; exit 2; }
+case "$1" in
+  reboot)   verb=reboot;   what="reboot" ;;
+  poweroff) verb=poweroff; what="shut down" ;;
+  -h|--help) usage; exit 0 ;;
+  *) echo "sdr-power: unknown action '$1' (use: reboot | poweroff | eeprom-status | eeprom-setup)" >&2; exit 2 ;;
+esac
+if [[ $EUID -ne 0 && "$DRY" != 1 ]]; then echo "Run: sudo sdr-power $1" >&2; exit 1; fi
+
+who="${SUDO_USER:-$(id -un)}"
+echo "$(date '+%Y-%m-%d %H:%M:%S %z') $verb requested by $who (ppid $PPID: $(ps -o comm= -p "$PPID" 2>/dev/null || echo ?))" >>"$LOG" 2>/dev/null || true
+
+if [[ "$DRY" == 1 ]]; then
+  echo "[dry-run] sync; systemd-run --collect --on-active=1 --unit=sdr-power-$verb-$$ /usr/bin/systemctl $verb"
+  echo "{\"ok\": true, \"action\": \"$verb\", \"in_seconds\": 1}"
+  exit 0
+fi
+sync
+if systemd-run --quiet --collect --on-active=1 --timer-property=AccuracySec=100ms \
+     --unit="sdr-power-$verb-$$" /usr/bin/systemctl "$verb" 2>>"$LOG"; then
+  :
+else
+  # fallback without systemd-run: detached shell
+  nohup setsid sh -c "sleep 1; exec /usr/bin/systemctl $verb" >/dev/null 2>&1 &
+fi
+echo "Trace will $what in about 1 second." >&2
+echo "{\"ok\": true, \"action\": \"$verb\", \"in_seconds\": 1}"

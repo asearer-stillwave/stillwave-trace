@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Tune to a raw frequency without a preset. Usage: sdr-tune-freq 95.5M [gain]
+set -eu
+FREQ="${1:?usage: sdr-tune-freq 95.5M [gain]}"
+GAIN="${2:-4}"
+ENV_FILE="${SDR_ENV_FILE:-/etc/sdr/fm.env}"
+SERVICE="${SDR_STREAM_SERVICE:-sdr-fm.service}"
+NAME="Tune ${FREQ}"
+
+FM_ENV_BIN="${SDR_FM_ENV_BIN:-/usr/local/sbin/sdr-fm-env}"
+# 1.0.8.2: update only these keys, keep everything else (FM tune is always wideband FM)
+SDR_ENV_FILE="$ENV_FILE" "$FM_ENV_BIN" set STATION_ID=manual "STATION_NAME=${NAME}" "FREQ=${FREQ}" "GAIN=${GAIN}" -DEMOD -SQUELCH -BAND
+timeout 6 systemctl stop "$SERVICE" || systemctl kill "$SERVICE" || true
+systemctl start "$SERVICE"
+echo "Tuned ${FREQ} gain=${GAIN}"

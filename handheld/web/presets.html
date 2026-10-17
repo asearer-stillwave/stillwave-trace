@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trace">
+<title>Stillwave Trace · Presets</title>
+<link rel="stylesheet" href="/fieldnote.css">
+</head>
+<body>
+<script src="/nav.js"></script>
+<div class="wrap">
+  <div class="brand">
+    <h1>Preset <span class="acc">settings</span></h1>
+  </div>
+  <p class="lead">Listen applies settings to the live stream without saving. Save writes them onto that preset. Either one switches the dongle back to FM if it was in another mode.</p>
+  <div class="now" id="now">Now playing: …</div>
+  <div class="row" id="list"></div>
+  <form id="form" class="grid2">
+    <label>Preset id <input name="id" required></label>
+    <label>Display name <input name="name" required></label>
+    <label>Frequency <input name="frequency" placeholder="98.705M" required></label>
+    <label>SDR gain (dB) <input name="gain" value="4"></label>
+    <label>PPM correction <input name="ppm" value="0"></label>
+    <label>Audio rate
+      <select name="audio_rate">
+        <option>16000</option><option>24000</option>
+        <option selected>32000</option>
+        <option>44100</option><option>48000</option>
+      </select>
+    </label>
+    <label>MP3 bitrate
+      <select name="mp3_bitrate">
+        <option>64k</option><option>96k</option>
+        <option selected>128k</option>
+        <option>160k</option><option>192k</option>
+      </select>
+    </label>
+    <label>High-pass Hz <input name="highpass" value="30"></label>
+    <label>Low-pass Hz <input name="lowpass" value="15000"></label>
+    <div class="span2 row">
+      <button type="button" id="listen" class="primary">Listen (don’t save)</button>
+      <button type="button" id="save">Save preset</button>
+      <button type="button" id="del" class="danger">Delete preset</button>
+    </div>
+  </form>
+  <audio id="player" controls preload="none"></audio>
+  <p class="status" id="msg"></p>
+  <p class="note">Gain on a Nooelec R820T snaps to the nearest hardware step (3.7, 7.7, 12.5…). Start low on strong local signals.</p>
+</div>
+<script src="/mode.js"></script>
+<script src="/power.js"></script>
+<script src="/screen.js"></script>
+<script src="/kbd.js"></script>
+<script>
+function setMsg(t,k){ const el=document.getElementById('msg'); el.className='status '+(k||''); el.textContent=t||''; }
+function formData(){
+  const f = document.getElementById('form');
+  return {
+    id: f.id.value.trim(),
+    name: f.name.value.trim(),
+    frequency: f.frequency.value.trim(),
+    gain: f.gain.value.trim() || '4',
+    ppm: f.ppm.value.trim() || '0',
+    audio_rate: f.audio_rate.value,
+    mp3_bitrate: f.mp3_bitrate.value,
+    highpass: f.highpass.value.trim() || '30',
+    lowpass: f.lowpass.value.trim() || '15000'
+  };
+}
+function fill(st){
+  const f = document.getElementById('form');
+  f.id.value = st.id || '';
+  f.name.value = st.name || '';
+  f.frequency.value = st.frequency || '';
+  f.gain.value = st.gain || '4';
+  f.ppm.value = st.ppm || '0';
+  f.audio_rate.value = st.audio_rate || '32000';
+  f.mp3_bitrate.value = st.mp3_bitrate || '128k';
+  f.highpass.value = st.highpass || '30';
+  f.lowpass.value = st.lowpass || '15000';
+}
+async function jfetch(url, opt){
+  const r = await fetch(url, Object.assign({cache:'no-store'}, opt||{}));
+  const t = await r.text();
+  let j={}; try{ j=JSON.parse(t);}catch(e){ j={error:t||r.statusText}; }
+  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+async function reconnect(){
+  const readyEnd = Date.now()+15000;
+  while(Date.now()<readyEnd){
+    try{
+      const s = await jfetch('/api/stream-ready');
+      if(s.ok) break;
+    }catch(e){}
+    await new Promise(r=>setTimeout(r,400));
+  }
+  const old = document.getElementById('player');
+  const neu = old.cloneNode(false);
+  neu.id='player'; neu.controls=true;
+  old.replaceWith(neu);
+  neu.src='/play.mp3?ts='+Date.now();
+  neu.play().catch(()=>{});
+}
+async function refresh(){
+  const s = await jfetch('/api/status');
+  const cur = s.current || {};
+  document.getElementById('now').textContent =
+    'Now playing: '+(cur.name||'?')+'  '+(cur.frequency||'')+'  gain '+(cur.gain||'')+'  '+(cur.mp3_bitrate||'');
+  const box = document.getElementById('list');
+  box.innerHTML='';
+  (s.stations||[]).forEach(st => {
+    const b=document.createElement('button');
+    b.className='station'+(cur.id===st.id?' active':'');
+    b.textContent=st.name;
+    b.onclick=()=>fill(st);
+    box.appendChild(b);
+  });
+  if(cur.id) fill(cur);
+}
+async function post(path){
+  const d = formData();
+  if(!d.id || !d.name || !d.frequency) throw new Error('id, name, and frequency are required');
+  setMsg('Applying…','ok');
+  const j = await jfetch(path,{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d)});
+  await reconnect();
+  await refresh();
+  setMsg(j.message||'ok','ok');
+}
+document.getElementById('listen').onclick = async () => {
+  try{ await post('/api/preview'); }catch(e){ setMsg(e.message,'err'); }
+};
+document.getElementById('save').onclick = async () => {
+  try{ await post('/api/preset'); }catch(e){ setMsg(e.message,'err'); }
+};
+document.getElementById('del').onclick = async () => {
+  const d = formData();
+  if(!d.id){ setMsg('Pick a preset first','err'); return; }
+  if(!confirm('Delete preset '+d.id+' ('+d.name+')?')) return;
+  try{
+    const j = await jfetch('/api/preset/delete',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:d.id})});
+    await refresh();
+    setMsg(j.message||'Deleted','ok');
+  }catch(e){ setMsg(e.message,'err'); }
+};
+refresh().catch(e=>setMsg(e.message,'err'));
+</script>
+</body>
+</html>

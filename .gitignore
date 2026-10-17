@@ -1,0 +1,20 @@
+# secrets and signing material: never commit
+*.pem
+keys/
+licenses/
+trace-unit-keys.txt
+.env
+*.sig
+
+# build output
+*.zip
+*.ota
+*.tar.gz
+__pycache__/
+*.pyc
+
+# large map data (regenerate on the Pi with `sudo sdr-maps fetch`)
+*.pmtiles
+
+# OS junk
+.DS_Store

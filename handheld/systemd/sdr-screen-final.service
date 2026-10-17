@@ -1,0 +1,17 @@
+[Unit]
+Description=Stillwave Trace: kiosk backlight off as the last step of a power-off (left on for a reboot)
+DefaultDependencies=no
+# Started before (so stopped AFTER) the kiosk, the web app and sdr-screen; stopped before shutdown.target.
+After=local-fs.target
+Before=sdr-screen.service sdr-web.service nginx.service fieldnote-kiosk.service shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/local/sbin/sdr-screen final
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

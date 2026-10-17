@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trace">
+<title>Stillwave Trace · Audio</title>
+<link rel="stylesheet" href="/fieldnote.css">
+</head>
+<body class="page-audio">
+<script src="/nav.js"></script>
+<div class="wrap">
+  <div class="brand">
+    <h1>Audio <span class="acc">output</span></h1>
+  </div>
+  <p class="lead">Play FM radio from the box itself on a Bluetooth speaker, stream it to your phone, or both. The choice is saved and comes back after a reboot.</p>
+
+  <div class="card">
+    <div class="now" id="audnow">Audio: …</div>
+    <p class="note" id="auddetail"></p>
+    <p class="note" id="audjob"></p>
+  </div>
+
+  <div class="card" id="devcard" hidden>
+    <h2>Output</h2>
+    <div class="seg" id="devsel" role="radiogroup" aria-label="Audio output device">
+      <button type="button" class="big" data-dev="hdmi" role="radio">HDMI</button>
+      <button type="button" class="big" data-dev="jack" role="radio">Headphone jack</button>
+      <button type="button" class="big" data-dev="bluetooth" role="radio">Bluetooth</button>
+      <button type="button" class="big" data-dev="phone" role="radio">Phone stream</button>
+    </div>
+    <p class="note">HDMI plays through the monitor's speakers. Headphone jack is the Pi's 3.5 mm socket. Changing this restarts the audio stream for a second.</p>
+  </div>
+
+  <div class="card" id="wherecard">
+    <h2>Where FM plays</h2>
+    <div class="seg" id="outsel" role="radiogroup" aria-label="Audio output">
+      <button type="button" class="big" data-out="phone" role="radio">Phone stream</button>
+      <button type="button" class="big" data-out="speaker" role="radio">Pi speaker</button>
+      <button type="button" class="big" data-out="both" role="radio">Both</button>
+    </div>
+    <p class="note" id="outnote">Phone stream: listen on the Listen page on your phone. Pi speaker: the box plays it on the Bluetooth speaker (or its own audio jack/HDMI when no speaker is connected). Changing this restarts the FM stream for a second.</p>
+  </div>
+
+  <div class="card" id="btcard">
+    <h2>Bluetooth speaker</h2>
+    <div id="saved" class="spk hide">
+      <div class="spkname"><b id="spkname"></b> <span class="nmeta" id="spkstate"></span></div>
+      <div class="row spkact">
+        <button type="button" class="big primary" id="connect">Connect</button>
+        <button type="button" class="big" id="disconnect">Disconnect</button>
+        <button type="button" class="big danger" id="forget">Forget</button>
+      </div>
+    </div>
+    <div class="row">
+      <button type="button" class="big primary" id="scan">Search for speakers</button>
+    </div>
+    <div class="netlist" id="found"><p class="note">Nothing searched yet.</p></div>
+    <div id="others" class="hide">
+      <h2 class="sub">Other paired devices</h2>
+      <div class="netlist" id="paired"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Over SSH</h2>
+    <p class="note">On the box: <code>sudo sdr-bt status</code>, <code>sudo sdr-bt scan</code>, <code>sudo sdr-bt pair AA:BB:CC:DD:EE:FF</code>, <code>sudo sdr-bt connect</code>, <code>sudo sdr-bt output both</code>. Log: <code>tail -50 /var/log/sdr-bt.log</code></p>
+  </div>
+  <p class="status" id="msg"></p>
+</div>
+<script src="/mode.js"></script>
+<script src="/power.js"></script>
+<script src="/screen.js"></script>
+<script src="/kbd.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let A = {}, lastJob = '', pollT = null, scanTime = null;
+function setMsg(t,k){ const e=$('msg'); e.className='status '+(k||''); e.textContent=t||''; }
+async function jfetch(url, opt){
+  const r = await fetch(url, Object.assign({cache:'no-store'}, opt||{}));
+  const t = await r.text();
+  let j={}; try{ j=JSON.parse(t);}catch(e){ j={error:t||r.statusText}; }
+  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+function post(url, body){ return jfetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); }
+function el(tag, cls, text){ const e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; }
+const OUTNAME = {phone:'phone stream', speaker:'Pi speaker', both:'phone stream + Pi speaker'};
+function busy(){ return !!(A.job && A.job.state==='running'); }
+
+function render(a){
+  A = a || {};
+  const sp = A.speaker;
+  let now;
+  if (!A.bluetooth) now = 'Bluetooth: not available on this box';
+  else if (sp && sp.connected) now = 'Speaker: ' + (sp.name||sp.mac) + ' connected' + (A.speaker_default ? ' · Pi audio plays on it' : '');
+  else if (sp) now = 'Speaker: ' + (sp.name||sp.mac) + ' not connected';
+  else now = 'No Bluetooth speaker paired yet';
+  $('audnow').textContent = now;
+  const bits = ['FM goes to: ' + (OUTNAME[A.output]||A.output||'?')];
+  if (!A.pulse) bits.push('Pi audio service is not running (see README: Bluetooth speaker)');
+  else if (A.default_sink && !A.speaker_default) bits.push('Pi speaker output: onboard');
+  if (A.bluetooth && !A.powered) bits.push('Bluetooth is off (it turns on when you search)');
+  $('auddetail').textContent = bits.join(' · ');
+  const J = A.job;
+  const jtxt = J ? ({scan:'Search',pair:'Pairing',connect:'Connect'}[J.action]||J.action) + ': ' + (J.state==='running' ? (J.message||'working')+'…' : (J.state==='ok'?'OK – ':'FAILED – ')+(J.message||'')) : '';
+  $('audjob').textContent = jtxt;
+  $('audjob').className = 'note ' + (J ? (J.state==='ok'?'ok':J.state==='failed'?'err':'') : '');
+  document.querySelectorAll('#outsel button').forEach(b => { const on=b.dataset.out===A.output; b.classList.toggle('on',on); b.setAttribute('aria-checked', on?'true':'false'); });
+  // saved speaker
+  $('saved').classList.toggle('hide', !sp);
+  if (sp) {
+    $('spkname').textContent = sp.name || sp.mac;
+    $('spkstate').textContent = (sp.connected ? 'connected' : sp.paired ? 'paired, not connected' : 'not paired') + ' · ' + sp.mac;
+    $('connect').classList.toggle('hide', !!sp.connected);
+    $('disconnect').classList.toggle('hide', !sp.connected);
+  }
+  ['connect','disconnect','forget','scan'].forEach(id => $(id).disabled = busy());
+  $('scan').textContent = (J && J.state==='running' && J.action==='scan') ? 'Searching…' : 'Search for speakers';
+  // other paired devices
+  const others = (A.paired||[]).filter(d => !sp || d.mac !== sp.mac);
+  $('others').classList.toggle('hide', !others.length);
+  const box = $('paired'); box.innerHTML='';
+  others.forEach(d => box.appendChild(devRow(d, true)));
+}
+
+function devRow(d, isPaired){
+  const b = el('button','net');
+  b.type='button';
+  b.appendChild(el('span','nname', d.name || d.mac));
+  const meta = [];
+  if (d.connected) meta.push('connected'); else if (d.paired) meta.push('paired');
+  if (!d.audio) meta.push('not a speaker?');
+  meta.push(isPaired ? 'tap to use' : 'tap to pair');
+  b.appendChild(el('span','nmeta', meta.join(' · ')));
+  b.disabled = busy();
+  b.onclick = () => pair(d);
+  return b;
+}
+
+let FOUND = null;
+function renderFound(r){
+  if (r !== undefined) FOUND = r;
+  r = FOUND;
+  const box = $('found'); box.innerHTML='';
+  // scan results can be older than the last pair/forget: take paired/connected from live status
+  const live = {}; (A.paired||[]).forEach(d => live[d.mac] = d);
+  const saved = A.speaker && A.speaker.mac;
+  const list = ((r && r.devices) || []).filter(d => d.mac !== saved)
+    .map(d => Object.assign({}, d, live[d.mac] ? {paired:true, connected:live[d.mac].connected} : {paired:false, connected:false}));
+  if (!list.length) { box.appendChild(el('p','note', r && r.time ? (r.devices||[]).length ? 'No other devices found.' : 'No speakers found. Search again.' : 'Nothing searched yet.')); return; }
+  list.forEach(d => box.appendChild(devRow(d, d.paired)));
+}
+
+async function refresh(){
+  try {
+    const a = await jfetch('/api/audio');
+    render(a);
+    const key = JSON.stringify(a.job||null);
+    if (key !== lastJob) {
+      const J = a.job;
+      if (lastJob && J && J.state !== 'running') setMsg(J.message||'', J.state==='ok'?'ok':'err');
+      lastJob = key;
+    }
+    if (a.scan_time && a.scan_time !== scanTime) { scanTime = a.scan_time; renderFound(await jfetch('/api/audio/scan')); }
+    else renderFound();
+  } catch(e) { setMsg('Could not read audio status: '+e.message, 'err'); }
+  clearTimeout(pollT);
+  pollT = setTimeout(refresh, busy() ? 1200 : 5000);
+}
+
+async function act(fn, startMsg){
+  setMsg(startMsg||'Working…');
+  try { const r = await fn(); if (r && r.message) setMsg(r.message,'ok'); else if (!(r && r.started)) setMsg(''); }
+  catch(e){ setMsg(e.message,'err'); }
+  refresh();
+}
+function pair(d){
+  const name = d.name || d.mac;
+  act(() => post('/api/audio/'+(d.paired?'connect':'pair'), {mac:d.mac}), (d.paired?'Connecting to ':'Pairing with ')+name+'… (up to 30 s)');
+}
+$('scan').onclick = () => act(() => post('/api/audio/scan'), 'Searching for about 12 seconds…');
+$('connect').onclick = () => act(() => post('/api/audio/connect', {mac:A.speaker && A.speaker.mac}), 'Connecting… (up to 30 s)');
+$('disconnect').onclick = () => act(() => post('/api/audio/disconnect', {mac:A.speaker && A.speaker.mac}), 'Disconnecting…');
+$('forget').onclick = () => {
+  const sp = A.speaker; if (!sp) return;
+  if (!confirm('Forget '+(sp.name||sp.mac)+'? You will have to pair it again.')) return;
+  act(() => post('/api/audio/forget', {mac:sp.mac}), 'Forgetting…');
+};
+document.querySelectorAll('#outsel button').forEach(b => b.onclick = () => {
+  if (b.dataset.out === A.output) return;
+  act(() => post('/api/audio/output', {output:b.dataset.out}), 'Switching FM to '+OUTNAME[b.dataset.out]+'…');
+});
+refresh();
+</script>
+<script>
+// 1.0.8 desktop edition: one Output choice (HDMI / headphone jack / Bluetooth / phone stream) instead of "Where FM plays"
+(function(){
+  const $ = id => document.getElementById(id);
+  const post = (u, b) => fetch(u, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b)}).then(r => r.json());
+  function mark(k){ document.querySelectorAll('#devsel button').forEach(b => { const on = b.dataset.dev === k; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); }); }
+  fetch('/api/audio/sink', {cache:'no-store'}).then(r => r.json()).then(j => {
+    if(j.edition !== 'desktop') return;
+    $('devcard').hidden = false; $('wherecard').hidden = true;
+    fetch('/api/audio', {cache:'no-store'}).then(r => r.json()).then(a => mark(a.output === 'phone' ? 'phone' : (j.sink === 'auto' ? 'hdmi' : j.sink))).catch(() => mark(j.sink));
+    $('devsel').onclick = async e => {
+      const b = e.target.closest('button'); if(!b) return; const k = b.dataset.dev; mark(k);
+      if(k === 'phone') await post('/api/audio/output', {output:'phone'});
+      else { await post('/api/audio/sink', {sink:k}); await post('/api/audio/output', {output:'speaker'}); }
+      if(window.fieldnoteStrip) window.fieldnoteStrip.refresh();
+    };
+  }).catch(() => {});
+})();
+</script>
+</body>
+</html>

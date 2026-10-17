@@ -1,0 +1,375 @@
+#!/usr/bin/env bash
+# Stillwave Trace: boot + shutdown splash (Plymouth theme "stillwave-trace") on Ubuntu for Raspberry Pi.
+#   sudo sdr-boot-setup --splash on      turn it on (and keep it on through updates)
+#   sudo sdr-boot-setup --splash off     back to the normal text boot (undoes every change below)
+#   sdr-boot-setup --splash status       what is set now
+#   sudo sdr-boot-setup --splash check   pass/fail gate used by the update health check
+#   (install.sh runs "auto": on, unless you turned it off)
+# What "on" changes, all reversible with "off":
+#   - theme files in /usr/share/plymouth/themes/stillwave-trace, set as the default Plymouth theme
+#   - /etc/initramfs-tools/hooks/stillwave-splash (loads the DSI display drivers early) + update-initramfs
+#     (the old /boot/firmware/initrd.img is kept in /var/lib/sdr-splash until it is rebuilt)
+#   - cmdline.txt: adds "quiet splash loglevel=3 vt.global_cursor_default=0 logo.nologo plymouth.ignore-serial-consoles"
+#     (only the ones missing; first-ever copy kept as cmdline.txt.stillwave-orig)
+#   - config.txt: disable_splash=1 in a marked [all] block (first-ever copy kept as config.txt.stillwave-orig)
+#   - plymouth-quit.service drop-in: the last splash frame stays up until the kiosk draws (no console flash)
+# Anything that fails leaves the Pi on its normal text boot; it never makes the Pi unbootable.
+set -u
+R="${SDR_SPLASH_ROOT:-}"
+BOOT="${SDR_SPLASH_BOOT:-$R/boot/firmware}"
+[[ -f "$BOOT/cmdline.txt" || ! -f "$R/boot/cmdline.txt" ]] || BOOT="$R/boot"
+CMDLINE="$BOOT/cmdline.txt"; CONFIG="$BOOT/config.txt"; INITRD="$BOOT/initrd.img"
+LIB="${SDR_SPLASH_LIB:-/usr/local/lib/sdr-station}"
+SRC="${SDR_SPLASH_SRC:-$LIB/plymouth/stillwave-trace}"
+THEMES="${SDR_SPLASH_THEMES:-$R/usr/share/plymouth/themes}"
+THEME=stillwave-trace; TDIR="$THEMES/$THEME"; TFILE="$TDIR/$THEME.plymouth"
+FILES=(stillwave-trace.plymouth stillwave-trace.script bg.png bg-shutdown.png sweep.png hub.png)
+STATE_DIR="${SDR_SPLASH_STATE:-$R/var/lib/sdr-splash}"; STATE="$STATE_DIR/state.env"
+PREF="${SDR_SPLASH_PREF:-$R/etc/sdr/splash.env}"
+HOOK="$R/etc/initramfs-tools/hooks/stillwave-splash"
+DROPIN="$R/etc/systemd/system/plymouth-quit.service.d/stillwave-retain-splash.conf"
+PLYCONF="$R/etc/plymouth/plymouthd.conf"
+KIOSK="$R/etc/systemd/system/fieldnote-kiosk.service"
+TOKENS="quiet splash loglevel=3 vt.global_cursor_default=0 logo.nologo plymouth.ignore-serial-consoles"
+BEGIN="# >>> stillwave-splash >>> (managed by sdr-boot-setup --splash; remove with: sudo sdr-boot-setup --splash off)"
+END="# <<< stillwave-splash <<<"
+TS="$(date +%Y%m%d-%H%M%S)"
+
+say()  { echo "splash: $*"; }
+warn() { echo "splash: WARNING: $*" >&2; }
+get_state() { [[ -f "$STATE" ]] && awk -F= -v k="$1" '$1==k{print substr($0,index($0,"=")+1); exit}' "$STATE" || true; }
+set_state() {
+  mkdir -p "$STATE_DIR"; touch "$STATE"
+  local tmp; tmp="$(mktemp)"; grep -v "^$1=" "$STATE" >"$tmp" || true; echo "$1=$2" >>"$tmp"; mv "$tmp" "$STATE"; chmod 644 "$STATE"
+}
+pref() { [[ -f "$PREF" ]] && sed -n 's/^SPLASH=//p' "$PREF" | tail -1 || true; }
+set_pref() { mkdir -p "$(dirname "$PREF")"; printf '# Trace boot splash: on|off (sudo sdr-boot-setup --splash on|off)\nSPLASH=%s\n' "$1" >"$PREF"; chmod 644 "$PREF"; }
+sha() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
+need_root() { [[ $EUID -eq 0 ]] || { echo "run with sudo" >&2; exit 1; }; }
+reload() { [[ -n "${SDR_SPLASH_NO_SYSTEMD:-}" ]] || systemctl daemon-reload 2>/dev/null || true; }
+have_plugin() {
+  [[ -n "${SDR_SPLASH_ASSUME_PLUGIN:-}" ]] && return 0
+  compgen -G "$R/usr/lib/*/plymouth/script.so" >/dev/null || compgen -G "$R/usr/lib/plymouth/script.so" >/dev/null
+}
+have_plymouth() { command -v plymouth >/dev/null && have_plugin; }
+
+# cmdline.txt: one line; prints the tokens it added (add) / removes exactly the given tokens (remove)
+cmdline_edit() {  # add|remove IN OUT [tokens...]
+  python3 - "$@" <<'PY'
+import sys
+mode, src, dst, *toks = sys.argv[1:]
+raw = open(src, newline="").read()
+nl = raw[len(raw.rstrip("\r\n")):]
+lines = [l for l in raw.splitlines() if l.strip()]
+if len(lines) != 1 or not any(t.startswith("root=") for t in lines[0].split()):
+    print("BAD cmdline.txt is not a single line with root=", file=sys.stderr); sys.exit(3)
+line = lines[0].rstrip()
+have = line.split()
+added = []
+if mode == "add":
+    for t in toks:
+        k = t.split("=", 1)[0]
+        if t in have or ("=" in t and any(h.startswith(k + "=") for h in have)):
+            continue
+        added.append(t); have.append(t)
+    if added:
+        line = line + " " + " ".join(added)
+else:
+    suffix = " " + " ".join(toks)
+    if toks and line.endswith(suffix):
+        line = line[:-len(suffix)]
+    else:
+        out = list(have)
+        for t in toks:
+            for i in range(len(out) - 1, -1, -1):
+                if out[i] == t:
+                    del out[i]; break
+        line = " ".join(out)
+open(dst, "w", newline="").write(line + (nl or "\n"))
+print(" ".join(added))
+PY
+}
+
+# config.txt: add/remove our marked [all] block at the end
+config_edit() {  # add|remove IN OUT
+  python3 - "$@" "$BEGIN" "$END" <<'PY'
+import sys
+mode, src, dst, BEGIN, END = sys.argv[1:6]
+text = open(src, newline="").read()
+lines = text.split("\n")
+out, i, found = [], 0, 0
+while i < len(lines):
+    if lines[i] == BEGIN:
+        found += 1
+        j = i
+        while j < len(lines) and lines[j] != END:
+            j += 1
+        if out and out[-1] == "":
+            out.pop()
+        i = j + 1
+        continue
+    out.append(lines[i]); i += 1
+res = "\n".join(out)
+if mode == "add":
+    if found == 1:
+        res = text            # already there once: leave the file exactly as it is
+    else:
+        if res and not res.endswith("\n"):
+            res += "\n"
+        res += "\n" + BEGIN + "\n[all]\ndisable_splash=1\n" + END + "\n"
+open(dst, "w", newline="").write(res)
+PY
+}
+
+put_if_changed() {  # DEST TMP -> 0 if changed
+  if cmp -s "$1" "$2"; then rm -f "$2"; return 1; fi
+  cat "$2" >"$1.stillwave-new" && sync -f "$1.stillwave-new" 2>/dev/null; mv -f "$1.stillwave-new" "$1"; rm -f "$2"; return 0
+}
+
+# 1.1.0.1: listing the initramfs (lsinitramfs unpacks it) takes minutes on a busy Pi. The result is cached in
+# state.env keyed on the initrd's size + mtime, so the post-update health gate is instant. 0 = has theme,
+# 1 = missing, 2 = could not tell in time (SDR_SPLASH_LS_TIMEOUT seconds; treated as "not checked", never as broken).
+initrd_key() { stat -c '%s:%Y' "$INITRD" 2>/dev/null; }
+initrd_has_theme() {
+  [[ -s "$INITRD" ]] || return 1
+  command -v lsinitramfs >/dev/null || return 0
+  local key; key="$(initrd_key)"
+  [[ -n "$key" && "$(get_state INITRD_OK)" == "$key" ]] && return 0
+  # fast path (seconds): one compressed cpio (Ubuntu for Raspberry Pi) -> decompress and look for the file name
+  local magic dec=""
+  magic="$(head -c 6 "$INITRD" | od -An -tx1 | tr -d ' \n')"
+  case "$magic" in
+    28b52ffd*) command -v zstd >/dev/null && dec="zstd -dc" ;;
+    1f8b*)     dec="gzip -dc" ;;
+    fd377a585a00) command -v xz >/dev/null && dec="xz -dc" ;;
+    02214c18*|04224d18*) command -v lz4 >/dev/null && dec="lz4 -dc" ;;
+  esac
+  if [[ -n "$dec" ]] && timeout 120 $dec <"$INITRD" 2>/dev/null | grep -aqF "plymouth/themes/$THEME/bg.png"; then
+    set_state INITRD_OK "$key"; return 0
+  fi
+  local list rc
+  list="$(timeout "${SDR_SPLASH_LS_TIMEOUT:-900}" lsinitramfs "$INITRD" 2>/dev/null)"; rc=$?
+  if grep -q "plymouth/themes/$THEME/bg.png" <<<"$list"; then set_state INITRD_OK "$key"; return 0; fi
+  [[ $rc -eq 124 ]] && return 2
+  return 1
+}
+# the desktop 720p EDID (and its initramfs hook) are part of the stamp, so one rebuild here carries both
+build_stamp() { cat "$HOOK" "${FILES[@]/#/$TDIR/}" "$R/etc/initramfs-tools/hooks/trace-edid" "$R/lib/firmware/edid/trace-720p.bin" 2>/dev/null | sha256sum | cut -d' ' -f1; }
+
+rebuild_initrd() {  # keep the current initrd.img until the new one is built
+  mkdir -p "$STATE_DIR"
+  [[ -s "$INITRD" ]] && cp -a "$INITRD" "$STATE_DIR/initrd.img.pre"
+  say "rebuilding the initramfs (update-initramfs -u, about a minute on a Pi 4) ..."
+  if ! timeout 900 update-initramfs -u >"$STATE_DIR/update-initramfs.log" 2>&1 || [[ ! -s "$INITRD" ]]; then
+    warn "update-initramfs failed (see $STATE_DIR/update-initramfs.log)"
+    [[ -s "$STATE_DIR/initrd.img.pre" ]] && cp -a "$STATE_DIR/initrd.img.pre" "$INITRD" && say "put the previous initrd.img back"
+    return 1
+  fi
+  return 0
+}
+
+theme_is_default() {
+  [[ "$(readlink -f "$THEMES/default.plymouth" 2>/dev/null)" == "$(readlink -f "$TFILE")" ]] || return 1
+  if [[ -f "$PLYCONF" ]] && grep -q '^[[:space:]]*Theme=' "$PLYCONF"; then
+    grep -q "^[[:space:]]*Theme=$THEME[[:space:]]*$" "$PLYCONF" || return 1
+  fi
+  return 0
+}
+set_default_theme() {
+  local cur; cur="$(readlink -f "$THEMES/default.plymouth" 2>/dev/null || true)"
+  [[ -n "$cur" && "$cur" != "$(readlink -f "$TFILE")" && -z "$(get_state PREV_THEME)" ]] && set_state PREV_THEME "$cur"
+  if update-alternatives --install "$THEMES/default.plymouth" default.plymouth "$TFILE" 150 >/dev/null 2>&1 \
+     && update-alternatives --set default.plymouth "$TFILE" >/dev/null 2>&1; then :
+  elif command -v plymouth-set-default-theme >/dev/null; then plymouth-set-default-theme "$THEME" >/dev/null 2>&1 || true
+  else ln -sfn "$TFILE" "$THEMES/default.plymouth"; set_state LINKED 1; fi
+  if [[ -f "$PLYCONF" ]] && grep -q '^[[:space:]]*Theme=' "$PLYCONF" && ! grep -q "^[[:space:]]*Theme=$THEME[[:space:]]*$" "$PLYCONF"; then
+    mkdir -p "$STATE_DIR"; [[ -f "$STATE_DIR/plymouthd.conf.pre" ]] || cp -a "$PLYCONF" "$STATE_DIR/plymouthd.conf.pre"
+    sed -i "s/^[[:space:]]*Theme=.*/Theme=$THEME/" "$PLYCONF"
+  fi
+  theme_is_default
+}
+
+write_hook() {
+  mkdir -p "$(dirname "$HOOK")"
+  local tmp; tmp="$(mktemp)"
+  cat >"$tmp" <<'H'
+#!/bin/sh
+# Stillwave Trace (sdr-boot-setup --splash): load the DSI display drivers inside the initramfs so the
+# boot splash shows on the Touch Display early. Only modules that exist for this kernel are added.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+for m in i2c-bcm2835 i2c-mux-pinctrl rpi-panel-v2-regulator regulator-rpi-panel-v2 panel-ilitek-ili9881c vc4; do
+  if modinfo -k "$version" "$m" >/dev/null 2>&1; then
+    manual_add_modules "$m"
+    echo "$m" >>"$DESTDIR/conf/modules"
+  fi
+done
+exit 0
+H
+  if [[ -f "$HOOK" ]] && cmp -s "$HOOK" "$tmp"; then rm -f "$tmp"; else install -m 755 "$tmp" "$HOOK"; rm -f "$tmp"; fi
+}
+
+# --- off: undo everything (each step on its own, so one failure never stops the rest) ---
+do_off() {
+  local quiet_initrd="${1:-}"
+  # cmdline.txt: byte-exact restore if nobody changed it since, else remove only the tokens we added
+  if [[ -f "$CMDLINE" ]]; then
+    local added; added="$(get_state ADDED_TOKENS)"
+    if [[ -f "$STATE_DIR/cmdline.pre" && "$(sha "$CMDLINE")" == "$(get_state CMDLINE_SHA)" ]]; then
+      cp "$STATE_DIR/cmdline.pre" "$CMDLINE.tmp-$$" && put_if_changed "$CMDLINE" "$CMDLINE.tmp-$$" && say "cmdline.txt restored"
+    elif [[ -n "$added" ]]; then
+      cmdline_edit remove "$CMDLINE" "$CMDLINE.tmp-$$" $added >/dev/null && put_if_changed "$CMDLINE" "$CMDLINE.tmp-$$" && say "cmdline.txt: removed $added"
+    fi
+    rm -f "$CMDLINE.tmp-$$"
+  fi
+  if [[ -f "$CONFIG" ]] && grep -qxF "$BEGIN" "$CONFIG"; then
+    if [[ -f "$STATE_DIR/config.pre" && "$(sha "$CONFIG")" == "$(get_state CONFIG_SHA)" ]]; then
+      cp "$STATE_DIR/config.pre" "$CONFIG.tmp-$$"
+    else
+      config_edit remove "$CONFIG" "$CONFIG.tmp-$$"
+    fi
+    put_if_changed "$CONFIG" "$CONFIG.tmp-$$" && say "config.txt: removed disable_splash block"; rm -f "$CONFIG.tmp-$$"
+  fi
+  set_state ADDED_TOKENS ""; set_state CMDLINE_SHA ""; set_state CONFIG_SHA ""
+  [[ -f "$DROPIN" ]] && rm -f "$DROPIN" && rmdir "$(dirname "$DROPIN")" 2>/dev/null; reload
+  [[ -f "$STATE_DIR/plymouthd.conf.pre" ]] && cp -a "$STATE_DIR/plymouthd.conf.pre" "$PLYCONF" && rm -f "$STATE_DIR/plymouthd.conf.pre"
+  local was_default=0; theme_is_default 2>/dev/null && was_default=1
+  update-alternatives --remove default.plymouth "$TFILE" >/dev/null 2>&1 || true
+  local prev; prev="$(get_state PREV_THEME)"
+  if [[ -n "$prev" && -f "$prev" ]]; then
+    update-alternatives --set default.plymouth "$prev" >/dev/null 2>&1 || { [[ -n "$(get_state LINKED)" ]] && ln -sfn "$prev" "$THEMES/default.plymouth"; }
+  fi
+  [[ "$(readlink "$THEMES/default.plymouth" 2>/dev/null)" == "$TFILE" ]] && rm -f "$THEMES/default.plymouth"
+  set_state PREV_THEME ""; set_state LINKED ""
+  local had_hook=0; [[ -f "$HOOK" ]] && had_hook=1 && rm -f "$HOOK"
+  rm -rf "$TDIR"
+  if [[ -z "$quiet_initrd" && ( $had_hook -eq 1 || $was_default -eq 1 || -n "$(get_state BUILT)" ) ]] && command -v update-initramfs >/dev/null; then
+    rebuild_initrd || warn "initramfs not rebuilt; harmless: without 'splash' on the kernel command line the Pi boots in text mode"
+  fi
+  set_state BUILT ""; set_state ENABLED 0
+  say "off: normal text boot from the next reboot"
+}
+
+# --- on ---
+do_on() {
+  local why=""
+  if [[ ! -f "$CMDLINE" || ! -f "$CONFIG" ]]; then why="no cmdline.txt/config.txt in $BOOT (not a Raspberry Pi boot partition?)"
+  elif ! cmdline_edit add "$CMDLINE" /dev/null >/dev/null 2>&1; then why="cmdline.txt is not a single line with root= (left alone)"
+  elif ! command -v update-initramfs >/dev/null || [[ ! -s "$INITRD" ]]; then why="this Pi does not boot with an initramfs ($INITRD); Ubuntu for Raspberry Pi does"
+  fi
+  if [[ -z "$why" ]] && ! have_plymouth; then
+    if [[ -z "${SDR_SPLASH_NO_APT:-}" ]] && timeout 5 getent hosts ports.ubuntu.com >/dev/null 2>&1; then
+      say "installing plymouth (apt) ..."
+      DEBIAN_FRONTEND=noninteractive timeout 600 apt-get install -y --no-install-recommends plymouth >/dev/null 2>&1 || true
+    fi
+    have_plymouth || why="plymouth (with its script plugin) is not installed and could not be installed now"
+  fi
+  [[ -z "$why" ]] || { say "skipped: $why. The Pi keeps its normal text boot."; return 0; }
+  for f in "${FILES[@]}"; do [[ -s "$SRC/$f" ]] || { warn "theme file missing: $SRC/$f"; return 1; }; done
+  mkdir -p "$TDIR" && for f in "${FILES[@]}"; do install -m 644 "$SRC/$f" "$TDIR/$f"; done
+  if ! set_default_theme; then warn "could not make $THEME the default Plymouth theme"; do_off quiet; return 1; fi
+  write_hook
+  if [[ "$(get_state BUILT)" == "$(build_stamp)" ]] && initrd_has_theme; then
+    say "initramfs already has the theme"
+  elif [[ -n "${SDR_SPLASH_NO_INITRAMFS:-}" ]]; then
+    say "initramfs rebuild skipped (SDR_SPLASH_NO_INITRAMFS)"
+  else
+    if ! rebuild_initrd; then
+      warn "splash not turned on (the previous initrd.img is back in place)"; do_off quiet; return 1
+    fi
+    if ! initrd_has_theme; then
+      warn "the new initramfs does not carry the splash; turning it back off"; set_state BUILT "x"; do_off; return 1
+    fi
+    set_state BUILT "$(build_stamp)"
+  fi
+  mkdir -p "$STATE_DIR"
+  # cmdline.txt
+  local added; added="$(cmdline_edit add "$CMDLINE" "$CMDLINE.tmp-$$" $TOKENS)" || { rm -f "$CMDLINE.tmp-$$"; do_off; return 1; }
+  if [[ -n "$added" ]]; then
+    [[ -f "$CMDLINE.stillwave-orig" ]] || cp -a "$CMDLINE" "$CMDLINE.stillwave-orig"
+    local prev; prev="$(get_state ADDED_TOKENS)"
+    [[ -z "$prev" ]] && cp -a "$CMDLINE" "$STATE_DIR/cmdline.pre"
+    put_if_changed "$CMDLINE" "$CMDLINE.tmp-$$"
+    set_state ADDED_TOKENS "$(echo $prev $added)"
+    # byte-exact undo only while the file is exactly as we left it after the first change
+    if [[ -z "$prev" ]]; then set_state CMDLINE_SHA "$(sha "$CMDLINE")"; else set_state CMDLINE_SHA ""; fi
+    say "cmdline.txt: added $added (backup: cmdline.txt.stillwave-orig)"
+  else
+    rm -f "$CMDLINE.tmp-$$"; say "cmdline.txt: already set"
+  fi
+  # config.txt
+  config_edit add "$CONFIG" "$CONFIG.tmp-$$"
+  if ! cmp -s "$CONFIG" "$CONFIG.tmp-$$"; then
+    [[ -f "$CONFIG.stillwave-orig" ]] || cp -a "$CONFIG" "$CONFIG.stillwave-orig"
+    cp -a "$CONFIG" "$STATE_DIR/config.pre"
+    put_if_changed "$CONFIG" "$CONFIG.tmp-$$"; set_state CONFIG_SHA "$(sha "$CONFIG")"
+    say "config.txt: disable_splash=1 under [all] (backup: config.txt.stillwave-orig)"
+  else
+    rm -f "$CONFIG.tmp-$$"; say "config.txt: already set"
+  fi
+  # kiosk handoff: keep the last splash frame on screen until cage draws (only on a kiosk station)
+  if [[ -f "$KIOSK" ]]; then
+    local ply; ply="$(command -v plymouth || echo /usr/bin/plymouth)"
+    local tmp; tmp="$(mktemp)"
+    printf '# Stillwave Trace (sdr-boot-setup --splash): keep the boot splash on screen until the kiosk draws\n[Service]\nExecStart=\nExecStart=-%s quit --retain-splash\n' "$ply" >"$tmp"
+    mkdir -p "$(dirname "$DROPIN")"
+    if [[ -f "$DROPIN" ]] && cmp -s "$DROPIN" "$tmp"; then rm -f "$tmp"; else install -m 644 "$tmp" "$DROPIN"; rm -f "$tmp"; reload; fi
+  fi
+  set_state ENABLED 1
+  if ! do_check >/dev/null; then warn "self-check failed:"; do_check >&2; do_off; return 1; fi
+  say "on: the Trace splash shows from the next reboot (undo: sudo sdr-boot-setup --splash off)"
+}
+
+# --- check: 0 = fine (or splash off), 1 = something is wrong ---
+do_check() {
+  local bad=()
+  if [[ "$(get_state ENABLED)" != 1 ]]; then echo "splash off: nothing to check"; return 0; fi
+  if [[ ! -s "$CMDLINE" ]]; then bad+=("cmdline.txt missing or empty")
+  else
+    [[ $(grep -c . "$CMDLINE") -eq 1 ]] || bad+=("cmdline.txt is not one line")
+    grep -qE '(^| )root=' "$CMDLINE" || bad+=("cmdline.txt has no root=")
+    grep -qE '(^| )splash( |$)' "$CMDLINE" || bad+=("cmdline.txt has no splash")
+    local t; for t in $(get_state ADDED_TOKENS); do
+      [[ $(tr ' ' '\n' <"$CMDLINE" | grep -cxF "$t") -eq 1 ]] || bad+=("cmdline.txt: '$t' missing or twice")
+    done
+  fi
+  if [[ ! -s "$CONFIG" ]]; then bad+=("config.txt missing")
+  else
+    [[ $(grep -cxF "$BEGIN" "$CONFIG") -eq 1 && $(grep -cxF "$END" "$CONFIG") -eq 1 ]] || bad+=("config.txt: splash block missing or twice")
+    grep -qx 'disable_splash=1' "$CONFIG" || bad+=("config.txt: no disable_splash=1")
+  fi
+  local f; for f in "${FILES[@]}"; do [[ -s "$TDIR/$f" ]] || bad+=("theme file missing: $TDIR/$f"); done
+  theme_is_default || bad+=("$THEME is not the default Plymouth theme")
+  if [[ -z "${SDR_SPLASH_NO_INITRAMFS:-}" ]]; then
+    local t0=$SECONDS ir=0; initrd_has_theme || ir=$?
+    if [[ $ir -eq 1 ]]; then bad+=("initrd.img missing or without the splash theme")
+    elif [[ $ir -eq 2 ]]; then echo "splash: initramfs listing took too long ($((SECONDS - t0))s); not checked this time"; fi
+  fi
+  [[ ! -f "$KIOSK" || -f "$DROPIN" ]] || bad+=("plymouth-quit drop-in missing")
+  if [[ ${#bad[@]} -eq 0 ]]; then echo "splash check OK"; return 0; fi
+  printf 'splash check FAILED: %s\n' "${bad[@]}"; return 1
+}
+
+do_status() {
+  echo "splash: $([[ "$(get_state ENABLED)" == 1 ]] && echo on || echo off)  (preference: $(pref || true); empty = default on)"
+  echo "plymouth: $(have_plymouth && echo installed || echo 'not installed / no script plugin')"
+  echo "default theme: $(readlink -f "$THEMES/default.plymouth" 2>/dev/null || echo none)"
+  echo "boot dir: $BOOT"
+  [[ -f "$CMDLINE" ]] && echo "cmdline.txt: $(cat "$CMDLINE")"
+  [[ -f "$CONFIG" ]] && grep -qxF "$BEGIN" "$CONFIG" && echo "config.txt: disable_splash=1 block present"
+  [[ -f "$DROPIN" ]] && echo "kiosk handoff: plymouth quit --retain-splash"
+  return 0
+}
+
+case "${1:-}" in
+  on)     need_root; set_pref on; do_on ;;
+  off)    need_root; set_pref off; do_off ;;
+  auto)   need_root; if [[ "$(pref)" == off ]]; then say "left off (you turned it off; sudo sdr-boot-setup --splash on)"; else do_on; fi ;;
+  check)  do_check ;;
+  # health gate: on failure put the text boot back, remember "off", then fail
+  gate)   need_root; export SDR_SPLASH_LS_TIMEOUT="${SDR_SPLASH_LS_TIMEOUT:-40}"; if do_check; then exit 0; fi; set_pref off; do_off; echo "splash turned off (normal text boot)"; exit 1 ;;
+  status) do_status ;;
+  *) sed -n '2,8p' "$0"; exit 2 ;;
+esac

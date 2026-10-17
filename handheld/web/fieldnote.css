@@ -1,0 +1,1197 @@
+/* Stillwave Trace — shared UI
+   Targets: phone (~390 CSS px) and the 5" Touch Display 2 in portrait (720×1280).
+   One responsive layout; touch-first tap targets. */
+:root {
+  color-scheme: dark;
+  --bg: #0d1520;
+  --card: #1a2433;
+  --line: #2c3a4f;
+  --text: #e8eef6;
+  --muted: #9aabc0;
+  --accent: #4db8e8;
+  --btn: #243044;
+  --ok: #8ee0b0;
+  --err: #ff8a8a;
+  --tap: 44px;
+  --pad: clamp(.75rem, 2.5vw, 1.25rem);
+  --wrap: min(860px, 100%);
+  --radius: 14px;
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  font-family: var(--font);
+  background: radial-gradient(1200px 700px at 50% 0%, #1c2b40 0%, var(--bg) 55%);
+  color: var(--text);
+  padding: var(--pad);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+a { color: var(--accent); }
+.wrap { width: var(--wrap); max-width: 100%; margin: 0 auto; }
+.card, .panel {
+  background: linear-gradient(180deg, #223044, var(--card));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: .9rem 1rem;
+  margin: .7rem 0;
+  box-shadow: 0 12px 36px rgba(0,0,0,.22);
+}
+h1 { margin: .15rem 0 .35rem; letter-spacing: -.02em; }
+h2 { margin: .35rem 0; }
+.lead, .note, .msub { color: var(--muted); line-height: 1.45; }
+.lead { margin: 0 0 .85rem; }
+.brand { display: flex; flex-direction: column; gap: .1rem; margin-bottom: .35rem; }
+.brand .eyebrow { letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); font-weight:600;
+}
+.now {
+  background: #101820; border-radius: 12px; padding: .75rem .9rem;
+  margin: .55rem 0; color: var(--accent); font-weight:600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Shared controls */
+button, .btn {
+  background: var(--btn); color: var(--text); border: 1px solid var(--line);
+  border-radius: 12px; padding: .65rem .95rem; cursor: pointer;
+  font: inherit; font-weight: 600; min-height: var(--tap);
+  -webkit-appearance: none; appearance: none;
+}
+button.primary, button.on, .btn.primary {
+  background: #1a3a4d; border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+button.sm { min-height: 36px; padding: .35rem .65rem; border-radius: 10px; }
+button.danger { border-color: #6a3a3a; }
+button:disabled { opacity: .5; cursor: wait; }
+input, select, textarea {
+  background: #101820; color: var(--text); border: 1px solid var(--line);
+  border-radius: 10px; padding: .55rem .65rem; font: inherit;
+  min-height: var(--tap); width: auto; max-width: 100%;
+}
+input[type="checkbox"], input[type="radio"] {
+  min-height: 1.15rem; width: 1.15rem; height: 1.15rem;
+  padding: 0; accent-color: var(--accent);
+}
+.ctl label > span { display: inline-flex; align-items: center; gap: .45rem; min-height: var(--tap); color: var(--text); }
+.ctl { display: flex; flex-wrap: wrap; gap: .55rem .75rem; align-items: end; }
+.ctl label {
+  display: flex; flex-direction: column; gap: .25rem; color: var(--muted); min-width: 5.5rem;
+}
+.ctl label > input, .ctl label > select { width: 100%; }
+.row { display: flex; flex-wrap: wrap; gap: .55rem; margin-bottom: .85rem; }
+.status { min-height: 1.35em; margin: .4rem 0; }
+.err { color: var(--err); } .ok { color: var(--ok); }
+.hide { display: none !important; }
+.pill {
+  display: inline-block; padding: .2rem .6rem; border-radius: 999px;
+  background: #101820; border: 1px solid var(--line);
+}
+.scrollx { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td {
+  text-align: left; padding: .45rem .35rem;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+th { color: var(--muted); font-weight:600; }
+audio { width: 100%; margin: .35rem 0 .85rem; min-height: 40px; }
+code { }
+
+/* Station / preset chips */
+button.station, .chip {
+  flex: 1 1 140px; min-height: 52px; border-radius: 14px;
+  padding: .9rem .8rem; font-weight:600;
+}
+button.station.active, .chip.active {
+  background: #1a3a4d; border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Detect meter */
+.meter {
+  display: grid; grid-template-columns: 1fr auto;
+  gap: .25rem 1rem; align-items: center;
+}
+.mfreq { font-weight: 700;
+  letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+}
+.mex { font-weight:700;
+  text-align: right; font-variant-numeric: tabular-nums; line-height: 1;
+}
+.bar {
+  grid-column: 1 / -1; height: 28px; background: #101820;
+  border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-top: .4rem;
+}
+.bar > div {
+  height: 100%; width: 0;
+  background: linear-gradient(90deg, #2a7f62, #e8d44d 55%, #ff5b3a);
+  transition: width .25s;
+}
+.presets { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .65rem; }
+.presets button { min-height: 40px; padding: .4rem .75rem; }
+.prog { height: 5px; background: #101820; border-radius: 3px; overflow: hidden; margin: .35rem 0; }
+.prog > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+/* Spectrum canvases */
+.scope { background: #05090f; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+canvas { display: block; width: 100%; touch-action: manipulation; }
+#spec { height: clamp(130px, 18vh, 210px); }
+#wf { height: clamp(200px, 34vh, 440px); image-rendering: pixelated; }
+#plot { height: clamp(160px, 22vh, 240px); background: #05090f; border: 1px solid var(--line); border-radius: 12px; }
+
+/* Forms (presets) */
+form.grid2 {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: .7rem 1rem; background: var(--card); padding: 1rem;
+  border-radius: var(--radius); border: 1px solid var(--line);
+}
+form.grid2 label {
+  display: flex; flex-direction: column; gap: .3rem; color: var(--muted);
+}
+form.grid2 .span2 { grid-column: 1 / -1; }
+
+/* Radio home card centering on phone */
+body.page-radio { display: flex; justify-content: center; align-items: flex-start; }
+body.page-radio .card.home {
+  width: min(560px, 100%);
+  padding: 1.35rem 1.2rem 1.15rem;
+}
+
+/* Network page: picker, confirm box */
+.netlist { display: flex; flex-direction: column; gap: .4rem; margin: .3rem 0 .6rem; }
+button.net {
+  display: flex; justify-content: space-between; align-items: center; gap: .6rem;
+  width: 100%; text-align: left; min-height: 48px;
+}
+button.net.on { background: #1a3a4d; border-color: var(--accent); }
+.net .nname { font-weight:700; letter-spacing: .12em; overflow-wrap: anywhere; }
+/* Show/Hide password never breaks mid-word */
+.pwrow button.sm { white-space: nowrap; flex: none; padding-left: .75rem; padding-right: .75rem; }
+.net .nmeta { color: var(--static); font-weight: 400; white-space: nowrap; font-family: var(--mono); text-transform: none; letter-spacing: .02em; }
+h2.sub { display: flex; align-items: center; gap: .6rem; margin-top: .9rem; }
+.ctl label.grow { flex: 1 1 14rem; }
+.pwrow { display: flex !important; gap: .4rem; align-items: center; min-height: 0 !important; }
+.pwrow input { flex: 1 1 auto; min-width: 0; width: 100%; }
+.netactions button { flex: 1 1 12rem; min-height: 50px; }
+.confirm {
+  background: #101820; border: 1px solid var(--accent); border-radius: 12px;
+  padding: .75rem .9rem; margin: .4rem 0 .8rem; line-height: 1.45;
+}
+.confirm p { margin: .2rem 0 .6rem; }
+.confirm a { overflow-wrap: anywhere; }
+
+/* Audio page: output choice + Bluetooth speaker (big touch targets everywhere) */
+button.big { min-height: 56px; padding: .7rem 1.1rem; }
+.seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .45rem; margin: .3rem 0 .6rem; }
+.seg button { width: 100%; white-space: nowrap; padding-left: .4rem; padding-right: .4rem; }
+.spk { background: #101820; border: 1px solid var(--line); border-radius: 12px; padding: .7rem .8rem .1rem; margin: .2rem 0 .8rem; }
+.spkname { margin-bottom: .55rem; overflow-wrap: anywhere; }
+.spkname .nmeta { display: block; margin-top: .15rem; white-space: normal; }
+.spkact button { flex: 1 1 8rem; }
+.hint { border-left: 3px solid var(--accent); padding: .45rem .75rem; margin: .2rem 0 .8rem; line-height: 1.45; background: #0f1a24; border-radius: 0 10px 10px 0; }
+.hint .sub2 { display: block; color: var(--muted); margin-top: .35rem; }
+.page-audio button.net { min-height: 56px; }
+@media (max-width: 430px) { .seg button { } }
+
+/* Kiosk on the Trace display (?kiosk=1, remembered by mode.js): no pointer, no text selection */
+html.kiosk:not(.hdmi), html.kiosk:not(.hdmi) * { cursor: none !important; }   /* desktop edition: HDMI pointer stays visible */
+html.kiosk body { -webkit-user-select: none; user-select: none; }
+html.kiosk input, html.kiosk textarea { -webkit-user-select: text; user-select: text; }
+
+/* Narrow phone */
+@media (max-width: 430px) {
+  form.grid2 { grid-template-columns: 1fr; }
+  th, td { padding: .4rem .25rem; }
+  .ctl label { min-width: calc(50% - .5rem); flex: 1 1 7rem; }
+  button.station { flex: 1 1 100%; }
+  .page-radio button.station { flex: 1 1 40%; }
+  .net .nmeta { white-space: normal; text-align: right; }
+}
+/* 5" portrait and up — slightly roomier */
+@media (min-width: 700px) and (min-height: 1000px) {
+  :root { --pad: 1.15rem; }
+  button.station { flex: 1 1 160px; min-height: 56px; }
+  .page-radio button.station { flex: 1 1 30%; }
+}
+/* Touch: Trace display (?kiosk=1 -> html.kiosk / body.kiosk) and phones (pointer: coarse).
+   Touch targets at 125% of the mouse layout (44px -> 55px). Desktop/mouse layout is untouched. */
+:root { --tap-touch: 55px; }
+@media (min-width: 600px) {
+  html.kiosk body.page-radio .card.home { width: 100%; }
+}
+@media (pointer: coarse) and (min-width: 600px) {
+  body.page-radio .card.home { width: 100%; }
+}
+
+/* Tuner: "Find stations" at the 125% touch size */
+html.kiosk button.tunerfind { min-height: var(--tap-touch); padding: .6875rem 1.2rem; }
+@media (pointer: coarse) { button.tunerfind { min-height: var(--tap-touch); padding: .6875rem 1.2rem; } }
+
+/* Power: header button + bottom sheet + full-screen state (power.js) */
+.brand.has-power { position: relative; padding-right: 7.5rem; min-height: 3.2rem; }
+.powerbtn {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; gap: .4rem; border-radius: 999px;
+  padding: .45rem .95rem; color: var(--muted); background: #141d29;
+}
+.powerbtn svg { flex: none; }
+html.kiosk .powerbtn { min-height: var(--tap-touch); padding: .55rem 1.15rem; }
+@media (pointer: coarse) { .powerbtn { min-height: var(--tap-touch); padding: .55rem 1.15rem; } }
+html.pwr-open, html.pwr-open body { overflow: hidden; }
+.pwr-ov {
+  position: fixed; inset: 0; z-index: 1000; background: rgba(4, 8, 14, .72);
+  display: flex; align-items: flex-end; justify-content: center; padding: var(--pad);
+}
+.pwr-sheet {
+  width: min(560px, 100%); background: linear-gradient(180deg, #223044, var(--card));
+  border: 1px solid var(--line); border-radius: 18px; padding: 1.1rem 1.1rem 1.2rem;
+  box-shadow: 0 -10px 40px rgba(0,0,0,.45);
+}
+.pwr-sheet h2 { margin: .1rem 0 .3rem; }
+.pwr-sheet .note { margin: 0 0 .9rem; }
+.pwr-btn { display: block; width: 100%; min-height: 60px; margin: 0 0 .7rem; border-radius: 14px; }
+.pwr-btn.danger { border-color: #8a4040; color: #ffd0d0; background: #3a1f24; }
+.pwr-btn.danger:disabled { opacity: .45; cursor: default; }
+.pwr-btn.pwr-cancel:not(.primary) { margin-top: 1.1rem; }
+.pwr-step[data-step="confirm"] .pwr-btn.danger { margin-top: 1.4rem; }
+html.kiosk .pwr-btn { min-height: 68px; }
+@media (pointer: coarse) { .pwr-btn { min-height: 64px; } }
+.pwr-full {
+  position: fixed; inset: 0; z-index: 1100; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; padding: 2rem 1.5rem; text-align: center;
+}
+.pwr-full-in { max-width: 34rem; }
+.pwr-full h1 { margin: .8rem 0 .6rem; }
+.pwr-full .pwr-sub { line-height: 1.4; margin: 0 0 1rem; color: var(--text); }
+.pwr-full .pwr-ico { display: inline-flex; color: var(--accent); }
+.pwr-full .pwr-ico svg { width: 72px; height: 72px; }
+.pwr-full .pwr-ico svg path { animation: pwrpulse 1.6s ease-in-out infinite; }
+.pwr-full.off .pwr-ico { color: var(--muted); }
+.pwr-full.off .pwr-ico svg path { animation: none; }
+.pwr-full .pwr-brand { margin-top: 2.2rem; letter-spacing: .08em; text-transform: uppercase; }
+@keyframes pwrpulse { 50% { opacity: .35; } }
+@media (max-width: 430px) { .brand.has-power { padding-right: 6.9rem; } }
+
+/* ===== App chrome (nav.js): status strip pinned at the top, tab bar pinned at the bottom =====
+   Both are position:fixed; the body is padded by their measured heights (nav.js sets
+   --chrome-top / --chrome-bottom; the fallbacks below match the CSS sizes). Safe-area insets
+   (notch, home indicator) are added on phones via env(); viewport-fit=cover is in every page. */
+:root {
+  --chrome-top: calc(63px + env(safe-area-inset-top, 0px));
+  --chrome-bottom: calc(77px + env(safe-area-inset-bottom, 0px));
+}
+html { scroll-padding-top: calc(var(--chrome-top) + 8px); scroll-padding-bottom: calc(var(--chrome-bottom) + 8px); }
+body {
+  padding-top: calc(var(--chrome-top) + var(--pad));
+  padding-bottom: calc(var(--chrome-bottom) + var(--pad));
+  padding-left: max(var(--pad), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--pad), env(safe-area-inset-right, 0px));
+}
+
+/* -- status strip -- */
+.qstrip {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 900;
+  display: flex; align-items: center; gap: 6px;
+  padding: calc(4px + env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px)) 4px max(8px, env(safe-area-inset-left, 0px));
+  background: rgba(10, 17, 27, .97); border-bottom: 1px solid var(--line);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .25);
+}
+.qs-chip {
+  display: flex; align-items: center; gap: .45rem; min-width: 0;
+  min-height: var(--tap-touch); padding: 0 .65rem; border-radius: 14px;
+  background: #141d29; border: 1px solid var(--line); color: var(--text); text-decoration: none;
+}
+.qs-chip:focus-visible, .qtab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.qs-job { flex: 0 0 auto; max-width: 36%; border-color: #2f6f93; background: #13283b; }
+.qs-net { flex: 0 1 auto; min-width: 5.4rem; }    /* a long Wi-Fi name gives way first (ellipsis) */
+.qs-aud { flex: 0 0 auto; max-width: 40%; }
+.qs-txt { display: flex; flex-direction: column; justify-content: center; min-width: 0; line-height: 1.15; }
+.qs-k { letter-spacing: .07em; text-transform: uppercase; color: var(--muted);
+  font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.qs-v { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.qs-v.dash { color: var(--muted); }
+.qs-v.warn { color: #ffd35a; }
+.qs-ico { flex: none; display: inline-flex; color: var(--accent); }
+.qs-ico svg { width: 20px; height: 20px; }
+.qs-ico.off { color: var(--muted); }
+.qs-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: #5f6f84; }
+.qs-dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.qs-dot.warn { background: #ffd35a; box-shadow: 0 0 6px rgba(255, 211, 90, .6); }
+.qs-dot.unk { background: transparent; border: 2px solid #5f6f84; }
+.qs-long { display: none; }
+.qs-pwr { flex: none; margin-left: auto; display: flex; }
+.qstrip .powerbtn {
+  position: static; transform: none; flex: none; justify-content: center;
+  width: var(--tap-touch); height: var(--tap-touch); min-height: var(--tap-touch); padding: 0;
+  border-radius: 14px; background: #141d29; color: #c9d3df;
+}
+.qstrip .powerbtn span {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+.qstrip .powerbtn svg { width: 24px; height: 24px; }
+@media (min-width: 600px) {
+  .qstrip { gap: 6px; padding-left: max(10px, env(safe-area-inset-left, 0px)); padding-right: max(10px, env(safe-area-inset-right, 0px)); }
+  .qs-chip { padding: 0 .7rem; gap: .5rem; }
+  .qs-k { }
+  .qs-v { }
+  .qs-ico svg { width: 22px; height: 22px; }
+  .qs-long { display: inline; }
+  .qs-short { display: none; }
+}
+
+/* -- bottom tab bar: navigation only (never changes the SDR mode) -- */
+.qtabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 900;
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px;
+  padding: 6px max(6px, env(safe-area-inset-right, 0px)) max(6px, env(safe-area-inset-bottom, 0px)) max(6px, env(safe-area-inset-left, 0px));
+  background: rgba(10, 17, 27, .98); border-top: 1px solid var(--line);
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, .25);
+}
+.qtab {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; min-height: 64px; min-width: 0; border-radius: 14px; padding: 4px 2px;
+  color: var(--muted); text-decoration: none; font-weight: 700; letter-spacing: .01em;
+}
+.qtab svg { width: 24px; height: 24px; flex: none; }
+.qtab span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.qtab.on { color: #fff; background: #14304a; box-shadow: inset 0 0 0 2px var(--accent); }
+.qtab.on svg { color: var(--accent); }
+.qtab:not(.on):active { background: #141d29; }
+.qtab .qlive {
+  position: absolute; top: 7px; left: calc(50% + 13px); width: 9px; height: 9px; border-radius: 50%;
+  background: var(--ok); box-shadow: 0 0 6px var(--ok); border: 1.5px solid #0a111b;
+}
+html.kiosk .qtabs { gap: 6px; padding-top: 8px; }
+html.kiosk .qtab { min-height: 80px; gap: 5px; }
+html.kiosk .qtab svg { width: 30px; height: 30px; }
+html.kiosk .qtab .qlive { top: 10px; left: calc(50% + 16px); width: 11px; height: 11px; }
+html.kiosk { --chrome-bottom: calc(95px + env(safe-area-inset-bottom, 0px)); }
+
+/* -- SDR mode row: same buttons and behavior as before (mode.js), now one compact row -- */
+#modebar.sdrmode {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .35rem; align-items: stretch;
+  margin: 0 0 .7rem; padding: .35rem; background: #0f1822; border: 1px solid var(--line); border-radius: 16px;
+}
+#modebar.sdrmode .lbl {
+  grid-column: 1 / -1; margin: .05rem .3rem .05rem; letter-spacing: .07em;
+}
+#modebar.sdrmode button {
+  min-width: 0; min-height: var(--tap); margin: 0; padding: .3rem .25rem; border-radius: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#modebar.sdrmode .msg { grid-column: 1 / -1; margin: .1rem .3rem 0; min-height: 0; }
+#modebar.sdrmode .msg:empty { display: none; }
+html.kiosk #modebar.sdrmode button { min-height: var(--tap-touch); }
+@media (pointer: coarse) { #modebar.sdrmode button { min-height: var(--tap-touch); } }
+@media (max-width: 430px) {
+  #modebar.sdrmode { gap: .3rem; padding: .3rem; }
+  #modebar.sdrmode button, html.kiosk #modebar.sdrmode button { padding: .2rem .1rem; letter-spacing: -.01em; }
+}
+@media (min-width: 600px) {
+  #modebar.sdrmode { grid-template-columns: auto repeat(4, minmax(0, 1fr)); }
+  #modebar.sdrmode .lbl { grid-column: auto; align-self: center; margin: 0 .35rem 0 .45rem; }
+}
+
+/* page header now sits under the strip: a little tighter */
+.brand { margin-bottom: .25rem; }
+.pwr-ov { padding-bottom: max(var(--pad), env(safe-area-inset-bottom, 0px)); }
+
+/* More page: grouped list (Tuner, Presets / Network, Audio / Power) */
+h2.mgrp {
+  margin: 1rem .2rem .4rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+}
+.mlist {
+  background: linear-gradient(180deg, #223044, var(--card)); border: 1px solid var(--line);
+  border-radius: var(--radius); overflow: hidden; margin: 0 0 .8rem;
+}
+.mrow {
+  display: flex; align-items: center; gap: .75rem; width: 100%; min-height: 60px; padding: .55rem 1rem;
+  color: var(--text); text-decoration: none; background: none; border: 0; border-radius: 0;
+  font: inherit; text-align: left; box-shadow: none;
+}
+.mrow + .mrow { border-top: 1px solid var(--line); }
+.mrow:active { background: #1d2a3b; }
+.mrow .mt { font-weight: 700; display: inline-flex; align-items: center; gap: .45rem; flex: none; }
+.mrow .ms { flex: 1 1 auto; min-width: 0; text-align: right; color: var(--muted); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mrow .ms.warn { color: #ffd35a; }
+.mrow .mchev { flex: none; color: var(--muted); line-height: 1; }
+.mrow.mpower .mt { color: #ffc4c4; }
+html.kiosk .mrow { min-height: 68px; }
+html.kiosk .mrow .mt { }
+html.kiosk .mrow .ms { }
+@media (pointer: coarse) { .mrow { min-height: 64px; } }
+/* phones: the chip eyebrows (Wi-Fi / Hotspot / Audio) carry the meaning; drop the icons to give the Wi-Fi name room */
+@media (max-width: 430px) { .qs-net .qs-ico, .qs-aud .qs-ico { display: none; } .qs-chip { padding: 0 .6rem; } }
+
+.mabout { margin-top: 1.2rem; letter-spacing: .08em; text-transform: uppercase; }
+
+/* Updates page (55 px targets everywhere: kiosk and phones) */
+.page-updates button { min-height: var(--tap-touch); padding: .6rem 1.1rem; }
+.page-updates .uact button { flex: 1 1 12rem; }
+.uver, .unew { display: flex; align-items: baseline; gap: .7rem; flex-wrap: wrap; margin: .1rem 0 .4rem; }
+.uver b, .unew b { letter-spacing: .01em; }
+.ulabel { color: var(--muted); letter-spacing: .08em; text-transform: uppercase; font-weight: 700; }
+.umsg { margin: .2rem 0 .7rem; padding: .6rem .8rem; border-radius: 10px; background: #101820; border-left: 3px solid var(--accent); line-height: 1.45; }
+.umsg.ok { border-left-color: var(--ok); } .umsg.err { border-left-color: var(--err); } .umsg.warn { border-left-color: #ffd35a; }
+.unotes { white-space: pre-wrap; background: #101820; border: 1px solid var(--line); border-radius: 10px; padding: .6rem .8rem; margin: .2rem 0 .8rem; line-height: 1.45; }
+.ubar { height: 12px; background: #101820; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: .4rem 0 .7rem; }
+.ubar > div { height: 100%; width: 3%; background: var(--accent); transition: width .6s ease; }
+.usteps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .35rem; list-style: none; padding: 0; margin: 0 0 .6rem; }
+.usteps li { text-align: center; color: var(--muted); border-top: 3px solid var(--line); padding-top: .35rem; }
+.usteps li.done { color: var(--text); border-top-color: var(--ok); }
+.usteps li.on { color: var(--text); font-weight: 700; border-top-color: var(--accent); }
+.ulog { white-space: pre-wrap; max-height: 20rem; overflow: auto; background: #101820; padding: .7rem; border-radius: 8px; line-height: 1.35; }
+.filepick { display: flex; align-items: center; min-height: var(--tap-touch); padding: .4rem .9rem; margin: .3rem 0 .7rem;
+  border: 1px dashed var(--line); border-radius: 12px; background: #101820; cursor: pointer; overflow: hidden; }
+.filepick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.filepick span { overflow-wrap: anywhere; font-weight: 600; }
+.filepick:focus-within { border-color: var(--accent); }
+.usrc summary { cursor: pointer; font-weight: 700; min-height: var(--tap-touch); display: flex; align-items: center; }
+.page-updates input { min-height: var(--tap-touch); }
+
+/* Kiosk screen (screen.js, screen.html): 55 px targets */
+.scr-catch { position: fixed; inset: 0; z-index: 1100; background: #000; touch-action: none; cursor: none; }
+.scr-catch .scr-hint { position: absolute; left: 0; right: 0; bottom: 22%; margin: 0; text-align: center; color: #4a5768; transition: opacity 1.2s ease; }
+.scr-catch.quiet .scr-hint { opacity: 0; }
+html.scr-off, html.scr-off body { overflow: hidden; }
+.scr-shut { position: fixed; inset: 0; z-index: 1200; background: #05080d; color: var(--text); display: flex; align-items: center; justify-content: center; text-align: center; padding: 2rem; }
+.scr-shut-in { max-width: 34rem; }
+.scr-shut h1 { margin: 0 0 .7rem; }
+.scr-shut .scr-sub { line-height: 1.4; margin: 0 0 1rem; }
+.scr-shut .pwr-brand { margin-top: 2.2rem; letter-spacing: .08em; text-transform: uppercase; }
+.pwr-btn.pwr-scr { border-color: #2f6f93; background: #13283b; }
+.mrow.mscreen .mt { color: #cfe4ff; }
+.page-screen button { min-height: var(--tap-touch); padding: .6rem 1.1rem; }
+.page-screen .uact button { flex: 1 1 12rem; }
+.sseg { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.sseg button { padding-left: .3rem; padding-right: .3rem; }
+.sbri { display: flex; align-items: center; gap: .7rem; margin: .3rem 0 .4rem; }
+.sbri button { flex: none; width: var(--tap-touch); padding: 0; line-height: 1; }
+.sbri input[type=range] { flex: 1 1 auto; min-width: 0; height: var(--tap-touch); margin: 0; accent-color: var(--accent); background: transparent; }
+.sbri input[type=range]::-webkit-slider-thumb { width: 34px; height: 34px; }
+
+/* ===================== Stillwave brand theme (Brand Guidelines v1), 1.0.3 =====================
+   One palette with roles, one type scale. Layout and every min-height are unchanged (125% touch sizing kept).
+   Pi 4: no backdrop-filter, no blur filters, no running animations; static shadows only. */
+@font-face { font-family: "Anton"; src: url("/fonts/anton-latin.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: block; }
+@font-face { font-family: "JetBrains Mono"; src: url("/fonts/jetbrainsmono-latin.woff2") format("woff2"); font-weight: 400 700; font-style: normal; font-display: block; }
+
+:root {
+  /* ---- brand palette (deck 04): Night 60 / Panel 20 / Paper 10 / Signal 10 ---- */
+  --night: #0b0f0c; --panel: #111c15; --paper: #e6efe8; --static: #a3b5a9; --signal: #4ade80;
+  --grid: rgba(74, 222, 128, .16);              /* lines, rules, grid */
+  --signal-wash: rgba(74, 222, 128, .10);
+  --glow-text: 0 0 18px rgba(74, 222, 128, .55), 0 0 4px rgba(74, 222, 128, .35);
+  --glow-box: 0 0 18px rgba(74, 222, 128, .28);
+  --orange: #ff9f43;                            /* warnings only (weak signal, low battery, stream dropped) */
+  --red: #ff6b6b;                               /* errors, warnings, destructive (Shut down) - restrained */
+  --danger-bg: #2a1214; --danger-line: #b4454e; --danger-text: #ffd2d2;
+  /* aliases so the existing CSS maps onto the brand */
+  --bg: var(--night); --surface: var(--panel); --surface-2: var(--panel); --well: var(--night);
+  --line: var(--grid); --line-strong: rgba(74, 222, 128, .28);
+  --text: var(--paper); --muted: var(--static); --faint: var(--static);
+  --green: var(--signal); --green-ink: #04140a;
+  --card: var(--panel); --btn: var(--panel); --accent: var(--signal); --ok: var(--signal); --err: var(--red);
+  /* ---- type scale: 7 sizes, 3 weights, 3 families ---- */
+  --fs-1: .8125rem;   /* 13 px  label / mono readout caps */
+  --fs-2: .9375rem;   /* 15 px  small / help */
+  --fs-3: 1.0625rem;  /* 17 px  body */
+  --fs-4: 1.1875rem;  /* 19 px  card title · touch buttons */
+  --fs-5: 1.5rem;     /* 24 px  sheet / section title */
+  --fs-6: 2.25rem;    /* 36 px  page title */
+  --fs-7: 3.25rem;    /* 52 px  display numbers */
+  --fw-1: 400; --fw-2: 600; --fw-3: 700;
+  --font: Helvetica, Arial, Arimo, "Liberation Sans", sans-serif;   /* brand body: Helvetica / Arial (Pi: Liberation Sans) */
+  --head: "Anton", Impact, "Arial Narrow Bold", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "DejaVu Sans Mono", monospace;
+  /* roles -> scale (kiosk bumps a few roles one step up, below) */
+  --t-title: var(--fs-6); --t-heading: var(--fs-5); --t-card: var(--fs-4); --t-body: var(--fs-3);
+  --t-small: var(--fs-2); --t-label: var(--fs-1); --t-button: var(--fs-3); --t-button-sm: var(--fs-2);
+  --t-tab: var(--fs-1); --t-strip: var(--fs-2); --t-display: var(--fs-7);
+}
+html.kiosk { --t-button: var(--fs-4); --t-tab: var(--fs-3); --t-strip: var(--fs-3); }
+@media (pointer: coarse) { :root { --t-button: var(--fs-3); } }
+
+/* ---- base ---- */
+body {
+  font-family: var(--font); font-size: var(--t-body); font-weight: var(--fw-1); line-height: 1.45; color: var(--text);
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(900px 420px at 50% -140px, rgba(74, 222, 128, .09), transparent 70%),
+    linear-gradient(rgba(230, 239, 232, .028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(230, 239, 232, .028) 1px, transparent 1px);
+  background-size: 100% 100%, 56px 56px, 56px 56px;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--signal); }
+code, .ulog, #log, pre { font-family: var(--mono); font-size: var(--t-label); }
+
+/* ---- type roles ---- */
+h1 { font-family: var(--head); font-weight: 400; font-size: var(--t-title); text-transform: uppercase; letter-spacing: .015em; line-height: 1.02; margin: .2rem 0 .5rem; color: var(--text); }
+/* card titles (h2, aircraft card flight): HUD heading = mono caps bold +.12em, 19 px, Paper (h2.mgrp / h2.sub / Power sheet title have their own rules) */
+h2, .ahead b { font-family: var(--mono); font-size: var(--t-card); font-weight: var(--fw-3); text-transform: uppercase; letter-spacing: .12em; color: var(--paper); line-height: 1.2; }
+p, li, td, .lead, .status, .confirm, .hint, .umsg, .unotes, .spkname, .net .nname, .filepick span, .pill, .qs-v,
+input, select, textarea, label > span, .ctl label > span { font-size: var(--t-body); }
+.note, .msub, .nmeta, .hint .sub2, .mapnote, td, .mrow .ms, .spkname .nmeta, .usteps li, .confirm a, #mOpen { font-size: var(--t-small); }
+.lead, .note, .msub, .nmeta { color: var(--muted); }
+/* labels: mono caps */
+.brand .eyebrow, h2.mgrp, h2.sub, .ulabel, th, .agrid dt, .legend, .qs-k, #modebar.sdrmode .lbl, .mabout, .pwr-brand, .fmhead,
+.ctl label, form.grid2 label, .maplibregl-ctrl-attrib, .maplibregl-ctrl-scale, .scr-catch .scr-hint {
+  font-family: var(--mono); font-size: var(--t-label); font-weight: var(--fw-1); text-transform: uppercase; letter-spacing: .1em;
+}
+.ctl label, form.grid2 label { color: var(--muted); letter-spacing: .08em; }
+.ctl label > input, .ctl label > select, form.grid2 label > input, form.grid2 label > select { text-transform: none; letter-spacing: 0; font-family: var(--font); }
+.ctl label > span { font-family: var(--font); text-transform: none; letter-spacing: 0; color: var(--text); }
+.brand .eyebrow { color: var(--green); }
+.brand .eyebrow::before, h2.mgrp::before { content: "// "; opacity: .75; }
+h2.mgrp, h2.sub, th, .agrid dt, .legend, .qs-k, #modebar.sdrmode .lbl, .ulabel { color: var(--muted); }
+h2.sub { margin-top: 1rem; }
+.mabout, .pwr-brand { color: var(--faint); }
+/* readouts (frequency etc.): mono, amber */
+.now, .agrid dd { font-family: var(--mono); font-size: var(--t-body); font-weight: var(--fw-2); letter-spacing: .02em; }
+/* display numbers */
+.mex, .uver b, .unew b { font-family: var(--head); font-weight: 400; font-size: var(--t-display); letter-spacing: .02em; line-height: 1; }
+.mfreq { font-family: var(--head); font-weight: 400; font-size: var(--t-title); letter-spacing: .02em; }
+/* buttons */
+button, .btn, .qtab span { font-family: var(--font); }
+button, .btn { font-size: var(--t-button); font-weight: var(--fw-2); }
+button.sm, .presets button, .mapctl button, .ahead button { font-size: var(--t-button-sm); }
+html.kiosk button.sm, html.kiosk .presets button, html.kiosk .mapctl button, html.kiosk .ahead button { font-size: var(--t-button); }
+.mrow .mt { font-size: var(--t-button); font-weight: var(--fw-3); }
+.mrow .mchev, .sbri button { font-size: var(--t-heading); font-weight: var(--fw-1); }
+.pwr-btn { font-size: var(--t-card); }
+.pwr-sheet h2, .scr-shut .scr-sub, .pwr-full .pwr-sub { font-size: var(--t-heading); }
+.pwr-sheet h2 { font-family: var(--head); font-weight: 400; text-transform: uppercase; letter-spacing: .02em; }
+.pwr-full h1, .scr-shut h1 { font-size: var(--t-display); }
+.scr-shut .scr-sub, .pwr-full .pwr-sub { font-weight: var(--fw-1); }
+
+/* ---- surfaces ---- */
+.card, .panel, .mlist, form.grid2, .pwr-sheet {
+  background: linear-gradient(180deg, var(--surface-2), var(--surface)); border: 1px solid var(--line); border-radius: 18px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .35);
+}
+.card, .mlist { position: relative; }
+.card::before, .mlist::before { content: ""; position: absolute; left: 18%; right: 18%; top: -1px; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(230, 239, 232, .35), transparent); }
+.now, .confirm, .spk, .umsg, .unotes, .ulog, .hint, .pill, .filepick, .fmdial { background: var(--well); border: 1px solid var(--line); }
+.now { color: var(--signal); border-left: 3px solid var(--signal); border-radius: 10px; }
+.page-adsb .now { color: var(--paper); border-left-color: var(--signal); }
+.hint, .umsg { border-left: 3px solid var(--signal); }
+.umsg.ok { border-left-color: var(--green); } .umsg.warn { border-left-color: var(--orange); } .umsg.err { border-left-color: var(--red); }
+.confirm { border-color: var(--orange); }
+.status.ok, .ok { color: var(--green); } .status.err, .err { color: var(--red); }
+.qs-v.warn, .mrow .ms.warn, .status.warn, .warn { color: var(--orange); }
+
+/* ---- controls ---- */
+button, .btn { background: var(--surface-2); color: var(--text); border: 1px solid var(--line-strong); border-radius: 14px; }
+button:active { background: #1f2823; }
+/* primary action: green (site CTA) */
+button.primary, .btn.primary { background: var(--green); color: var(--green-ink); border-color: var(--green); box-shadow: 0 0 16px rgba(74, 222, 128, .22); font-weight: var(--fw-3); }
+/* selected secondary control (toggles, segments, chosen network/speaker/timeout): cyan */
+button.on, button.net.on, .seg button.on, .sseg button.on, .viewseg button.on {
+  background: var(--signal-wash); color: var(--paper); border-color: var(--signal); box-shadow: inset 0 0 0 1px var(--signal); font-weight: var(--fw-3);
+}
+/* tuned station: amber (tuning) */
+button.station.active, .chip.active { background: var(--signal); color: var(--green-ink); border-color: var(--signal); box-shadow: 0 0 16px rgba(74, 222, 128, .28); font-weight: var(--fw-3); }
+button.station, .chip { border-radius: 999px; }
+button.danger, .pwr-btn.danger { background: var(--danger-bg); border-color: var(--danger-line); color: var(--danger-text); }
+input, select, textarea { background: var(--well); color: var(--text); border: 1px solid var(--line-strong); border-radius: 12px; font-family: var(--font); font-variant-numeric: tabular-nums; }
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
+input[type="checkbox"], input[type="radio"], input[type=range] { accent-color: var(--signal); }
+th, td { border-bottom-color: var(--line); }
+td.flight { color: var(--text); font-weight: var(--fw-3); }
+tr.pick td { background: var(--signal-wash); }
+
+/* SDR mode row: the running mode is green (live) */
+#modebar.sdrmode { background: var(--well); border: 1px solid var(--line); border-radius: 999px; padding: .35rem; }
+#modebar.sdrmode button { background: transparent; color: var(--text); border: 1px solid transparent; border-radius: 999px; font-size: var(--t-button); font-weight: var(--fw-2); }
+#modebar.sdrmode button.on { background: var(--green); color: var(--green-ink); border-color: var(--green); box-shadow: 0 0 14px rgba(74, 222, 128, .25); font-weight: var(--fw-3); }
+@media (max-width: 599px) { #modebar.sdrmode { border-radius: 18px; } }
+@media (max-width: 430px) { #modebar.sdrmode button, html.kiosk #modebar.sdrmode button { font-size: var(--t-button-sm); } }
+
+/* ---- status strip ---- */
+.qstrip { background: rgba(7, 10, 8, .97); border-bottom: 1px solid var(--line); box-shadow: 0 8px 22px rgba(0, 0, 0, .45); }
+.qs-chip { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 0 .6rem; }
+.qs-k { letter-spacing: .08em; }
+.qs-v { font-family: var(--font); font-size: var(--t-strip); font-weight: var(--fw-3); letter-spacing: -.012em; color: var(--text); }
+.qs-job .qs-v:not(.dash):not(.warn) { color: var(--signal); }           /* what the SDR is tuned to */
+.qs-job .qs-k { color: var(--green); }
+.qs-net .qs-ico { color: var(--signal); }
+.qs-aud .qs-ico { color: var(--text); }
+.qs-ico.off { color: var(--faint); }
+.qs-dot.ok { background: var(--green); box-shadow: 0 0 0 3px rgba(74, 222, 128, .18), 0 0 8px var(--green); }
+.qs-dot.warn { background: var(--orange); }
+.qstrip .powerbtn { background: var(--surface); border: 1px solid var(--line); color: var(--text); }
+@media (min-width: 600px) { .qs-chip { padding: 0 .45rem; gap: .35rem; } .qstrip { gap: 5px; } .qs-ico svg { width: 20px; height: 20px; } }
+
+/* ---- tab bar: active tab green ---- */
+.qtabs { background: rgba(7, 10, 8, .98); border-top: 1px solid var(--line); box-shadow: 0 -8px 22px rgba(0, 0, 0, .45); }
+.qtab { color: var(--muted); border-radius: 16px; }
+.qtab span { font-family: var(--mono); font-size: var(--t-tab); font-weight: var(--fw-2); text-transform: uppercase; letter-spacing: .04em; }
+.qtab.on { color: var(--green); background: rgba(74, 222, 128, .08); box-shadow: inset 0 0 0 1.5px rgba(74, 222, 128, .55); }
+.qtab.on::before { content: ""; position: absolute; top: 0; left: 26%; right: 26%; height: 3px; border-radius: 0 0 3px 3px; background: var(--green); box-shadow: 0 0 10px var(--green); }
+.qtab.on svg { color: var(--green); }
+.qtab .qlive { background: var(--green); box-shadow: 0 0 8px var(--green); border-color: #070a08; }
+
+/* ---- More list ---- */
+.mlist { overflow: hidden; }
+.mrow { color: var(--text); }
+.mrow + .mrow { border-top: 1px solid var(--line); }
+.mrow:active { background: rgba(230, 239, 232, .05); }
+.mrow .ms { color: var(--static); font-weight: var(--fw-1); }
+.mrow .mchev { color: var(--faint); }
+.mrow.mscreen .mt { color: var(--paper); } .mrow.mscreen svg { color: var(--signal); }
+.mrow.mpower .mt { color: var(--text); } .mrow.mpower svg { color: var(--red); }
+
+/* ---- power sheet / full screens / screen-off ---- */
+.pwr-ov { background: rgba(2, 4, 3, .8); }
+.pwr-sheet { border-color: var(--line-strong); }
+.pwr-btn.pwr-scr { background: var(--signal-wash); border-color: var(--signal); color: var(--paper); }
+.pwr-full, .scr-shut { background: var(--bg); }
+.pwr-full h1, .scr-shut h1 { font-family: var(--head); font-weight: 400; text-transform: uppercase; letter-spacing: .02em; }
+.scr-shut .note, .pwr-full .note { font-size: var(--t-body); }
+.scr-shut .pwr-brand, .pwr-full .pwr-brand { font-size: var(--t-label); color: var(--green); }
+.scr-catch .scr-hint { color: #4a5550; }
+
+/* ---- progress / meters ---- */
+.ubar, .prog, .bar { background: var(--well); border-color: var(--line); }
+.ubar > div, .prog > div { background: var(--green); }
+.usteps li { border-top-color: var(--line); } .usteps li.on { border-top-color: var(--signal); color: var(--text); } .usteps li.done { border-top-color: var(--green); }
+.bar > div { background: linear-gradient(90deg, #1f9d5a, var(--green) 40%, var(--orange) 72%, var(--red)); }
+.scope, #plot { background: var(--well); border-color: var(--line); }
+.mapwrap { border-color: var(--line); background: #060908; }
+.mapnote { background: rgba(10, 14, 12, .94); border-color: var(--line-strong); }
+.maplibregl-ctrl-attrib { background: rgba(7, 10, 8, .78) !important; color: var(--muted); text-transform: none; letter-spacing: 0; }
+.maplibregl-ctrl-attrib a { color: var(--muted); }
+.maplibregl-ctrl-scale { background: rgba(7, 10, 8, .7); color: var(--muted); border-color: var(--muted); }
+
+/* ---- Radio: FM band dial (site "tuning range" motif), static SVG ---- */
+.fmdial { margin: .2rem 0 .8rem; padding: .6rem .7rem .2rem; border-radius: 14px; }
+.fmhead { display: flex; justify-content: space-between; align-items: baseline; color: var(--muted); padding-bottom: .35rem; border-bottom: 1px solid var(--line); }
+.fmhead b { font-weight: var(--fw-1); color: var(--signal); }
+.fmdial svg { display: block; width: 100%; height: auto; overflow: visible; }
+.fmdial .ax { stroke: var(--line-strong); stroke-width: 1.5; }
+.fmdial .tk line { stroke: rgba(168, 179, 173, .45); stroke-width: 1.5; }
+.fmdial .tk text { font-family: var(--mono); fill: var(--muted); text-anchor: middle; font-size: 21px; }
+.fmdial .stlab { font-family: var(--mono); font-size: 24px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; fill: var(--signal); }
+.fmdial .st .pk { stroke: var(--static); stroke-width: 3; stroke-linecap: round; }
+.fmdial .sp { fill: none; stroke: var(--signal); stroke-opacity: .55; stroke-width: 2; stroke-linejoin: round; }
+.fmdial .st line { stroke: rgba(168, 179, 173, .4); stroke-width: 1.5; stroke-dasharray: 3 4; }
+.fmdial .st.on line { stroke: var(--signal); stroke-dasharray: none; stroke-width: 3; }
+@media (max-width: 430px) { .fmdial .tk text, .fmdial .stlab { font-size: 44px; } }
+
+/* weights: only 400 / 600 / 700 */
+input, select, textarea, .nmeta, .net .nmeta { font-weight: var(--fw-1); }
+.maplibregl-ctrl.maplibregl-ctrl-scale, .maplibregl-ctrl.maplibregl-ctrl-attrib { font-family: var(--mono); font-size: var(--t-label); }
+.maplibregl-ctrl.maplibregl-ctrl-scale { letter-spacing: .16em; }
+
+/* readout color by role: frequency/tuning = amber (default), network/audio/aircraft info = cyan */
+#summary.now, #audnow.now, #netnow.now, #appw.now { color: var(--paper); border-left-color: var(--signal); }
+.mfreq { color: var(--signal); }
+
+/* phones: Radio card a little less padded so the 4 mode buttons keep full labels at the 15 px button size */
+@media (max-width: 430px) { body.page-radio .card.home { padding: 1.1rem .8rem 1rem; } #modebar.sdrmode { gap: .25rem; padding: .3rem; } }
+
+@media (max-width: 430px) { .qs-job { max-width: 38%; } }
+
+/* never smaller than before: touch buttons and the kiosk More values */
+html.kiosk button.tunerfind { font-size: var(--fs-4); }
+@media (pointer: coarse) { button.tunerfind { font-size: var(--fs-4); } }
+
+/* ======================= v3 brand-strict overrides ======================= */
+body {
+  background-color: var(--night);
+  background-image:
+    radial-gradient(1px 1px at 37px 61px, rgba(230,239,232,.55), transparent 1.5px),
+    radial-gradient(1px 1px at 211px 143px, rgba(230,239,232,.35), transparent 1.5px),
+    radial-gradient(1.5px 1.5px at 298px 29px, rgba(230,239,232,.5), transparent 2px),
+    radial-gradient(1px 1px at 121px 287px, rgba(74,222,128,.45), transparent 1.5px),
+    radial-gradient(1px 1px at 333px 251px, rgba(230,239,232,.3), transparent 1.5px),
+    radial-gradient(1px 1px at 71px 199px, rgba(230,239,232,.25), transparent 1.5px),
+    radial-gradient(800px 460px at 70% 30%, rgba(74, 222, 128, .07), transparent 70%),
+    linear-gradient(rgba(74, 222, 128, .06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(74, 222, 128, .06) 1px, transparent 1px);
+  background-size: 360px 360px, 360px 360px, 360px 360px, 360px 360px, 360px 360px, 360px 360px, 100% 100%, 48px 48px, 48px 48px;
+  background-attachment: fixed;
+}
+/* headlines: Anton caps, leading .92, Paper with one glowing Signal word */
+h1, .pwr-sheet h2, .pwr-full h1, .scr-shut h1 { line-height: .92; letter-spacing: .005em; color: var(--paper); }
+h1 { margin: .35rem 0 .7rem; }
+h1 .acc, .acc { color: var(--signal); text-shadow: var(--glow-text); }
+.mfreq, .mex, .uver b { color: var(--signal); text-shadow: var(--glow-text); }
+/* HUD labels: mono caps, +0.16em, // prefix */
+.brand .eyebrow, h2.mgrp, h2.sub, .ulabel, th, .agrid dt, .legend, .qs-k, #modebar.sdrmode .lbl, .mabout, .pwr-brand, .fmhead,
+.ctl label, form.grid2 label, .qtab span { letter-spacing: .16em; }
+h2.sub::before, #modebar.sdrmode .lbl::before, .fmhead > span:first-child::before { content: ""; }
+.brand .eyebrow, h2.mgrp { color: var(--signal); }
+h2.mgrp::before, .brand .eyebrow::before { opacity: 1; }
+/* cards: Panel + thin Grid border, as on the slides */
+.card, .panel, .mlist, form.grid2, .pwr-sheet { background: var(--panel); border: 1px solid var(--grid); border-radius: 16px; box-shadow: 0 18px 40px rgba(0, 0, 0, .45); }
+.card::before, .mlist::before { background: linear-gradient(90deg, transparent, rgba(74, 222, 128, .35), transparent); }
+.now, .confirm, .spk, .umsg, .unotes, .ulog, .hint, .pill, .filepick, .fmdial, .scope, #plot, input, select, textarea { background: var(--night); }
+/* buttons: Night on Panel, Grid border; selected = Signal outline + wash + soft glow; one solid Signal per screen (running mode / primary) */
+button, .btn { background: var(--night); border-color: var(--line-strong); color: var(--paper); }
+button:active { background: #13201a; }
+button.on, button.net.on, .seg button.on, .sseg button.on, .viewseg button.on, button.station.active, .chip.active,
+.pwr-btn.pwr-scr {
+  background: var(--signal-wash); color: var(--paper); border-color: var(--signal); box-shadow: inset 0 0 0 1px var(--signal), var(--glow-box);
+}
+button.station.active, .chip.active { color: var(--signal); }
+button.primary, .btn.primary, #modebar.sdrmode button.on { box-shadow: var(--glow-box); }
+/* readouts = data: Signal text, Signal rule */
+.now, #summary.now, #audnow.now, #netnow.now, #appw.now, .page-adsb .now { color: var(--signal); border-left: 3px solid var(--signal); }
+.hint, .umsg { border-left-color: var(--static); }
+a { color: var(--signal); }
+/* status strip */
+.qstrip, .qtabs { background: rgba(11, 15, 12, .97); border-color: var(--grid); }
+.qs-chip, .qstrip .powerbtn { background: var(--panel); border-color: var(--grid); }
+.qs-job .qs-v:not(.dash):not(.warn) { color: var(--signal); }
+.qs-net .qs-ico, .qs-aud .qs-ico { color: var(--static); }
+/* tab bar: active = Signal + glow */
+.qtab { color: var(--static); }
+.qtab.on { color: var(--signal); background: var(--signal-wash); box-shadow: inset 0 0 0 1px rgba(74, 222, 128, .6), var(--glow-box); }
+.qtab.on span { text-shadow: 0 0 10px rgba(74, 222, 128, .5); }
+/* More list */
+.mrow.mscreen .mt { color: var(--paper); } .mrow.mscreen svg { color: var(--signal); }
+.mrow.mpower svg { color: var(--red); }
+/* map: altitude as text only, colour legend removed */
+.page-adsb .legend i, .page-adsb .legend span { display: none; }
+/* FM dial */
+.fmdial .sp { stroke: var(--signal); stroke-opacity: .5; }
+.fmdial .st.on line { stroke: var(--signal); }
+.fmhead b { color: var(--signal); }
+.fmdial .tk text { fill: var(--static); }
+.fmdial .tk line, .fmdial .st line { stroke: rgba(163, 181, 169, .4); }
+.fmdial .ax { stroke: var(--grid); }
+
+/* ======================= v4: one button style (brand HUD) ======================= */
+/* All buttons, segments, mode row, station chips, map toggles, Power sheet, Apply/Clear, tab labels:
+   mono, UPPERCASE, +0.12em, weight 700. Sizes stay on the scale roles (touch sizes unchanged). */
+:root { --btn-font: var(--mono); --btn-weight: var(--fw-3); --btn-track: .12em; }
+button, .btn, .pwr-btn, #modebar.sdrmode button, .seg button, .presets button, .mapctl button, .ahead button, button.station, .chip,
+.qtab span, details > summary, .filepick span {
+  font-family: var(--btn-font); font-weight: var(--btn-weight); text-transform: uppercase; letter-spacing: var(--btn-track);
+  line-height: 1.15;
+}
+.qtab span { font-weight: var(--fw-3); }
+button.on, button.station.active, .chip.active, button.primary, #modebar.sdrmode button.on { font-weight: var(--btn-weight); }
+/* overflow: allow clean wrapping inside the button, never clip */
+button, .btn, .pwr-btn { white-space: normal; overflow-wrap: anywhere; hyphens: none; }
+#modebar.sdrmode button, .seg button { white-space: nowrap; overflow-wrap: normal; }
+/* Radio page preset chips: call sign + MHz on one line (full name is in "Now playing") */
+.page-radio button.station { white-space: nowrap; overflow-wrap: normal; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* icon glyph buttons (◀ ▶ +/-, power, chevrons) keep their glyph look */
+.qstrip .powerbtn, .sbri button { text-transform: none; letter-spacing: 0; }
+/* inputs and body stay Arial */
+input, select, textarea { font-family: var(--font); text-transform: none; letter-spacing: 0; }
+/* page eyebrow removed (More footer stays) */
+.brand .eyebrow { display: none; }
+/* More list rows (1.0.4): titles in the button/tab/strip style (mono caps, bold, tracked); secondary text one size (--t-small), Static, mono */
+button.mrow, .mrow { font-family: var(--font); text-transform: none; letter-spacing: 0; }
+.mrow .mt { font-family: var(--btn-font); font-weight: var(--btn-weight); text-transform: uppercase; letter-spacing: var(--btn-track); line-height: 1.15; color: var(--paper); }
+.mrow .ms { font-family: var(--mono); font-size: var(--t-small); font-weight: var(--fw-1); letter-spacing: .02em; text-transform: none; color: var(--static); }
+
+/* ======================= v5: status strip in the unified HUD style + altitude legend ======================= */
+.qs-k, .qs-v { font-family: var(--mono); text-transform: uppercase; font-weight: var(--fw-3); }
+.qs-k { color: var(--static); letter-spacing: .16em; }
+.qs-v { color: var(--paper); letter-spacing: .06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qs-job .qs-k { color: var(--static); }
+.qs-job .qs-v:not(.dash):not(.warn) { color: var(--signal); text-shadow: 0 0 10px rgba(74, 222, 128, .35); }
+.qs-v.dash { color: var(--static); } .qs-v.warn { color: var(--orange); }
+.qs-dot.ok { background: var(--signal); }
+.qs-job { border-color: var(--grid); background: var(--panel); }
+html.kiosk .qs-v { font-size: var(--fs-2); }          /* mono caps are wider: 15 px keeps long names readable; chip height unchanged */
+html.kiosk .qs-k { font-size: var(--fs-1); }
+/* altitude legend: compact mono, brand style */
+.page-adsb .legend, .page-adsb .legend span, .page-adsb .legend i { display: inline-flex; }
+.page-adsb .legend { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem 1.1rem; font-family: var(--mono); font-weight: var(--fw-2);
+  text-transform: uppercase; letter-spacing: .14em; color: var(--paper); font-size: var(--t-label); }
+.page-adsb .legend span { align-items: center; gap: .45rem; }
+.page-adsb .legend .lk { color: var(--static); letter-spacing: .16em; font-weight: var(--fw-1); }
+.page-adsb .legend i { width: .8rem; height: .8rem; border-radius: 2px; margin: 0; }
+
+/* ======================= v7: 8-band altitude legend (gradient bar) ======================= */
+.page-adsb .legend.altbar { flex-wrap: nowrap; gap: .7rem; letter-spacing: .08em; }
+.page-adsb .legend.altbar .ab { display: flex; flex-direction: column; align-items: stretch; flex: 1 1 auto; gap: .2rem; min-width: 0; }
+.page-adsb .legend.altbar .alabs b { color: var(--paper); }
+.page-adsb .legend.altbar .abar { display: flex; height: .55rem; border-radius: 3px; overflow: hidden; border: 1px solid var(--grid); }
+.page-adsb .legend.altbar .abar i { flex: 1 1 0; width: auto; height: 100%; border-radius: 0; }
+.page-adsb .legend.altbar .alabs { display: flex; }
+.page-adsb .legend.altbar .alabs b { flex: 1 1 0; text-align: center; font-weight: var(--fw-3); white-space: nowrap; font-size: var(--fs-1); letter-spacing: .04em; }
+.page-adsb .legend.altbar .unk { gap: .35rem; color: var(--static); letter-spacing: .16em; }
+.page-adsb .legend.altbar .unk i { width: .8rem; height: .8rem; background: rgba(107,111,109,.6); border: 1px dashed var(--static); }
+
+/* 1.0.5: kiosk shutdown / restart screen = the boot splash art (radar, STILLWAVE, glowing TRACE);
+   the text sits where the splash caption is, as a mono "// SHUTTING DOWN" line. Phones keep the plain screen. */
+html.kiosk .pwr-full, html.kiosk .scr-shut { background: #0b0f0c url(/img/trace-art.png) center top / contain no-repeat; align-items: flex-start; padding: 0 1.5rem; }
+html.kiosk .pwr-full-in, html.kiosk .scr-shut-in { position: absolute; left: 0; right: 0; top: 83vh; max-width: none; padding: 0 1.5rem; }
+html.kiosk .pwr-full .pwr-ico, html.kiosk .pwr-full .pwr-brand, html.kiosk .scr-shut .pwr-brand { display: none; }
+html.kiosk .pwr-full h1, html.kiosk .scr-shut h1 { font-family: var(--mono); font-size: var(--fs-3); font-weight: 700; letter-spacing: .16em; line-height: 1.3; color: var(--static); margin: 0 0 .9rem; text-shadow: none; }
+html.kiosk .pwr-full h1::before, html.kiosk .scr-shut h1::before { content: "// "; }
+html.kiosk .pwr-full .pwr-sub, html.kiosk .scr-shut .scr-sub { font-size: var(--fs-2); color: var(--paper); line-height: 1.35; margin: 0 0 .35rem; }
+html.kiosk .pwr-full .note, html.kiosk .scr-shut .note { font-size: var(--fs-1); color: var(--static); margin: 0; }
+
+/* 1.0.6: on-screen keyboard (kbd.js, kiosk only). Panel background, mono caps keys, Signal green highlight.
+   Keys are 70 px tall (>= 125% of the 55 px touch target). Covers the tab bar while open. */
+.kbd { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1050; background: var(--panel); border-top: 1px solid var(--line-strong);
+  padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 8px;
+  transform: translateY(105%); transition: transform .18s ease-out; visibility: hidden; touch-action: none;
+  -webkit-user-select: none; user-select: none; box-shadow: 0 -10px 30px rgba(0, 0, 0, .55); }
+.kbd.open { transform: none; visibility: visible; }
+.kbd .kr { display: flex; gap: 6px; justify-content: center; }
+.kbd .kk { flex: 1 1 0; min-width: 0; min-height: 70px; margin: 0; padding: 0 2px; border-radius: 10px;
+  background: var(--night); border: 1px solid var(--line); color: var(--paper);
+  font-family: var(--mono); font-weight: 700; font-size: var(--fs-5); letter-spacing: 0; text-transform: none; line-height: 1; }
+.kbd .kk.fn { font-size: var(--fs-2); letter-spacing: .12em; text-transform: uppercase; color: var(--static); flex-grow: 1.5; }
+.kbd .kk.k-space { flex-grow: 4.5; }
+.kbd .kk.done { background: var(--signal); border-color: var(--signal); color: var(--night); flex-grow: 2; }
+.kbd .kk.on { border-color: var(--signal); color: var(--signal); background: var(--signal-wash); }
+.kbd .kk.lock { text-decoration: underline; text-underline-offset: 4px; }
+.kbd .kk.down { background: var(--signal-wash); border-color: var(--signal); color: var(--signal); }
+.kbd .kk.done.down { background: var(--paper); border-color: var(--paper); color: var(--night); }
+.kbd[data-layout="pad"] .kk:not(.fn) { font-size: var(--fs-6); }
+.kbd[data-layout="pad"] .kr { padding: 0 8%; }
+.kbd[data-layout="pad"] .kk.fn, .kbd[data-layout="pad"] .kk.done { flex-grow: 1; }
+
+/* ===== 1.0.8: v108 components (Listen, START, Scan, More) ===== */
+/* v108 MOCKUP additions (appended to fieldnote.css by the screenshot server). Glow untouched. */
+#modebar, .sdrmode { display: none !important; }            /* no SDR MODE row on any page */
+@media (min-width: 1000px) and (min-height: 501px) and (orientation: landscape) {   /* 1.0.8.2: not on landscape phones */
+  .qtabs { top: var(--chrome-top); bottom: 0; right: auto; width: 104px; display: flex; flex-direction: column; gap: 8px;
+    padding: 14px 10px; border-top: 0; border-right: 1px solid var(--line); box-shadow: none; }
+  .qtab { min-height: 84px; flex: 0 0 auto; }
+  body { padding-left: 104px; padding-bottom: 24px; }
+  .wrap { max-width: 1040px; }
+}
+@media (min-width: 1600px) { html { font-size: 112.5%; } .wrap { max-width: 1180px; } }
+.v-sub { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); margin: .2rem 0 1rem; }
+.v-sub button { flex: 1; border: 0; background: transparent; border-radius: 999px; min-height: 46px; font-family: var(--mono); font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--static); }
+.v-sub button.on { background: var(--signal); color: var(--night); }
+.v-now { font-family: var(--mono); font-size: var(--fs-2, 13px); letter-spacing: .08em; color: var(--signal); border-left: 3px solid var(--signal);
+  background: var(--panel); padding: .7rem .9rem; border-radius: 0 10px 10px 0; margin-bottom: .9rem; }
+.v-now b { color: var(--paper); }
+.v-tune { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: .8rem; }
+.v-freq { font-family: Anton, var(--display, sans-serif); font-size: 64px; line-height: 1; color: var(--signal); text-align: center;
+  text-shadow: 0 0 18px rgba(74,222,128,.45); letter-spacing: .02em; }
+.v-freq small { font-family: var(--mono); font-size: 14px; color: var(--static); letter-spacing: .16em; margin-left: 6px; text-shadow: none; }
+.v-step { min-width: 64px; min-height: 64px; font-size: 22px; }
+.v-dial { position: relative; height: 74px; margin-top: .9rem; border-top: 1px solid var(--line); }
+.v-dial .tk { position: absolute; top: 0; width: 1px; background: var(--line-strong, #3a4a3f); }
+.v-dial .lb { position: absolute; top: 26px; transform: translateX(-50%); font-family: var(--mono); font-size: 11px; color: var(--static); }
+.v-dial .ps { position: absolute; top: -6px; width: 9px; height: 9px; border-radius: 50%; transform: translateX(-50%); background: var(--signal-wash); border: 1px solid var(--signal); }
+.v-dial .nd { position: absolute; top: -12px; bottom: 6px; width: 2px; background: var(--signal); box-shadow: 0 0 10px var(--signal); transform: translateX(-50%); }
+.v-dial .nm { position: absolute; top: 46px; transform: translateX(-50%); font-family: var(--mono); font-weight: 700; font-size: 11px; color: var(--signal); letter-spacing: .12em; white-space: nowrap; }
+.v-band { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; letter-spacing: .14em; color: var(--static); text-transform: uppercase; }
+.v-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .6rem; }
+.v-pre { text-align: left; padding: .7rem .8rem; border-radius: 12px; min-height: 66px; display: flex; flex-direction: column; gap: 4px; }
+.v-pre b { font-family: var(--mono); font-size: 15px; letter-spacing: .04em; }
+.v-pre span { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; color: var(--static); text-transform: uppercase; }
+.v-pre.on { border-color: var(--signal); background: var(--signal-wash); } .v-pre.on b { color: var(--signal); }
+.v-tag { display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .14em; color: #f5c96a; border: 1px solid rgba(245,201,106,.5);
+  border-radius: 999px; padding: 3px 8px; margin-left: 6px; vertical-align: middle; text-transform: uppercase; }
+.v-h { display: flex; justify-content: space-between; align-items: center; margin: 0 0 .6rem; }
+.v-h h2 { margin: 0; }
+/* START screen */
+.v-start { text-align: center; padding: 2.4rem 1.2rem; margin-top: 1rem; }
+.v-start .k { font-family: var(--mono); font-weight: 700; letter-spacing: .2em; color: var(--static); font-size: 13px; }
+.v-start .big { font-family: Anton, sans-serif; font-size: 40px; letter-spacing: .04em; color: var(--paper); margin: .4rem 0 .3rem; }
+.v-start .big em { font-style: normal; color: var(--signal); text-shadow: 0 0 14px rgba(74,222,128,.45); }
+.v-start p { color: var(--static); max-width: 34ch; margin: .2rem auto 1.4rem; }
+.v-start button.primary { min-height: 86px; min-width: min(100%, 360px); font-size: 22px; letter-spacing: .16em; border-radius: 18px; box-shadow: 0 0 26px rgba(74,222,128,.4); }
+/* SCAN */
+.v-top { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.v-top .rng { font-family: var(--mono); font-weight: 700; letter-spacing: .08em; color: var(--paper); flex: 1; min-width: 180px; }
+.v-top .rng span { color: var(--static); font-weight: 400; font-size: 12px; letter-spacing: .14em; display: block; }
+.v-graph { width: 100%; height: 300px; display: block; border-radius: 12px; background: #07100a; border: 1px solid var(--line); margin: .7rem 0; }
+@media (min-width: 1000px) { .v-graph { height: 380px; } }
+.v-list { width: 100%; border-collapse: collapse; font-family: var(--mono); }
+.v-list th { text-align: left; font-size: 10px; letter-spacing: .16em; color: var(--static); font-weight: 700; padding: .3rem .4rem; text-transform: uppercase; }
+.v-list td { padding: .45rem .4rem; border-top: 1px solid var(--line); font-size: 14px; }
+.v-list td.f { font-weight: 700; color: var(--paper); } .v-list td.db { color: var(--signal); }
+.v-list .lb { display: block; font-size: 10px; letter-spacing: .1em; color: var(--static); text-transform: uppercase; font-weight: 400; }
+.v-list button { min-height: 40px; padding: 0 12px; font-size: 11px; letter-spacing: .14em; }
+.v-meta { display: flex; justify-content: space-between; align-items: center; font-family: var(--mono); font-size: 11px; letter-spacing: .14em; color: var(--static); text-transform: uppercase; margin-bottom: .3rem; }
+.v-sheet { margin-top: .6rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: .5rem; }
+/* MORE */
+.v-rows { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-bottom: .9rem; }
+.v-row { display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding: .85rem 1rem; border-top: 1px solid var(--line); }
+.v-row:first-child { border-top: 0; }
+.v-row .t { font-family: var(--mono); font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--paper); }
+.v-row .s { font-family: var(--mono); font-size: 12px; color: var(--static); display: block; font-weight: 400; letter-spacing: .04em; text-transform: none; margin-top: 3px; }
+.v-sw { width: 62px; height: 34px; border-radius: 999px; background: var(--night); border: 1px solid var(--line-strong, #3a4a3f); position: relative; flex: 0 0 auto; }
+.v-sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: var(--static); }
+.v-sw.on { background: var(--signal-wash); border-color: var(--signal); } .v-sw.on::after { left: 31px; background: var(--signal); box-shadow: 0 0 10px var(--signal); }
+.v-seg2 { display: inline-flex; gap: 3px; padding: 3px; border-radius: 999px; border: 1px solid var(--line); background: var(--night); }
+.v-seg2 button { min-height: 36px; border: 0; border-radius: 999px; padding: 0 12px; font-size: 11px; background: transparent; }
+.v-seg2 button.on { background: var(--signal); color: var(--night); }
+.v-lbl { font-family: var(--mono); font-size: 11px; letter-spacing: .16em; color: var(--signal); margin: .9rem 0 .4rem; text-transform: uppercase; }
+.v-warn { color: #ff9a8a !important; border-color: rgba(255,120,100,.5) !important; }
+@media (max-width: 430px) {
+  .v-sub button { letter-spacing: .06em; font-size: 13px; }
+  .v-freq { font-size: 46px; } .v-freq small { display: block; margin: 6px 0 0; font-size: 12px; }
+  .v-step { min-width: 48px; min-height: 56px; }
+  .v-tune { gap: .4rem; }
+}
+/* START screen: mode line + button only */
+.v-start .k { margin-bottom: 1.2rem; font-size: 14px; }
+.v-start .tiny { font-size: 12px; color: var(--static); margin: 1rem auto 0; }
+/* reset confirm */
+.v-modal { position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.66); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.v-modal[hidden] { display: none; }
+.v-dlg { background: var(--panel); border: 1px solid var(--line-strong, #3a4a3f); border-radius: 16px; padding: 18px; max-width: 360px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+.v-dlg .k { font-family: var(--mono); font-weight: 700; letter-spacing: .16em; color: #ff9a8a; font-size: 12px; }
+.v-dlg p { color: var(--paper); margin: .6rem 0 1rem; }
+.v-dlg .row { display: flex; gap: .6rem; } .v-dlg .row button { flex: 1; }
+.v-danger { background: #ff7a66 !important; border-color: #ff7a66 !important; color: var(--night) !important; }
+
+/* ===================== Trace 1.0.8 ===================== */
+/* START screen gate (mode.js): covers the page (inside the shell: the content area) until START is tapped */
+.v-gate { position: fixed; inset: 0; z-index: 900; background: var(--night, #0b0f0c); display: flex; align-items: center; justify-content: center; padding: 18px; overflow: auto; }
+.v-gate[hidden] { display: none; }
+.v-gate .v-start { width: min(520px, 100%); margin: 0; }
+.v-gate .tiny.err { color: #ff9a8a; }
+html:not(.embed) .v-gate { top: var(--chrome-top); bottom: var(--chrome-bottom); }
+#off { display: none !important; }   /* old per-page "dongle busy" cards: replaced by the START screen */
+
+/* single-load shell (app.html): frames fill the space between the strip and the nav */
+html.shell, html.shell body { height: 100%; overflow: hidden; }
+html.shell body { padding: 0 !important; margin: 0; }
+#qframes { position: fixed; top: var(--chrome-top); bottom: var(--chrome-bottom); left: var(--rail, 0px); right: 0; }
+.qframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: transparent; }
+.qframe[hidden] { display: none; }
+html.shell.mapfs .qstrip, html.shell.mapfs .qtabs { display: none !important; }
+html.shell.mapfs #qframes { top: 0; bottom: 0; left: 0; }
+
+/* a page inside the shell: no own chrome */
+html.embed .qstrip, html.embed .qtabs, html.embed #modebar { display: none !important; }
+html.embed body { padding-top: var(--pad, 14px) !important; padding-bottom: calc(var(--pad, 14px) + env(safe-area-inset-bottom, 0px)) !important; padding-left: var(--pad, 14px); padding-right: var(--pad, 14px); margin: 0; }
+html.embed { scroll-padding-top: 8px; scroll-padding-bottom: 8px; }
+html.embed.m108 body { padding: 0 !important; }
+
+/* nav: bottom tabs on phones and the 5" kiosk; a side rail from 760 px wide (iPad, desktop) at EVERY wider width
+   (1.0.7 left a gap where neither showed). The 5" DSI kiosk always keeps its bottom tabs. */
+@media (min-width: 760px) and (min-height: 501px) {   /* 1.0.8.2: a sideways phone keeps the portrait layout */
+  html:not(.kiosk), html.kiosk.hdmi { --rail: 108px; --chrome-bottom: 0px; }
+  html:not(.kiosk) .qtabs, html.kiosk.hdmi .qtabs { top: var(--chrome-top); bottom: 0; left: 0; right: auto; width: var(--rail); display: flex; flex-direction: column;
+    justify-content: flex-start; gap: 8px; padding: 14px 10px; border-top: 0; border-right: 1px solid var(--line); box-shadow: none; }
+  html:not(.kiosk) .qtab, html.kiosk.hdmi .qtab { min-height: 84px; flex: 0 0 auto; gap: 6px; }
+  html:not(.kiosk) .qtabs .qtab span, html.kiosk.hdmi .qtabs .qtab span { font-size: 11px; letter-spacing: .06em; overflow: visible; }
+  html:not(.kiosk):not(.shell):not(.embed) body, html.kiosk.hdmi:not(.shell):not(.embed) body { padding-left: calc(var(--rail) + 1.2rem); }
+  .qtab:not(.on):hover { background: var(--signal-wash); color: var(--paper); }
+  html.embed .wrap { max-width: 1100px; margin-left: auto; margin-right: auto; }
+}
+@media (min-width: 1600px) and (orientation: landscape) {   /* desktop monitor (1080p and up): a little larger for ~2 ft viewing */
+  html:not(.kiosk), html.kiosk.hdmi { --rail: 128px; }
+  html.embed:not(.kiosk) body, html.embed.hdmi body { font-size: 112%; }
+  button, a, summary, .mrow { cursor: pointer; }
+}
+/* phones: everything scaled like the 5" kiosk (720 px at ~2x density -> 390 px phone) */
+@media (max-width: 480px) {
+  html:not(.kiosk) { --pz: .86; }   /* 1.2.0: applied on body (see 1.2.0 block) */
+  .qs-chip { padding-left: 8px !important; padding-right: 8px !important; gap: 6px !important; }
+  .qs-k { font-size: 9px !important; letter-spacing: .12em !important; }
+  .qs-v { font-size: 12px !important; letter-spacing: .04em !important; }
+  .qtab span { font-size: 10px !important; letter-spacing: .06em !important; overflow: visible !important; text-overflow: clip !important; }
+  .v-list td { padding: .35rem .3rem; font-size: 13px; }
+  .v-row { padding: .7rem .85rem; }
+  .m-pill { font-size: 11px; min-height: 40px; }
+  button, .m-pill, .qtab { min-height: 47px; }   /* 47 x .86 = 40 px on screen */
+  .seg button { font-size: 12px !important; letter-spacing: .06em !important; padding-left: 6px !important; padding-right: 6px !important; white-space: nowrap; }
+  .v-row button, .v-top button { white-space: nowrap; flex: 0 0 auto; }
+}
+/* Scan settings sheet */
+details.v-sheetbox { margin-top: .6rem; }
+details.v-sheetbox > summary { list-style: none; }
+details.v-sheetbox[open] > summary { color: var(--signal); }
+.v-list tr.hit td.f { color: var(--signal); }
+canvas#plot.v-big { height: 300px !important; width: 100%; }
+@media (min-width: 1000px) { canvas#plot.v-big { height: 400px !important; } }
+/* off-theme subtexts (1.0.8): every hint/sub line in Static grey mono, never default blue/white */
+.hint, .sub2, .msub, .note, .lead { color: var(--static); }
+.note a, .hint a { color: var(--signal); }
+
+/* 1.0.8.2 handheld portrait lock: every page uses the portrait layout only (5" kiosk 720x1280 and phones).
+   No landscape variant: a sideways phone keeps the portrait column, centered, with the tab bar under it. */
+html, body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@media (orientation: landscape) and (max-height: 500px) {   /* phones turned sideways */
+  html:not(.hdmi) body { max-width: 480px; margin-left: auto; margin-right: auto; }
+  html:not(.hdmi) .qtabs { max-width: 480px; margin-left: auto; margin-right: auto; left: 0; right: 0; }
+}
+@media (orientation: landscape) {   /* 5" kiosk: never a landscape layout */
+  html.kiosk:not(.hdmi) body { max-width: 720px; margin-left: auto; margin-right: auto; }
+  html.kiosk:not(.hdmi) .qtabs { max-width: 720px; margin-left: auto; margin-right: auto; left: 0; right: 0; }
+}
+
+/* ===== 1.0.9: subtexts match the theme =====
+   Every secondary line (page leads, card notes, status lines, list metadata, player notes, Audio / Network / Services
+   help) is the same voice as the More rows: JetBrains Mono, Static colour, small size, no red unless it is an error. */
+.lead, .note, .msub, .status, .hint, .hint .sub2, .nmeta, .unotes, .umsg, .spkname .nmeta, .mapnote, #mOpen, .v-start p, .v-start .tiny,
+.net .nmeta, .filepick span, .bs-note {
+  font-family: var(--mono); letter-spacing: .01em; line-height: 1.5;
+}
+.lead { color: var(--static); font-size: var(--t-small); }
+.note, .msub, .nmeta, .hint .sub2, .bs-note { color: var(--static); }
+.note b, .lead b, .note strong { color: var(--paper); font-weight: var(--fw-2); }
+.note code, .lead code { color: var(--signal); background: rgba(74, 222, 128, .07); border-radius: 4px; padding: 0 .25em; font-size: .95em; }
+.note a, .lead a { color: var(--signal); }
+.status { font-size: var(--t-small); color: var(--static); }
+.status.ok { color: var(--signal); }
+.status.tip { color: var(--signal); opacity: .9; }        /* "Tap play…" is a hint, not an error */
+.status.err, .note.err { color: var(--red); }
+.status:empty { min-height: 0; margin: 0; }
+.umsg { font-size: var(--t-small); }
+/* the audio player: dark, green controls (was a grey browser default) */
+audio#player { width: 100%; color-scheme: dark; accent-color: var(--signal); border-radius: 12px; margin-top: .6rem;
+  background: var(--panel); border: 1px solid var(--line); }
+/* Listen band settings (1.0.9: gain / squelch saved per band) */
+.v-bandset .bs-row { display: flex; align-items: center; gap: .7rem; margin: .55rem 0; flex-wrap: wrap; }
+.v-bandset .bs-k { font-family: var(--mono); font-size: var(--t-label); text-transform: uppercase; letter-spacing: .1em; color: var(--static); min-width: 6.5em; }
+.v-bandset .bs-note { margin: .4rem 0 0; font-size: var(--t-small); }
+/* Screenshots */
+.shotgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .7rem; }
+.shot { display: flex; flex-direction: column; gap: .35rem; background: var(--night); border: 1px solid var(--line); border-radius: 12px; padding: .5rem; }
+.shot img { width: 100%; height: 150px; object-fit: contain; background: #000; border-radius: 8px; display: block; }
+.shot .row { gap: .4rem; }
+/* SDR off / no radio gate */
+.v-gate.v-off .v-start .k, .v-gate.v-noradio .v-start .k { color: var(--orange); }
+/* ===== 1.0.9 HANDHELD: small text 1-2 sizes up on the 5" kiosk (labels 13 -> 15 px, help/subtext 15 -> 17 px) ===== */
+html.kiosk:not(.hdmi) { --t-small: var(--fs-3); --t-label: var(--fs-2); }
+html.kiosk:not(.hdmi) .v-start .k { font-size: 16px; }
+html.kiosk:not(.hdmi) .v-start .tiny { font-size: 15px; }
+html.kiosk:not(.hdmi) .v-tag { font-size: 12px; }
+html.kiosk:not(.hdmi) .v-pre span { font-size: 13px; }
+html.kiosk:not(.hdmi) .v-band span { font-size: 15px; }
+/* More rows: the action pill never wraps ("Rese/t") (1.0.9 port from desktop 1.0.8.2) */
+.mrow .mpill { white-space: nowrap; flex: 0 0 auto; }
+.row[hidden], .card[hidden], section[hidden] { display: none !important; }
+
+/* ===== 1.1.0: confirm pop-ups (SDR off, Wi-Fi off, Reset USB) in the More-row style =====
+   dark panel, thin green border, green mono heading, Static mono text, outlined buttons; destructive = outlined orange */
+.v-modal { background: rgba(4, 7, 5, .78); }
+.v-modal .v-dlg { background: var(--night); border: 1px solid rgba(74, 222, 128, .45); border-radius: 16px;
+  box-shadow: 0 0 22px rgba(74, 222, 128, .12), 0 20px 60px rgba(0, 0, 0, .7); color: var(--static); }
+.v-modal .v-dlg .k { color: var(--signal); font-family: var(--mono); font-size: var(--t-label); letter-spacing: .16em; }
+.v-modal .v-dlg p { font-family: var(--mono); color: var(--static); font-size: var(--t-small); line-height: 1.5; }
+.v-modal .v-dlg .row button { background: transparent; border: 1px solid var(--line-strong); color: var(--paper);
+  font-family: var(--mono); text-transform: uppercase; letter-spacing: .12em; box-shadow: none; }
+.v-modal .v-dlg .row button.v-danger, .v-modal .v-dlg .row button.primary.v-danger {
+  background: rgba(255, 159, 67, .06) !important; border: 1.5px solid var(--orange) !important; color: var(--orange) !important; box-shadow: none !important; }
+.v-modal .v-dlg .row button:disabled { opacity: .5; }
+
+/* ===== 1.1.0: phone web layout: no horizontal scrolling / white bar on the right (iPhone Safari) =====
+   html carries the dark theme colour (Safari paints html, not body, in the overscroll / safe-area strip);
+   nothing may be wider than the screen: iframes (iOS sizes them to their content), long code / paths, nowrap metadata. */
+html { background-color: var(--night, #0b0f0c); overflow-x: hidden; }
+body { overflow-x: hidden; max-width: 100%; }
+@supports (overflow: clip) { html, body { overflow-x: clip; } }
+iframe.qframe { width: 1px; min-width: 100%; max-width: 100%; }
+img, svg, canvas, video, audio, iframe, table { max-width: 100%; }
+.wrap, .card, .panel, .mlist, .mrow, .netlist { min-width: 0; }
+.note, .lead, .umsg, .status, .unotes, .ulog, pre { overflow-wrap: anywhere; }
+.ulog, pre { white-space: pre-wrap; }
+/* list rows (Network, Audio, SDR dongles): name and details side by side with a gap, wrapping on narrow screens */
+div.net { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; column-gap: 1.2rem; row-gap: .2rem;
+  padding: .65rem .2rem; border-bottom: 1px solid var(--line); }
+div.net:last-child { border-bottom: 0; }
+.net .nmeta { white-space: normal; overflow-wrap: anywhere; }
+/* 1.1.0: command / path chips are quiet: Paper mono on a faint outline (were bright green highlights) */
+code, .note code, .lead code { color: var(--paper); background: transparent; border: 1px solid var(--line-strong);
+  border-radius: 5px; padding: 0 .3em; font-size: .92em; overflow-wrap: anywhere; }
+/* Screenshots viewer (in-app overlay; the kiosk never leaves the page) */
+.shot-view { position: fixed; inset: 0; z-index: 2100; background: rgba(4, 7, 5, .94); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: .8rem; padding: 14px; }
+.shot-view[hidden] { display: none; }
+.shot-view img { max-width: 100%; max-height: calc(100% - 96px); object-fit: contain; border: 1px solid rgba(74, 222, 128, .45); border-radius: 10px; background: #000; }
+.shot-view .k { font-family: var(--mono); color: var(--signal); letter-spacing: .12em; font-size: var(--t-label); text-transform: uppercase; }
+.shot-view .row { display: flex; gap: .6rem; flex-wrap: wrap; justify-content: center; }
+.shot-view .row button, .shot-view .row a.btn { min-width: 8.5rem; background: transparent; border: 1px solid var(--line-strong); color: var(--paper);
+  font-family: var(--mono); text-transform: uppercase; letter-spacing: .12em; text-align: center; text-decoration: none; }
+.shot-view .row .v-del { border-color: var(--orange); color: var(--orange); }
+.shot img { cursor: pointer; }
+
+/* ======================= Stillwave Trace 1.2.0 ======================= */
+/* ---- UI scale: phone zoom + Text size (More > Screen) live on <body>, never on <html> ----
+   1.1.x zoomed <html> (.86 on phones). iOS Safari then painted the root background only over the zoomed width, which left
+   a white bar on the right of every scrolling page (a full-screen fixed panel such as the SDR-off screen hid it).
+   <html> now stays unzoomed and dark edge to edge; <body> carries --pz (phone) x --tz (text size, nav.js). */
+html { --pz: 1; --tz: 1; zoom: 1 !important; }
+@media (max-width: 480px) { html:not(.kiosk) { --pz: .86; } }
+html.kiosk.hdmi { --pz: 1; }
+body { zoom: calc(var(--pz) * var(--tz)); }
+html.shell #qframes { overflow: hidden; background: var(--night); }
+iframe.qframe { background: var(--night); color-scheme: dark; }
+html, body { background-color: var(--night); }
+/* Text size picker */
+.tslist { display: flex; flex-direction: column; gap: .55rem; }
+.tsopt { display: flex; justify-content: space-between; align-items: center; min-height: 64px; padding: 0 1.1rem; text-align: left;
+  font-family: var(--mono) !important; text-transform: none !important; letter-spacing: .02em !important; }
+.tsopt i { font-style: normal; font-family: var(--mono); color: var(--static); }
+.tsopt[data-k="small"] { font-size: 15px; } .tsopt[data-k="normal"] { font-size: 18px; }
+.tsopt[data-k="large"] { font-size: 21px; } .tsopt[data-k="xl"] { font-size: 24px; }
+.tsopt.on { background: var(--signal) !important; color: var(--green-ink) !important; border-color: var(--signal) !important; }
+.tsopt.on i { color: var(--green-ink); }
+
+/* ---- finger-sized tap targets on Listen (FM / Airband / NOAA): >= 44 px at Normal, scaled by Text size ---- */
+.page-listen .v-seg2 { display: flex; width: 100%; gap: 6px; padding: 4px; border-radius: 14px; flex-wrap: wrap; }
+.page-listen .v-seg2 button { flex: 1 1 0; min-width: 64px; min-height: 52px; font-size: var(--fs-2); border-radius: 10px; padding: 0 10px; }
+.page-listen .v-bandset .bs-row { flex-direction: column; align-items: stretch; gap: .4rem; }
+.page-listen #aStep { width: 100%; }
+.page-listen .v-h button.sm, .page-listen #aSaveGo { min-height: 52px; padding: 0 1.2rem; font-size: var(--fs-2); }
+.page-listen .v-h { display: flex; justify-content: space-between; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.page-listen .v-pre { min-height: 76px; }
+.page-listen .v-pre b { font-size: var(--fs-3); } .page-listen .v-pre span { font-size: var(--fs-1); }
+.page-listen button.station { min-height: 60px; }
+.page-listen .v-sub button { min-height: 56px; }
+.page-listen .v-step { min-width: 72px; min-height: 72px; }
+html.kiosk:not(.hdmi) .page-listen .v-seg2 button, html.kiosk:not(.hdmi) .page-listen .v-h button.sm { min-height: 64px; font-size: var(--fs-3); }
+html.kiosk:not(.hdmi) .page-listen .v-pre { min-height: 88px; }
+html.kiosk:not(.hdmi) .page-listen .v-pre b { font-size: var(--fs-4); } html.kiosk:not(.hdmi) .page-listen .v-pre span { font-size: var(--fs-2); }
+
+/* ---- boot START screen (Map / ADS-B idle) ---- */
+.v-gate.v-idle .v-start { text-align: center; }
+.v-gate .v-ico { font-size: 72px; line-height: 1; color: rgba(74, 222, 128, .28); margin: .2rem 0 .8rem; text-align: center; }
+.v-gate .v-ico[hidden] { display: none; }
+.v-gate.v-idle #vgGo { width: min(420px, 100%); min-height: 120px; border-radius: 80px; font-size: var(--fs-6); letter-spacing: .12em; }
+html.kiosk:not(.hdmi) .v-gate.v-idle #vgGo { min-height: 160px; }
+
+/* ---- theme sweep: every input, placeholder, message and link in the mono / accent voice ---- */
+input, select, textarea, input::placeholder, textarea::placeholder, .ctl label > input, .ctl label > select, form.grid2 label > input,
+form.grid2 label > select, .ctl label > span, .confirm, .confirm p, #switchtext, #uConfirmText, .unotes, .usteps li, .filepick span,
+.spkname, .net .nname, td, th, .agrid dd, .agrid dt, .qs-v {
+  font-family: var(--mono); }
+input, select, textarea { letter-spacing: .01em; }
+input::placeholder, textarea::placeholder { color: var(--static); opacity: 1; }
+.confirm, .confirm p, #switchtext { color: var(--paper); }
+#switching { border-color: var(--signal); }
+#switching, #switchtext { color: var(--signal); }
+a, .confirm a, #switchtext a, .note a, .lead a { color: var(--signal); text-decoration: underline; text-decoration-color: rgba(74, 222, 128, .5); text-underline-offset: 2px; }
+.unotes { color: var(--paper); font-size: var(--t-small); }
+/* bright green buttons: full-contrast dark labels, also while busy / disabled */
+button.primary, .btn.primary, .v-sub button.on, .v-seg2 button.on, .m-seg .m-pill.on, .tsopt.on { color: var(--green-ink) !important; font-weight: var(--fw-3); text-shadow: none; }
+button.primary:disabled, .btn.primary:disabled { opacity: 1; background: #2f9b58; border-color: #2f9b58; color: var(--green-ink) !important; }
+/* off-theme leftovers */
+.umsg { background: var(--night); }
+.v-list tr.pick td, tr.pick td, tr.sel td { background: rgba(74, 222, 128, .18); color: var(--signal); }
+::selection { background: rgba(74, 222, 128, .35); color: var(--paper); }
+/* Network > Hotspot card (1.2.0) */
+#apcard .apform { margin-top: .4rem; }
+#apcard .apband { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+#apcard .apband button { min-height: 56px; }
+#apcard .aprow { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin: 1rem 0; font-family: var(--mono); color: var(--paper); }
+#apcard .v-sw { padding: 0; min-height: 0; width: 72px; height: 40px; }
+#apcard .v-sw::after { width: 32px; height: 32px; } #apcard .v-sw.on::after { left: 35px; }
+#apcard #apSave { flex: 1 1 14rem; min-height: 56px; }
+#sViewDl[hidden] { display: none !important; }
+/* 1.2.0 sweep: last legacy blue-era backgrounds -> brand Night */
+.bar, .prog, .spk, #netlog { background: var(--night) !important; }
+button.net.on { background: var(--signal-wash); border-color: var(--signal); }
+#apcard .apform { flex-direction: column; align-items: stretch; } #apcard .apform label { width: 100%; }
+#apcard .apband button.on { background: var(--signal); color: var(--green-ink) !important; border-color: var(--signal); }
+#apcard #apPskShow { min-height: 52px; min-width: 6.5rem; }

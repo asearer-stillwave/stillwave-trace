@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trace">
+<title>Stillwave Trace · Spectrum</title>
+<link rel="stylesheet" href="/fieldnote.css">
+</head>
+<body data-mode="spectrum">
+<script src="/nav.js"></script>
+<div class="wrap">
+  <div class="brand">
+    <h1>Spectrum + <span class="acc">waterfall</span></h1>
+  </div>
+  <p class="lead">Live view of up to 2.4 MHz around the center frequency. Tap the trace to put a marker on a signal.</p>
+
+  <div class="card hide" id="off">
+    <b id="offtxt">The dongle is busy with another mode.</b>
+    <p class="note">Starting the spectrum view stops the FM stream (or detect / ADS-B) until you switch back.</p>
+    <button class="primary" id="start">Start spectrum</button>
+  </div>
+
+  <div class="card">
+    <div class="ctl">
+      <label>Center MHz <input id="center" size="9" inputmode="decimal"></label>
+      <button id="down" title="Down half a span" aria-label="Step center down">◀</button>
+      <button id="up" title="Up half a span" aria-label="Step center up">▶</button>
+      <label>Span <select id="span"></select></label>
+      <label>Gain dB <select id="gain"></select></label>
+      <label>FFT <select id="nfft"></select></label>
+      <label>Rows/s <select id="fps"><option>4</option><option selected>8</option><option>12</option><option>15</option></select></label>
+      <button class="primary" id="apply">Apply</button>
+    </div>
+    <div class="ctl lvl" style="margin-top:.55rem">
+      <label><span><input type="checkbox" id="autolv" checked> Auto levels</span></label>
+      <label>Min dB <input id="lvmin" size="5" value="-90"></label>
+      <label>Max dB <input id="lvmax" size="5" value="-20"></label>
+      <label><span><input type="checkbox" id="hold"> Peak hold</span></label>
+      <button id="clr">Clear</button>
+    </div>
+  </div>
+
+  <div class="now" id="readout">Connecting…</div>
+  <div class="scope">
+    <canvas id="spec"></canvas>
+    <canvas id="wf"></canvas>
+  </div>
+  <div class="ctl" style="margin-top:.6rem">
+    <span class="now" id="marker" style="margin:0;flex:1 1 12rem">Marker: tap the spectrum</span>
+    <button id="mcenter" disabled>Center here</button>
+    <button id="mlisten" disabled>Listen</button>
+  </div>
+  <p class="status" id="msg"></p>
+  <p class="note">The RTL-SDR has a small DC spike at the exact center; it is masked. LISTEN picks FM (88–108), airband AM (118–137) or narrow FM for anything else.</p>
+</div>
+<script src="/mode.js"></script>
+<script src="/power.js"></script>
+<script src="/screen.js"></script>
+<script src="/kbd.js"></script>
+<script>
+
+const $ = id => document.getElementById(id);
+function setMsg(t,k){ const el=$('msg'); el.className='status '+(k||''); el.textContent=t||''; }
+async function jfetch(url, opt){
+  const r = await fetch(url, Object.assign({cache:'no-store'}, opt||{}));
+  const t = await r.text();
+  let j={}; try{ j=JSON.parse(t);}catch(e){ j={error:t||r.statusText}; }
+  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+const params = new URLSearchParams(location.search);
+const mhz = hz => (hz/1e6).toFixed(hz % 1e3 ? 4 : 3);
+
+// ---------- colour map ----------
+const STOPS = [[0,0,0,0],[0.22,2,14,6],[0.45,8,56,26],[0.65,22,130,64],[0.82,74,222,128],[0.93,170,245,195],[1,236,255,242]]; // green phosphor on black
+const LUT = new Uint8ClampedArray(256*3);
+for(let i=0;i<256;i++){
+  const x=i/255; let k=0; while(k<STOPS.length-2 && x>STOPS[k+1][0]) k++;
+  const a=STOPS[k], b=STOPS[k+1], t=(x-a[0])/(b[0]-a[0]);
+  for(let c=0;c<3;c++) LUT[i*3+c]=a[c+1]+(b[c+1]-a[c+1])*t;
+}
+
+// ---------- state ----------
+let frame=null, hold=null, lvMin=-90, lvMax=-20, marker=null, cfg=null, es=null, lastT=0, rows=0, rateT=performance.now();
+const spec=$('spec'), wf=$('wf'), sctx=spec.getContext('2d'), wctx=wf.getContext('2d');
+const WF_H = 300;
+
+function decode(m){
+  const bin = atob(m.b64), n = bin.length, db = new Float32Array(n);
+  for(let i=0;i<n;i++) db[i] = m.lo + bin.charCodeAt(i)*m.step;
+  return db;
+}
+function levels(db){
+  if(!$('autolv').checked){
+    lvMin = parseFloat($('lvmin').value)||-90; lvMax = parseFloat($('lvmax').value)||-20;
+    if(lvMax<=lvMin+5) lvMax=lvMin+5; return;
+  }
+  const s = Array.from(db).sort((a,b)=>a-b);
+  const lo = s[Math.floor(s.length*0.1)] - 4, hi = Math.max(s[s.length-1] + 3, lo + 25);
+  lvMin = lvMin*0.85 + lo*0.15; lvMax = lvMax*0.85 + hi*0.15;
+  $('lvmin').value = lvMin.toFixed(0); $('lvmax').value = lvMax.toFixed(0);
+}
+function wfRow(db){
+  const n = db.length;
+  if(wf.width !== n){ wf.width = n; wf.height = WF_H; wctx.fillStyle='#000'; wctx.fillRect(0,0,n,WF_H); }
+  wctx.drawImage(wf, 0, 0, n, WF_H-1, 0, 1, n, WF_H-1);
+  const img = wctx.createImageData(n, 1), d = img.data, span = lvMax-lvMin;
+  for(let i=0;i<n;i++){
+    const q = Math.max(0, Math.min(255, ((db[i]-lvMin)/span*255)|0));
+    d[i*4]=LUT[q*3]; d[i*4+1]=LUT[q*3+1]; d[i*4+2]=LUT[q*3+2]; d[i*4+3]=255;
+  }
+  wctx.putImageData(img, 0, 0);
+}
+function drawSpec(){
+  const dpr = window.devicePixelRatio||1, W = Math.round(spec.clientWidth*dpr), H = Math.round(spec.clientHeight*dpr);
+  if(spec.width!==W || spec.height!==H){ spec.width=W; spec.height=H; }
+  sctx.fillStyle='#0b0f0c'; sctx.fillRect(0,0,W,H);
+  if(!frame) return;
+  const {db, m} = frame, n = db.length, span = lvMax-lvMin;
+  const y = v => H - (v-lvMin)/span*H;
+  // grid + labels
+  sctx.strokeStyle='rgba(74,222,128,.16)'; sctx.fillStyle='#a3b5a9'; sctx.lineWidth=1; sctx.font=(13*dpr)+'px "JetBrains Mono", monospace';
+  sctx.textAlign='right';
+  for(let v=Math.ceil(lvMin/10)*10; v<lvMax; v+=10){ const yy=y(v); sctx.beginPath(); sctx.moveTo(0,yy); sctx.lineTo(W,yy); sctx.stroke(); if(yy>16*dpr && yy<H-4*dpr) sctx.fillText(v+' dB', W-4*dpr, yy-3*dpr); }
+  sctx.textAlign='left';
+  const fspan = n*m.df, f0 = m.f0, stepHz = fspan > 1.5e6 ? 500e3 : fspan > 600e3 ? 200e3 : 50e3;
+  for(let f=Math.ceil(f0/stepHz)*stepHz; f<f0+fspan; f+=stepHz){
+    const x=(f-f0)/fspan*W; sctx.beginPath(); sctx.moveTo(x,0); sctx.lineTo(x,H); sctx.stroke();
+    sctx.fillText((f/1e6).toFixed(stepHz<100e3?2:1), x+3*dpr, 12*dpr);
+  }
+  const line = (arr, color) => {
+    sctx.strokeStyle=color; sctx.lineWidth=1.3*dpr; sctx.beginPath();
+    for(let i=0;i<n;i++){ const x=(i+0.5)/n*W, yy=y(arr[i]); i?sctx.lineTo(x,yy):sctx.moveTo(x,yy); }
+    sctx.stroke();
+  };
+  if(hold && hold.length===n) line(hold, 'rgba(230,239,232,.5)');
+  sctx.globalAlpha=.22; sctx.lineWidth=4*dpr; line(db, '#4ade80'); sctx.globalAlpha=1;   // faint wide stroke = glow, no shadowBlur
+  line(db, '#4ade80');
+  if(marker!==null){
+    const x=(marker-f0)/fspan*W;
+    sctx.strokeStyle='#e6efe8'; sctx.lineWidth=2*dpr; sctx.beginPath(); sctx.moveTo(x,0); sctx.lineTo(x,H); sctx.stroke();
+  }
+}
+function onRow(m){
+  const db = decode(m);
+  frame = {db, m};
+  if($('hold').checked){
+    if(!hold || hold.length!==db.length) hold = Float32Array.from(db);
+    else for(let i=0;i<db.length;i++) if(db[i]>hold[i]) hold[i]=db[i];
+  } else hold = null;
+  levels(db); wfRow(db); drawSpec();
+  rows++;
+  const now = performance.now();
+  if(now-rateT > 2000){ lastT = rows*1000/(now-rateT); rows=0; rateT=now; }
+  let pk=0; for(let i=1;i<db.length;i++) if(db[i]>db[pk]) pk=i;
+  $('readout').textContent = 'Center '+mhz(m.center)+' MHz · span '+(m.span/1e6).toFixed(3)+' MHz · gain '+m.gain+
+    ' · peak '+mhz(m.f0+(pk+0.5)*m.df)+' MHz '+db[pk].toFixed(1)+' dB · '+lastT.toFixed(1)+' rows/s';
+  if(marker!==null){
+    const i = Math.round((marker-m.f0)/m.df - 0.5);
+    if(i>=0 && i<db.length) $('marker').textContent = 'Marker '+mhz(marker)+' MHz  '+db[i].toFixed(1)+' dB';
+  }
+}
+function pick(ev){
+  if(!frame) return;
+  const r = ev.currentTarget.getBoundingClientRect(), x = (ev.clientX - r.left)/r.width;
+  const {m} = frame, n = frame.db.length;
+  // snap to the strongest bin within ±1% of the span
+  let i = Math.round(x*n - 0.5), w = Math.max(2, Math.round(n*0.01)), best=i;
+  for(let k=Math.max(0,i-w); k<Math.min(n,i+w); k++) if(frame.db[k]>frame.db[best]) best=k;
+  marker = m.f0 + (best+0.5)*m.df;
+  $('mcenter').disabled = false; $('mlisten').disabled = false;
+  $('marker').textContent = 'Marker '+mhz(marker)+' MHz  '+frame.db[best].toFixed(1)+' dB';
+  drawSpec();
+}
+spec.addEventListener('click', pick); wf.addEventListener('click', pick);
+window.addEventListener('resize', drawSpec);
+
+// ---------- controls ----------
+function fillSelect(el, items, fmt, val){
+  el.innerHTML='';
+  items.forEach(v => { const o=document.createElement('option'); o.value=v; o.textContent=fmt(v); if(String(v)===String(val)) o.selected=true; el.appendChild(o); });
+}
+async function loadCfg(){
+  const s = await jfetch('/api/scope/status');
+  if(s.mode !== 'spectrum') throw new Error('scope service is in '+s.mode+' mode');
+  cfg = s.config;
+  $('center').value = (cfg.center_hz/1e6).toFixed(3);
+  fillSelect($('span'), s.spans, v => (v/1e6).toFixed(3)+' MHz', cfg.span_hz);
+  fillSelect($('gain'), s.gains, v => v, cfg.gain);
+  fillSelect($('nfft'), s.nffts, v => v, cfg.nfft);
+  $('fps').value = String(cfg.fps);
+  if(s.status && s.status.error) setMsg(s.status.error, 'err');
+}
+async function apply(extra){
+  const body = Object.assign({
+    center_hz: parseFloat($('center').value)*1e6,
+    span_hz: parseFloat($('span').value),
+    gain: $('gain').value, nfft: parseInt($('nfft').value), fps: parseInt($('fps').value)
+  }, extra||{});
+  try{
+    const j = await jfetch('/api/scope/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    cfg = j.config; $('center').value = (cfg.center_hz/1e6).toFixed(3); hold = null;
+    setMsg(j.restarted ? 'Retuned to '+mhz(cfg.center_hz)+' MHz' : 'Updated', 'ok');
+  }catch(e){ setMsg(e.message, 'err'); }
+}
+$('apply').onclick = () => apply();
+$('center').addEventListener('keydown', e => { if(e.key==='Enter') apply(); });
+$('down').onclick = () => { $('center').value = (parseFloat($('center').value) - parseFloat($('span').value)/2e6).toFixed(3); apply(); };
+$('up').onclick = () => { $('center').value = (parseFloat($('center').value) + parseFloat($('span').value)/2e6).toFixed(3); apply(); };
+$('clr').onclick = () => { hold = null; wctx.fillStyle='#000'; wctx.fillRect(0,0,wf.width,wf.height); };
+$('mcenter').onclick = () => { if(marker===null) return; $('center').value=(marker/1e6).toFixed(4); marker=null; apply(); };
+$('mlisten').onclick = () => {   // 1.0.8: Listen with the right demod (FM 88-108, airband AM, else narrow FM)
+  if(marker===null) return;
+  const u = '/listen?tune=1&f=' + (marker/1e6).toFixed(4);
+  if(window.parent!==window && window.parent.fieldnoteShell) window.parent.fieldnoteShell.go(u); else location.href = u;
+};
+
+// ---------- stream ----------
+function connect(){
+  if(es) es.close();
+  es = new EventSource('/api/scope/stream');
+  es.onmessage = ev => {
+    let m; try{ m = JSON.parse(ev.data); }catch(e){ return; }
+    if(m.type === 'row') onRow(m);
+    else if(m.type === 'status' && m.error) setMsg(m.error, 'err');
+  };
+  es.onerror = () => { $('readout').textContent = 'Stream reconnecting…'; };
+}
+function stop(){ if(es){ es.close(); es=null; } }
+async function onMode(s){
+  const on = s && s.mode === 'spectrum';
+  $('off').classList.toggle('hide', on);
+  if(!on){
+    stop();
+    $('offtxt').textContent = 'The dongle is in '+((s&&s.mode)||'unknown')+' mode, not spectrum.';
+    $('readout').textContent = 'Spectrum is off.';
+    if(params.get('auto') === '1' && s && !onMode.tried){ onMode.tried = true; }
+    return;
+  }
+  if(es) return;
+  for(let i=0;i<10;i++){
+    try{ await loadCfg(); break; }catch(e){ await new Promise(r=>setTimeout(r,700)); }
+  }
+  const f = parseFloat(params.get('f')||'');
+  if(f && !onMode.tuned){ onMode.tuned = true; $('center').value = (f > 1e5 ? f/1e6 : f).toFixed(4); apply(); }
+  connect();
+}
+document.addEventListener('sdr-mode', e => onMode(e.detail));
+$('start').onclick = () => window.sdrMode.set('spectrum').catch(()=>{});
+drawSpec();
+
+</script>
+</body>
+</html>

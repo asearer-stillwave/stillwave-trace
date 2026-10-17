@@ -1,0 +1,21 @@
+[Unit]
+Description=Stillwave Trace kiosk screen (turn-off timeout, wake on touch, brightness)
+# Stopped BEFORE the web app and the kiosk at shutdown (reverse of this order), so its ExecStop can
+# put "Shutting down…" on the kiosk while the page is still there.
+After=local-fs.target systemd-udevd.service sdr-web.service nginx.service fieldnote-kiosk.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/sdr-screen daemon
+ExecStop=/usr/local/sbin/sdr-screen notice
+ExecStopPost=-/usr/local/sbin/sdr-screen on --direct
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+RuntimeDirectory=sdr-screen
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

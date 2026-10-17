@@ -1,0 +1,25 @@
+[Unit]
+Description=ADS-B aircraft decoder (readsb / dump1090) -> /run/sdr-adsb/aircraft.json
+After=network.target sdr-fm.service sdr-spectrum.service sdr-detect.service
+# One dongle: starting ADS-B stops FM / spectrum / detect (see sdr-mode)
+Conflicts=sdr-fm.service sdr-spectrum.service sdr-detect.service
+
+[Service]
+Type=simple
+# 1.0.9: RADIO_DEVICE / ADSB_DEVICE (dual dongle, written by sdr-dongles; empty = the only dongle)
+EnvironmentFile=-/etc/sdr/dongles.env
+EnvironmentFile=-/etc/sdr/adsb.env
+Environment=ADSB_JSON_DIR=/run/sdr-adsb
+RuntimeDirectory=sdr-adsb
+RuntimeDirectoryMode=0755
+ExecStartPre=-+/usr/local/sbin/sdr-mode mark adsb
+ExecStart=/usr/local/lib/sdr-station/bin/adsb_run.sh
+Restart=always
+RestartSec=3
+TimeoutStopSec=8
+Nice=-5
+SupplementaryGroups=plugdev
+StandardOutput=journal
+StandardError=journal
+
+# No [Install]: started by sdr-mode.

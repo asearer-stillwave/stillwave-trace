@@ -1,0 +1,9 @@
+[Unit]
+Description=Stillwave Trace: end the first-boot grace (hotspot fallback allowed again)
+# 1.2.0: started by sdr-firstboot-done.timer 10 min after boot (was a 10-minute sleep that held multi-user.target)
+After=sdr-net.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/sdr-net-mode firstboot-done
+TimeoutStartSec=60

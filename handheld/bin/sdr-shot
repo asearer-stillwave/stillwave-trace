@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Stillwave Trace 1.0.9 (1.2.0: fallback renders the current page): screenshots of the kiosk display, saved on the Pi.
+#   sdr-shot take [DELAY_S] [--json]   capture the screen (grim on the cage kiosk; fallback: headless Chromium render)
+#   sdr-shot list [--json]             saved screenshots (newest first)
+#   sdr-shot delete NAME               delete one
+# Files: /var/lib/sdr/screenshots/trace-YYYYMMDD-HHMMSS.png (web: More > Screenshots, download each one).
+set -u
+DIR="${SDR_SHOT_DIR:-/var/lib/sdr/screenshots}"
+KEEP="${SDR_SHOT_KEEP:-200}"
+JSON=0; ARGS=()
+for a in "$@"; do [[ "$a" == --json ]] && JSON=1 || ARGS+=("$a"); done
+set -- "${ARGS[@]}"
+say() { # say OK MESSAGE [NAME]
+  if [[ $JSON -eq 1 ]]; then python3 -c 'import json,sys; print(json.dumps({"ok": sys.argv[1]=="1", "message": sys.argv[2], "name": sys.argv[3] or None}))' "$1" "$2" "${3:-}"
+  else echo "$2"; fi
+}
+list_json() {
+  python3 - "$DIR" <<'PY'
+import json, os, sys, time
+d = sys.argv[1]; out = []
+try:
+    for n in os.listdir(d):
+        if n.startswith("trace-") and n.endswith(".png"):
+            st = os.stat(os.path.join(d, n)); out.append({"name": n, "size": st.st_size, "t": int(st.st_mtime)})
+except OSError: pass
+out.sort(key=lambda x: x["name"], reverse=True)
+print(json.dumps({"ok": True, "dir": d, "shots": out}))
+PY
+}
+kiosk_env() {  # prints "USER UID WAYLAND_SOCKET" of the running cage kiosk
+  local pid u uid sock
+  pid="$(pgrep -o -x cage 2>/dev/null || true)"
+  [[ -n "$pid" ]] || return 1
+  u="$(ps -o user= -p "$pid" | tr -d ' ')"; uid="$(id -u "$u" 2>/dev/null)" || return 1
+  sock="$(ls /run/user/"$uid"/wayland-* 2>/dev/null | grep -v '\.lock$' | head -n1)"
+  [[ -n "$sock" ]] || return 1
+  echo "$u $uid $(basename "$sock")"
+}
+take() {
+  local delay="${1:-0}" name out tmp k u uid sock how=""
+  [[ "$delay" =~ ^[0-9]{1,2}$ ]] || delay=0
+  install -d -m 755 "$DIR"
+  [[ "$delay" -gt 0 ]] && sleep "$delay"
+  name="trace-$(date +%Y%m%d-%H%M%S).png"; out="$DIR/$name"
+  if command -v grim >/dev/null 2>&1 && k="$(kiosk_env)"; then
+    read -r u uid sock <<<"$k"
+    tmp="/run/user/$uid/sdr-shot.png"
+    if runuser -u "$u" -- env XDG_RUNTIME_DIR="/run/user/$uid" WAYLAND_DISPLAY="$sock" grim "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+      install -m 644 "$tmp" "$out"; rm -f "$tmp"; how="screen"
+    fi
+  fi
+  if [[ -z "$how" ]]; then   # fallback: render the kiosk page headless at the panel size (live data, not the exact screen)
+    local size="720,1280" q="kiosk=1" b="" route=""
+    # 1.2.0: render the page the kiosk is showing right now (reported by the kiosk shell), not the default tab
+    route="$(curl -s --max-time 3 http://127.0.0.1/api/kiosk/route 2>/dev/null | python3 -c 'import json,re,sys
+try: p=json.load(sys.stdin).get("path","")
+except Exception: p=""
+print(p if re.match(r"^/[A-Za-z0-9/_.-]{0,60}(\?[A-Za-z0-9=&._%-]{0,120})?$", p) else "")' 2>/dev/null)"
+    grep -qx 'DISPLAY_MODE=hdmi' /etc/sdr/display.env 2>/dev/null && { size="1280,720"; q="kiosk=1&display=hdmi"; }
+    for c in /snap/bin/chromium chromium chromium-browser; do command -v "$c" >/dev/null 2>&1 && { b="$(command -v "$c")"; break; }; done
+    if [[ -n "$b" ]]; then
+      # snap Chromium can only write under the user's ~/snap/chromium; run it as the kiosk user there
+      local ku="${SUDO_USER:-}" hd kh
+      k="$(kiosk_env 2>/dev/null || true)"; [[ -n "$k" ]] && ku="${k%% *}"
+      [[ -z "$ku" || "$ku" == root ]] && ku="$(stat -c %U /etc/sdr/fm.env 2>/dev/null || echo root)"
+      kh="$(getent passwd "$ku" | cut -d: -f6)"
+      if [[ "$b" == /snap/* && -n "$kh" ]]; then hd="$kh/snap/chromium/common/sdr-shot"; else hd="$(mktemp -d /var/tmp/sdr-shot.XXXXXX)"; fi
+      install -d -m 755 -o "$ku" "$hd" 2>/dev/null || mkdir -p "$hd"
+      timeout 45 runuser -u "$ku" -- "$b" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --user-data-dir="$hd/p" --window-size="$size" \
+        --virtual-time-budget=6000 --screenshot="$hd/s.png" "http://127.0.0.1/?$q#${route:-/adsb}" >/dev/null 2>&1 || true
+      [[ -s "$hd/s.png" ]] && { install -m 644 "$hd/s.png" "$out"; how="render"; }
+      rm -rf "$hd"
+    fi
+  fi
+  if [[ -z "$how" ]]; then
+    say 0 "Could not capture the screen (needs grim and the kiosk running: sudo apt-get install grim)."; return 1
+  fi
+  ls -1t "$DIR"/trace-*.png 2>/dev/null | tail -n +"$((KEEP + 1))" | xargs -r rm -f
+  say 1 "$([[ $how == screen ]] && echo "Saved $name" || echo "Saved $name (page render: the screen itself could not be captured)")" "$name"
+}
+case "${1:-}" in
+  take) take "${2:-0}" ;;
+  list) if [[ $JSON -eq 1 ]]; then list_json; else ls -1t "$DIR"/trace-*.png 2>/dev/null || echo "(none)"; fi ;;
+  delete)
+    n="${2:-}"; [[ "$n" =~ ^trace-[0-9]{8}-[0-9]{6}\.png$ ]] || { say 0 "bad name"; exit 2; }
+    rm -f "$DIR/$n"; say 1 "Deleted $n" ;;
+  *) sed -n '2,6p' "$0"; exit 2 ;;
+esac

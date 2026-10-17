@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trace">
+<title>Stillwave Trace · ADS-B</title>
+<link rel="icon" type="image/png" href="/img/trace-icon-192.png">
+<link rel="stylesheet" href="/fieldnote.css">
+<link rel="stylesheet" href="/map108.css">
+<link rel="stylesheet" href="/maplib/maplibre-gl.css">
+<style>
+td.flight { font-weight:700; color:var(--paper); }
+tr.stale td { color:rgba(163,181,169,.55); }
+tr.pick td { background:rgba(74,222,128,.18); color:var(--signal); }
+#planes td, .page-adsb table th { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+@media (max-width:560px) { .opt { display:none; } }
+.viewseg { grid-template-columns: repeat(2, minmax(0, 1fr)); margin:.2rem 0 .45rem; }
+.mapwrap { position:relative; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:var(--night); }
+#map { width:100%; height:420px; }
+.mapnote { position:absolute; left:8px; right:8px; bottom:30px; z-index:2; background:rgba(11,15,12,.92); border:1px solid var(--line);
+  border-radius:10px; padding:.45rem .65rem; color:var(--muted); line-height:1.35; }
+.mapctl { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:.45rem; margin:.45rem 0 0; }
+.mapctl button { padding:.4rem .3rem; line-height:1.15; min-height:48px; }
+.ahead { display:flex; align-items:center; gap:.5rem; }
+.ahead b { letter-spacing:.01em; flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ahead button { min-height:44px; padding:.35rem .75rem; }
+.agrid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:.35rem .6rem; margin:.45rem 0 0; }
+.agrid div { min-width:0; }
+.agrid dt { color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+.agrid dd { margin:0; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.legend { display:flex; flex-wrap:wrap; gap:.25rem .7rem; color:var(--muted); margin:.45rem .1rem 0; }
+.legend i { display:inline-block; width:.7rem; height:.7rem; border-radius:3px; margin-right:.25rem; vertical-align:-1px; }
+.maplibregl-ctrl-attrib { background:rgba(11,15,12,.75) !important; color:var(--static); }
+.maplibregl-ctrl-attrib a { color:var(--static); }
+.maplibregl-ctrl-scale { background:rgba(11,15,12,.7); color:var(--static); border-color:var(--static); }
+@media (max-width:430px) { .agrid { grid-template-columns:repeat(3, minmax(0, 1fr)); } .mapctl button { } }
+/* touch (Trace display and phones): 125% targets */
+html.kiosk .mapctl button, html.kiosk .viewseg button { min-height:var(--tap-touch); }
+html.kiosk .ahead button { min-height:var(--tap-touch); padding:.4rem .95rem; }
+html.kiosk .agrid dd { } html.kiosk .agrid dt { }
+@media (pointer: coarse) {
+  .mapctl button, .viewseg button { min-height:var(--tap-touch); }
+  .ahead button { min-height:var(--tap-touch); padding:.4rem .95rem; }
+}
+@media (pointer: coarse) and (max-width:430px) { .mapctl button { } }
+@media (max-width:430px) { html.kiosk .mapctl button { } }
+.ringset { position:absolute; left:8px; right:8px; bottom:8px; z-index:4; background:rgba(11,15,12,.95); border:1px solid var(--line-strong);
+  border-radius:12px; padding:.55rem .7rem .6rem; box-shadow:0 10px 30px rgba(0,0,0,.5); }
+.rshead { display:flex; align-items:center; justify-content:space-between; font-family:var(--mono); font-size:var(--t-label); letter-spacing:.14em; text-transform:uppercase; color:var(--static); }
+.rshead button { min-height:44px; padding:.3rem 1rem; }
+.rslbl { display:block; font-family:var(--mono); font-size:var(--t-label); letter-spacing:.14em; text-transform:uppercase; color:var(--static); margin:.45rem 0 0; }
+.rseg { grid-template-columns:repeat(5, minmax(0, 1fr)); margin:.3rem 0 .2rem; }
+.rsnote { margin:.35rem 0 0; color:var(--static); font-size:var(--t-small); }
+html.kiosk .rseg button, html.kiosk .rshead button { min-height:var(--tap-touch); }
+@media (pointer: coarse) { .rseg button, .rshead button { min-height:var(--tap-touch); } }
+</style>
+</head>
+<body class="page-adsb" data-mode="adsb">
+<script src="/nav.js"></script>
+<div class="wrap">
+  <div class="brand">
+    <h1>ADS-B <span class="acc">aircraft</span></h1>
+  </div>
+
+  <div class="card hide" id="off">
+    <b id="offtxt">The dongle is busy with another mode.</b>
+    <p class="note">Starting ADS-B stops the FM stream (or spectrum / detect) until you switch back.</p>
+    <button class="primary" id="start">Start ADS-B</button>
+  </div>
+
+  <div class="seg viewseg" role="tablist" aria-label="View">
+    <button id="vMap" role="tab">Map</button>
+    <button id="vList" role="tab">List</button>
+  </div>
+  <div class="now" id="summary">Loading…</div>
+
+  <section id="mapview">
+    <div class="mapwrap" id="mapwrap">
+      <div id="ringset" class="ringset hide" role="group" aria-label="Range rings">
+        <div class="rshead"><span>// Range rings</span><button id="rsDone" type="button">Done</button></div>
+        <span class="rslbl">Rings</span>
+        <div class="seg rseg" id="rsN"><button data-v="0">Off</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="4">4</button><button data-v="6">6</button></div>
+        <span class="rslbl">Spacing</span>
+        <div class="seg rseg" id="rsS"><button data-v="auto">Auto</button><button data-v="1">1 NM</button><button data-v="2.5">2.5</button><button data-v="5">5 NM</button><button data-v="10">10 NM</button></div>
+        <p class="rsnote" id="rsNote">Auto fits the rings to the view. Rings rescale as you zoom.</p>
+      </div>
+      <div id="map" aria-label="Live aircraft map"></div>
+      <div class="mapnote hide" id="mapnote"></div>
+      <div class="acard hide" id="acard" aria-live="polite">
+        <div class="ahead">
+          <b id="aTitle">—</b>
+          <button id="aFollow" aria-pressed="false">Follow</button>
+          <button id="aClose" aria-label="Close details">✕</button>
+        </div>
+        <dl class="agrid">
+          <div><dt>Altitude</dt><dd id="aAlt">—</dd></div>
+          <div><dt>Speed</dt><dd id="aSpd">—</dd></div>
+          <div><dt>Track</dt><dd id="aTrk">—</dd></div>
+          <div><dt>Vert. rate</dt><dd id="aVr">—</dd></div>
+          <div><dt>Hex</dt><dd id="aHex">—</dd></div>
+          <div><dt>Squawk</dt><dd id="aSq">—</dd></div>
+          <div><dt>Distance</dt><dd id="aDist">—</dd></div>
+          <div><dt>Seen</dt><dd id="aSeen">—</dd></div>
+        </dl>
+      </div>
+    </div>
+    <div class="mapctl">
+      <button id="cLax">Center<br>LAX</button>
+      <button id="cMe">Center<br>me</button>
+      <button id="tRings" class="on" aria-expanded="false" aria-controls="ringset">Rings <span id="tRingsV">3</span></button>
+      <button id="tLabels" class="on" aria-pressed="true">Labels</button>
+    </div>
+    <div class="legend altbar" aria-label="Altitude colors: ground, under 1k, 1-3k, 3-6k, 6-10k, 10-20k, 20-30k, 30k+ ft"><span class="lk">// ALT FT</span><span class="ab"><span class="abar"><i style="background:#5f7a68"></i><i style="background:#1c6b3c"></i><i style="background:#26904f"></i><i style="background:#33b866"></i><i style="background:#4ade80"></i><i style="background:#97f0b8"></i><i style="background:#c8f8d9"></i><i style="background:#f4fff7"></i></span><span class="alabs"><b>GND</b><b>&lt;1K</b><b>1–3K</b><b>3–6K</b><b>6–10K</b><b>10–20K</b><b>20–30K</b><b>30K+</b></span></span><span class="unk"><i></i>?</span></div>
+  </section>
+
+  <section id="listview" class="hide">
+    <div class="card">
+      <div class="scrollx">
+      <table>
+        <thead><tr><th>Flight</th><th>Hex</th><th>Alt ft</th><th>Speed kt</th><th class="opt">Track</th><th>Dist nm</th><th class="opt">Squawk</th><th class="opt">RSSI</th><th>Seen</th></tr></thead>
+        <tbody id="planes"></tbody>
+      </table>
+      </div>
+    </div>
+    <div class="card" id="rcvcard">
+      <h2>Receiver position</h2>
+      <p class="note" id="rcvnow">…</p>
+      <div class="ctl">
+        <label class="grow">Latitude<input id="rLat" inputmode="decimal" autocomplete="off" placeholder="33.9425"></label>
+        <label class="grow">Longitude<input id="rLon" inputmode="decimal" autocomplete="off" placeholder="-118.4081"></label>
+      </div>
+      <div class="row" style="margin-top:.6rem">
+        <button class="primary big" id="rSave">Save position</button>
+        <button class="big" id="rLax">Use LAX (default)</button>
+      </div>
+      <p class="note">Used for distances, range rings and “Center on me”, and handed to the decoder. Stored on this box in <code>/etc/sdr/adsb.env</code>. Tip: a rounded position (2 decimals) is plenty.</p>
+    </div>
+    <p class="note">Change the gain with − / + / Auto on the map (saved as <code>ADSB_GAIN</code> in <code>/etc/sdr/adsb.env</code>). A 1090 MHz antenna (about 6.9 cm whip) works far better than the FM antenna.</p>
+  </section>
+  <p class="status" id="msg"></p>
+</div>
+<script src="/mode.js"></script>
+<script src="/power.js"></script>
+<script src="/screen.js"></script>
+<script src="/kbd.js"></script>
+<script src="/maplib/pmtiles.js" defer></script>
+<script src="/maplib/basemaps.js" defer></script>
+<script type="module">
+import { AircraftMap, webglOK } from '/maplib/adsb-map.js';
+const $ = id => document.getElementById(id);
+function setMsg(t, k){ const el = $('msg'); el.className = 'status ' + (k || ''); el.textContent = t || ''; }
+const v = (x, d) => (x === null || x === undefined || x === '') ? '' : (typeof x === 'number' ? x.toFixed(d || 0) : String(x));
+const fmt = n => n.toLocaleString('en-US');
+let map = null, last = null, timer = null, busy = false, on = false, receiver = null;
+let view = localStorage.getItem('adsbView') || 'map';
+
+function fitMap(){
+  const el = $('map'); if (view !== 'map') return;
+  const ctl = document.querySelector('.mapctl').offsetHeight + document.querySelector('.legend').offsetHeight + 24;
+  // the screen minus the fixed status strip (top) and tab bar (bottom), which nav.js pins over the page
+  const tabsEl = document.getElementById('qtabs'), stripEl = document.getElementById('qstrip');
+  const tabsH = tabsEl ? tabsEl.offsetHeight : 0, stripH = stripEl ? stripEl.offsetHeight : 0;
+  const vh = window.innerHeight - tabsH;
+  let h = Math.floor(vh - (el.getBoundingClientRect().top + window.scrollY) - ctl - 12);
+  // small phones: if the header leaves too little room, size the map to fill the screen once scrolled to it
+  if (h < 360) h = Math.floor(Math.min((vh - stripH) * 0.8, vh - stripH - ctl - 16));
+  h = Math.max(300, h);
+  el.style.height = h + 'px';
+  // kiosk: no page scroll in map view (status line + padding below the legend)
+  const over = document.documentElement.scrollHeight - window.innerHeight;
+  if (over > 0 && over < 80 && h - over >= 300 && (el.getBoundingClientRect().top + window.scrollY) < window.innerHeight * 0.5) el.style.height = (h - over) + 'px';
+  if (map) map.resize();
+}
+function setView(w){
+  view = w; localStorage.setItem('adsbView', w);
+  $('mapview').classList.toggle('hide', w !== 'map'); $('listview').classList.toggle('hide', w !== 'list');
+  $('vMap').classList.toggle('on', w === 'map'); $('vList').classList.toggle('on', w === 'list');
+  $('vMap').setAttribute('aria-selected', w === 'map'); $('vList').setAttribute('aria-selected', w === 'list');
+  if (w === 'map') requestAnimationFrame(fitMap);
+  if (last) render(last);
+}
+
+function showReceiver(r){
+  receiver = r;
+  $('rcvnow').textContent = r.default ? 'Using LAX (default) as the receiver position. Set where the antenna really is for true distances.'
+                                      : 'Receiver at ' + r.lat.toFixed(4) + ', ' + r.lon.toFixed(4) + '.';
+  if (document.activeElement !== $('rLat') && document.activeElement !== $('rLon')) {
+    $('rLat').value = r.default ? '' : r.lat; $('rLon').value = r.default ? '' : r.lon;
+  }
+  if (map) map.setReceiver(r);
+}
+
+function renderTable(j){
+  const tb = $('planes'); tb.innerHTML = '';
+  j.aircraft.forEach(a => {
+    const tr = document.createElement('tr');
+    if (a.seen > 20) tr.className = 'stale';
+    if (map && map.selected === a.hex) tr.classList.add('pick');
+    const alt = a.alt === 'ground' ? 'ground' : v(a.alt);
+    tr.innerHTML = `<td class="flight">${v(a.flight) || '—'}</td><td>${v(a.hex)}</td><td>${alt}</td><td>${v(a.gs)}</td><td class="opt">${v(a.track)}</td><td>${v(a.dist_nm, 1)}</td><td class="opt">${v(a.squawk)}</td><td class="opt">${v(a.rssi, 1)}</td><td>${v(a.seen, 0)} s</td>`;
+    tb.appendChild(tr);
+  });
+  if (!j.aircraft.length) tb.innerHTML = '<tr><td colspan="9" class="note">No aircraft yet. Give it a minute, and check the antenna.</td></tr>';
+}
+function render(j){
+  if (!j.ok) { $('summary').textContent = j.error || 'ADS-B is not running'; $('planes').innerHTML = ''; return; }
+  const onMap = map ? map.onMapCount() : j.with_pos;
+  $('summary').textContent = j.count + ' aircraft · ' + onMap + ' on map' + (j.running ? '' : ' · decoder output is stale');
+  if (view === 'list') renderTable(j);
+}
+
+function showCard(p){
+  const card = $('acard');
+  if (!p) { card.classList.add('hide'); setFollowBtn(false); return; }
+  const a = p.a;
+  card.classList.remove('hide');
+  $('aTitle').textContent = (a.flight || a.hex.toUpperCase()) + (a.flight ? '  ·  ' + a.hex.toUpperCase() : '');
+  $('aAlt').textContent = a.alt === 'ground' ? 'ground' : (typeof a.alt === 'number' ? fmt(a.alt) + ' ft' : '—');
+  $('aSpd').textContent = typeof a.gs === 'number' ? Math.round(a.gs) + ' kt' : '—';
+  $('aTrk').textContent = typeof a.track === 'number' ? Math.round(a.track) + '°' : '—';
+  $('aVr').textContent = typeof a.vr === 'number' ? (a.vr > 0 ? '+' : a.vr < 0 ? '−' : '') + fmt(Math.abs(a.vr)) + ' fpm' : '—';
+  $('aHex').textContent = a.hex.toUpperCase();
+  $('aSq').textContent = a.squawk || '—';
+  $('aDist').textContent = typeof a.dist_nm === 'number' ? a.dist_nm.toFixed(1) + ' nm' : '—';
+  const age = a.seen_pos != null ? a.seen_pos : a.seen;
+  $('aSeen').textContent = typeof age === 'number' ? Math.round(age) + ' s ago' : '—';
+}
+function setFollowBtn(f){ $('aFollow').classList.toggle('on', f); $('aFollow').setAttribute('aria-pressed', f); }
+
+async function poll(){
+  if (busy || document.hidden) return;
+  busy = true;
+  try {
+    const r = await fetch('/api/adsb', { cache: 'no-store' });
+    const j = await r.json();
+    last = j;
+    if (j.receiver && (!receiver || j.receiver.lat !== receiver.lat || j.receiver.lon !== receiver.lon)) showReceiver(j.receiver);
+    if (map) map.update(j.ok ? j.aircraft : []);
+    render(j);
+    setMsg('');
+  } catch (e) { setMsg(e.message, 'err'); }
+  finally { busy = false; }
+}
+function startPolling(){ if (!timer) { poll(); timer = setInterval(poll, 1000); } }
+function stopPolling(){
+  if (timer) { clearInterval(timer); timer = null; }
+  $('summary').textContent = 'ADS-B is off.'; $('planes').innerHTML = '';
+  last = null; if (map) map.update([]);
+}
+
+document.addEventListener('sdr-mode', e => {
+  const s = e.detail; on = !!(s && s.mode === 'adsb');
+  $('off').classList.toggle('hide', on);
+  if (s && !s.adsb_available) {
+    $('offtxt').textContent = 'No ADS-B decoder is installed. Re-run install.sh with internet, or: sudo apt-get install --no-install-recommends dump1090-mutability';
+    $('start').disabled = true;
+  } else if (!on) {
+    $('offtxt').textContent = 'The dongle is in ' + ((s && s.mode) || 'unknown') + ' mode, not ADS-B.';
+  }
+  if (on) startPolling(); else if (timer) stopPolling();
+  if (!on && new URLSearchParams(location.search).get('auto') === '1' && s && s.adsb_available && !window._tried) { window._tried = true; }
+  if (view === 'map') requestAnimationFrame(fitMap);
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden && on) poll(); });
+$('start').onclick = () => window.sdrMode.set('adsb').catch(() => {});
+$('vMap').onclick = () => setView('map');
+$('vList').onclick = () => setView('list');
+window.addEventListener('resize', () => requestAnimationFrame(fitMap));
+
+$('cLax').onclick = () => map && map.centerLAX();
+$('cMe').onclick = () => map && map.centerReceiver();
+// 1.0.4: range-ring settings (count + spacing), saved on the Pi in /etc/sdr/adsb.env (ADSB_RINGS, ADSB_RING_SPACING)
+// via POST /api/adsb/rings, loaded from /api/maps, so the kiosk and every phone share one setting.
+const RING_COUNTS = [0, 2, 3, 4, 6], RING_SPACINGS = ['auto', '1', '2.5', '5', '10'];
+let rings = { count: 3, spacing: 'auto' };
+function cleanRings(j){ j = j || {}; return { count: RING_COUNTS.includes(+j.count) ? +j.count : 3, spacing: RING_SPACINGS.includes(String(j.spacing)) ? String(j.spacing) : 'auto' }; }
+function ringPrefs(){ return rings; }
+function paintRings(){
+  const o = rings;
+  document.querySelectorAll('#rsN button').forEach(b => b.classList.toggle('on', +b.dataset.v === o.count));
+  document.querySelectorAll('#rsS button').forEach(b => { b.classList.toggle('on', b.dataset.v === o.spacing); b.disabled = !o.count; });
+  $('tRingsV').textContent = o.count ? o.count : 'off'; $('tRings').classList.toggle('on', o.count > 0);
+  const st = map && map.ringStepNm; $('rsNote').textContent = (o.spacing === 'auto' ? 'Auto fits the rings to the view.' : 'Sets the step at the default zoom.') + ' Rings rescale as you zoom' + (st ? ' (now ' + st + ' NM apart).' : '.');
+  if (map) map.setRings(o);
+}
+async function saveRings(p){
+  const prev = rings; rings = cleanRings(Object.assign({}, rings, p)); paintRings();   // instant on this screen
+  try {
+    const r = await fetch('/api/adsb/rings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rings) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    rings = cleanRings(j.rings); paintRings();
+  } catch (e) { rings = prev; paintRings(); setMsg('Could not save the ring setting: ' + e.message, 'err'); }
+}
+document.querySelectorAll('#rsN button').forEach(b => b.onclick = () => saveRings({ count: +b.dataset.v }));
+document.querySelectorAll('#rsS button').forEach(b => b.onclick = () => saveRings({ spacing: b.dataset.v }));
+$('tRings').onclick = () => { const open = $('ringset').classList.toggle('hide') === false; $('tRings').setAttribute('aria-expanded', open); if (open) paintRings(); };
+$('rsDone').onclick = () => { $('ringset').classList.add('hide'); $('tRings').setAttribute('aria-expanded', false); };
+$('tLabels').onclick = () => { if (!map) return; const s = map.toggleLabels(); $('tLabels').classList.toggle('on', s); $('tLabels').setAttribute('aria-pressed', s); };
+$('aClose').onclick = () => map && map.select(null);
+$('aFollow').onclick = () => map && setFollowBtn(map.setFollow(!map.follow));
+
+async function saveReceiver(body){
+  try {
+    const r = await fetch('/api/adsb/receiver', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'could not save');
+    showReceiver(j.receiver); setMsg(j.receiver.default ? 'Receiver reset to LAX.' : 'Receiver position saved.', 'ok');
+    if (map) map.centerReceiver();
+  } catch (e) { setMsg(e.message, 'err'); }
+}
+$('rSave').onclick = () => {
+  const lat = parseFloat($('rLat').value), lon = parseFloat($('rLon').value);
+  if (!(lat >= -90 && lat <= 90) || !(lon >= -180 && lon <= 180)) { setMsg('Enter latitude (−90…90) and longitude (−180…180) in decimal degrees.', 'err'); return; }
+  saveReceiver({ lat, lon });
+};
+$('rLax').onclick = () => saveReceiver({ clear: true });
+
+async function boot(){
+  setView(view);
+  let info = null;
+  try { info = await (await fetch('/api/maps', { cache: 'no-store' })).json(); } catch (e) {}
+  if (info && info.receiver) showReceiver(info.receiver);
+  if (info && info.rings) rings = cleanRings(info.rings);
+  if (!webglOK()) {
+    $('mapnote').textContent = 'This browser cannot draw the map (no WebGL). The List view still works.';
+    $('mapnote').classList.remove('hide'); setView('list'); return;
+  }
+  if (!info || !info.installed) {
+    $('mapnote').textContent = 'Basic map only: the detailed offline map is not installed. Re-run install.sh from the package, or run: sudo sdr-maps fetch (needs internet once).';
+    $('mapnote').classList.remove('hide');
+  }
+  try {
+    map = await new AircraftMap($('map'), { receiver: receiver, rings: ringPrefs(), onSelect: p => { showCard(p); }, onFollow: setFollowBtn }).start(info);
+    paintRings(); map.map.on('zoomend', () => { if (!$('ringset').classList.contains('hide')) paintRings(); });
+    window._fieldnoteMap = map;
+    fitMap();
+    if (last) { map.update(last.ok ? last.aircraft : []); render(last); }
+  } catch (e) {
+    $('mapnote').textContent = 'Map failed to start: ' + e.message + '. The List view still works.';
+    $('mapnote').classList.remove('hide');
+  }
+}
+// 1.2.0: the map (MapLibre + tiles) only loads once ADS-B is started (START button); nothing loads while idle
+let booted = false;
+function maybeBoot(){ if (!booted && on) { booted = true; boot(); } }
+document.addEventListener('sdr-mode', maybeBoot);
+setView(view);
+try { const s0 = window.sdrMode && window.sdrMode.get(); if (s0) document.dispatchEvent(new CustomEvent('sdr-mode', { detail: s0 })); } catch (e) {}
+</script>
+<script src="/map108.js"></script>
+</body>
+</html>
