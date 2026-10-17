@@ -1,0 +1,19 @@
+[Unit]
+Description=Stillwave Trace: Touch Display 2 into its power-off state at reboot / power-off (Pi 5)
+DefaultDependencies=no
+# Started before sdr-screen-final (so STOPPED AFTER it, the very last step before the reboot) and before the kiosk.
+# ExecStop does the work; the start at boot does nothing. Pi 5 + Touch Display 2 only (install.sh enables it only there).
+# Disable: sudo systemctl disable --now sdr-panel-off.service   (or: sudo fieldnote-display-setup --undo)
+After=local-fs.target
+Before=sdr-screen-final.service sdr-screen.service sdr-web.service nginx.service fieldnote-kiosk.service shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=-/usr/local/sbin/sdr-panel-off
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

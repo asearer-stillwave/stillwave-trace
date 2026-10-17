@@ -402,6 +402,17 @@ sudo reboot                       # only if it says config.txt changed
 
 If the screen stays dark: check both cable ends and the GPIO pins, then `sudo apt update && sudo apt full-upgrade` (older kernels lack the Touch Display 2 driver) and reboot. `grep -n 'vc4\|ili9881\|display_auto' /boot/firmware/config.txt` should show one active `dtoverlay=vc4-kms-v3d…` and one `dtoverlay=vc4-kms-dsi-ili9881-5inch` line under the last `[all]` (in the `fieldnote-display` block, or where you put them by hand).
 
+### Raspberry Pi 5 (Ubuntu 24.04) with the Touch Display 2 (1.2.2)
+
+Tested on a Pi 5, Ubuntu 24.04 (linux-raspi 6.8), 5-inch Touch Display 2 in the **DISP0** connector. Needs the 22-way (Pi 5) to 15-way (display) ribbon.
+
+- **Which connector.** The Pi 5 has two DSI ports and the overlay's default is DISP1. Software cannot tell where the ribbon is: if the panel stays dark with the default, run `sudo bash install.sh --display --dsi-port 0` (or `sudo fieldnote-display-setup --dsi-port 0`), which writes `dtoverlay=vc4-kms-dsi-ili9881-5inch,dsi0`. `--dsi-port 1` goes back to the default. Re-running without the option keeps whatever port is already set. Pi 4 ignores the option (with a warning). `--undo` still restores `config.txt` byte for byte.
+- **Touch** (`sdr-touch-reload.service`, installed only on a Pi 5 with the panel set up). The touch chip is reset by the display's own microcontroller and can miss the driver's first look at boot (`Goodix-TS 10-005d ... -121` in `dmesg`, no touch). The unit waits for the chip, and only if no Goodix input device exists it reloads `goodix_ts` (up to 4 tries). Manual run: `sudo sdr-touch-reload`; state: `sdr-touch-reload --check`. A hand-made `goodix-reload.service` is moved to `/var/lib/sdr-station/`.
+- **Power-off state before a reboot** (`sdr-panel-off.service`, Pi 5 only). Raspberry Pi's own kernel driver puts the display into reset in its shutdown hook (`rpi-panel-v2-regulator.c`: backlight PWM 0, LCD/touch reset bits 0); Ubuntu's linux-raspi may not carry that. This unit does the same two I2C writes as the last step of a reboot or power-off. It is a mitigation for the blank panel after a warm reboot, **not a confirmed fix**: if a warm reboot still leaves the panel blank, run `sudo sdr-panel-diag --save bad` over SSH and compare with `sudo sdr-panel-diag --save good` taken after a cold power-up. Switch it off with `sudo systemctl disable --now sdr-panel-off` (this one command also runs the display-off step once, so the screen goes dark until the next reboot).
+- `sdr-panel-diag` (read-only report of display, backlight, touch, I2C, kiosk and services) is installed everywhere.
+- `sudo fieldnote-display-setup --undo` also removes `sdr-touch-reload.service`, `sdr-panel-off.service` and `/etc/modules-load.d/sdr-i2c-dev.conf`.
+- A box that runs **Trace Desktop** is not converted by accident: `install.sh` refuses unless you add `--force-edition` (full install with internet, never an `--upgrade`). Handheld installs now write `handheld` to `/usr/local/lib/sdr-station/EDITION`.
+
 If the kiosk does not start (cage):
 
 - `journalctl -u fieldnote-kiosk -b` with `libseat`, `Could not take control of session`, `Permission denied` on `/dev/dri/card*` or input devices: the session did not become a proper seat session. Check `id neo` lists `video render input` (log out/reboot after a group change), `/etc/pam.d/fieldnote-kiosk` exists, `getty@tty1` is not running (`systemctl status getty@tty1`), and `loginctl` shows a `seat0` session on `tty1` for `neo`.

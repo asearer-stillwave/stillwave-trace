@@ -1,0 +1,13 @@
+[Unit]
+Description=Stillwave Trace: bring up the Touch Display 2 touch chip (reload goodix_ts if it failed at boot)
+# Pi 5 + Touch Display 2 only (install.sh enables it only there). Replaces a hand-made goodix-reload.service.
+After=systemd-modules-load.service systemd-udevd.service local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/sdr-touch-reload
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

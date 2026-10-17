@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.2.2] and [1.2.2-desktop] - 2026-10-16 (PT) - handheld gets the Raspberry Pi 5 work, desktop is version-aligned only
+Found on a real Raspberry Pi 5 (Ubuntu 24.04, linux-raspi 6.8, 5-inch Touch Display 2 in the DISP0 connector, cage + Chromium snap).
+### Added (handheld)
+- **`--dsi-port 0|1`** for `fieldnote-display-setup` and `install.sh --display`. The Pi 5 has two DSI ports and the overlay defaults to DISP1; with the ribbon in DISP0 the panel stays dark unless the overlay line ends in `,dsi0`. The port cannot be detected from software, so `--dsi-port 0` writes `dtoverlay=vc4-kms-dsi-ili9881-5inch,dsi0`, `--dsi-port 1` (and no option on a fresh box) writes the plain default line. Re-running without the option keeps a `,dsi0` that is already in the managed block (also one edited in by hand), so an update never sends the panel back to DISP1. A Pi 4 ignores the option with a warning. `--undo` still restores `config.txt` byte for byte (tests added). On a Pi 5 the section filter `[pi5]` is now honoured like `[pi4]` is on a Pi 4.
+- **`sdr-touch-reload.service`** (`/usr/local/sbin/sdr-touch-reload`), Pi 5 with the panel set up only. At boot the Goodix touch driver can look for the chip before the display's microcontroller has released it from reset (`Goodix-TS 10-005d ... -121`), and there is no touch. The unit waits for the chip and, only when no Goodix input device exists, reloads `goodix_ts` (up to 4 tries). A hand-made `goodix-reload.service` is moved to `/var/lib/sdr-station/`, not deleted. `sdr-touch-reload --check` reports the state.
+- **`sdr-panel-off.service`** (`/usr/local/sbin/sdr-panel-off`), Pi 5 with the panel set up only: as the very last step before a reboot or power-off it writes the same two display-microcontroller registers as the shutdown hook of Raspberry Pi's own kernel driver (backlight PWM 0, LCD and touch reset bits 0). Ubuntu's linux-raspi kernel may not carry that hook. **A mitigation for the blank panel after a warm reboot, not a confirmed fix** (nothing publishes that this cures that symptom). Never fails a shutdown; disable with `sudo systemctl disable --now sdr-panel-off`.
+- **`sdr-panel-diag`** (read-only; installed on every handheld): one report of the display chain (DRM connectors, backlight, I2C clients and the display microcontroller registers, touch devices, kernel messages, kiosk and service state, boot timing, the end of the previous boot). `--save NAME` keeps a copy in `/var/log/sdr-panel-diag/` to compare a good cold boot with a bad warm reboot.
+- `/etc/modules-load.d/sdr-i2c-dev.conf` (Pi 5 with the panel only): `i2c-dev` at boot for the two helpers above.
+- `verify.sh` shows the Pi 5 helper state.
+### Changed (handheld)
+- The handheld installer writes `handheld` to `/usr/local/lib/sdr-station/EDITION` (before, no file meant handheld). A box that runs Trace Desktop is not converted by accident: `install.sh` refuses with a message unless the full installer is run with `--force-edition` (never with `--upgrade`), the same rule the desktop installer has in the other direction. Converting also forgets the desktop HDMI display state (`DISPLAY_MODE=hdmi`, pointer shown) so the handheld kiosk forces touch and hides the pointer again.
+- `fieldnote-display-setup --undo` also removes `sdr-touch-reload.service`, `sdr-panel-off.service` and the i2c-dev autoload file.
+- The installer's Pi 5 helper step also runs on an over-the-air upgrade (units and scripts only; display settings are never rewritten by an upgrade).
+### Not changed
+- **Desktop edition**: version number only. The Pi 5 items above are about the DSI panel; the desktop edition drives an HDMI monitor.
+- Nothing was changed for the warm-reboot blank panel beyond the mitigation above; the cause is not established (see the diagnostic helper).
+
 ## [1.2.1] and [1.2.1-desktop] - 2026-10-16 (PT) - both editions
 ### Removed
 - **The per-unit license system.** The offline license key tool (`sdr-license`), the key check in the updater, the `/api/license` endpoints on the web service, the License card on More > Updates and the bundled license public key are gone. Updates install regardless of date. Update signature checking (Ed25519, public key in `config/stillwave-update.pub`) is unchanged. A key file left on a unit is simply ignored.

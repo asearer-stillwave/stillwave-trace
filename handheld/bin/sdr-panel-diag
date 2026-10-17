@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Stillwave Trace (1.2.2) DIAGNOSTIC HELPER: prints the state of the Touch Display 2 chain (display, backlight, touch, I2C,
+# kiosk) in one report. READ-ONLY: it changes nothing (it only reads three registers of the display microcontroller).
+# Made for the Pi 5 "panel stays blank after a warm reboot" problem: run it
+#   1. after a cold power-up with a working picture            (sudo sdr-panel-diag --save good)
+#   2. after a warm reboot that left the panel blank (SSH in)   (sudo sdr-panel-diag --save bad)
+# then compare the two files in /var/log/sdr-panel-diag/ (diff good bad) or send both.
+#   sudo sdr-panel-diag               print the report
+#   sudo sdr-panel-diag --save NAME   print it and keep a copy as /var/log/sdr-panel-diag/NAME-<time>.txt (newest 12 kept)
+#   sdr-panel-diag --no-i2c           do not read the display microcontroller registers
+# Test hooks: SDR_DIAG_ROOT (prefix for /sys, /proc, /boot, /etc), SDR_DIAG_LOGDIR.
+R="${SDR_DIAG_ROOT:-}"
+LOGDIR="${SDR_DIAG_LOGDIR:-/var/log/sdr-panel-diag}"
+SAVE=""; NOI2C=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --save) SAVE="${2:-run}"; shift ;;
+    --no-i2c) NOI2C=1 ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+[[ -n "$SAVE" && ! "$SAVE" =~ ^[A-Za-z0-9._-]{1,32}$ ]] && { echo "--save NAME: letters, digits . _ - only (max 32)" >&2; exit 2; }
+
+report() {
+  sec() { echo; echo "=== $* ==="; }
+  have() { command -v "$1" >/dev/null 2>&1; }
+  t() { have "$1" || return 0; timeout "${T:-8}" "$@" 2>&1; }
+  echo "Stillwave Trace panel diagnostic $(cat "$R/usr/local/lib/sdr-station/VERSION" 2>/dev/null || echo '?')  $(date -Is)"
+  sec "system"
+  echo "model:  $(cat "$R/proc/device-tree/model" 2>/dev/null | tr -d '\0'; true)"
+  echo "kernel: $(uname -r)    os: $(sed -n 's/^PRETTY_NAME=//p' "$R/etc/os-release" 2>/dev/null | tr -d '"')"
+  echo "uptime: $(uptime -p 2>/dev/null)  (booted $(uptime -s 2>/dev/null))   boot id: $(cat "$R/proc/sys/kernel/random/boot_id" 2>/dev/null)"
+  echo "kernel package: $(dpkg-query -W -f='${Package} ${Version}\n' 'linux-image-*raspi*' 2>/dev/null | head -n2 | tr '\n' ';')"
+  have vcgencmd && echo "power/throttle flags: $(t vcgencmd get_throttled | head -n1)   temp: $(t vcgencmd measure_temp | head -n1)"
+  if have rpi-eeprom-update; then echo "-- rpi-eeprom-update (status only):"; T=20 t rpi-eeprom-update | head -n 12; else echo "rpi-eeprom-update: not installed"; fi
+  if have vcgencmd; then echo "bootloader: $(t vcgencmd bootloader_version | tr '\n' ' ')"; fi
+  sec "config.txt (display lines that are active)"
+  grep -nE '^\s*(dtoverlay|dtparam|display_auto_detect|disable_fw_kms_setup|camera_auto_detect|max_framebuffers|hdmi_|\[)' "$R/boot/firmware/config.txt" 2>/dev/null | head -n 60 || echo "(no config.txt)"
+  echo "-- cmdline.txt: $(cat "$R/boot/firmware/cmdline.txt" 2>/dev/null)"
+  sec "display (DRM): connectors and cards"
+  ls -l "$R/dev/dri/by-path" 2>/dev/null | sed 's/^.* \([^ ]* -> .*\)$/  \1/' | head
+  for c in "$R"/sys/class/drm/card*-*; do
+    [[ -d "$c" ]] || continue
+    echo "  $(basename "$c"): status=$(cat "$c/status" 2>/dev/null) enabled=$(cat "$c/enabled" 2>/dev/null) dpms=$(cat "$c/dpms" 2>/dev/null) modes=$(head -n1 "$c/modes" 2>/dev/null)"
+  done
+  echo "fb: $(for f in "$R"/sys/class/graphics/fb*; do [[ -d $f ]] && echo "$(basename "$f")=$(cat "$f/name" 2>/dev/null)"; done | tr '\n' ' ')"
+  sec "backlight"
+  for b in "$R"/sys/class/backlight/*; do
+    [[ -d "$b" ]] || continue
+    echo "  $(basename "$b"): brightness=$(cat "$b/brightness" 2>/dev/null) actual=$(cat "$b/actual_brightness" 2>/dev/null) max=$(cat "$b/max_brightness" 2>/dev/null) bl_power=$(cat "$b/bl_power" 2>/dev/null)"
+  done
+  ls "$R"/sys/class/backlight/* >/dev/null 2>&1 || echo "  (no backlight device)"
+  sec "I2C clients on the display bus (name, driver)"
+  for d in "$R"/sys/bus/i2c/devices/*-00*; do
+    [[ -e "$d" ]] || continue
+    echo "  $(basename "$d"): name=$(cat "$d/name" 2>/dev/null) driver=$(basename "$(readlink "$d/driver" 2>/dev/null)" 2>/dev/null) compat=$(tr '\0' ' ' <"$d/of_node/compatible" 2>/dev/null)"
+  done
+  if [[ $NOI2C -eq 0 && -z "$R" ]]; then
+    sec "display microcontroller registers (0x45; read-only)"
+    python3 - <<'PY' 2>&1
+import glob, os, fcntl, time
+for d in sorted(glob.glob("/sys/bus/i2c/devices/*-0045")):
+    bus = int(os.path.basename(d).split("-")[0])
+    dev = "/dev/i2c-%d" % bus
+    if not os.path.exists(dev):
+        os.system("modprobe i2c-dev 2>/dev/null")
+    try:
+        fd = os.open(dev, os.O_RDWR)
+        fcntl.ioctl(fd, 0x0706, 0x45)
+        out = []
+        for reg, nm in ((1, "ID"), (2, "POWERON(bit0 LCD reset, bit1 touch reset)"), (3, "PWM(bit7 backlight on, low 5 bits level)")):
+            os.write(fd, bytes([reg])); time.sleep(0.01)
+            out.append("%s=0x%02x" % (nm, os.read(fd, 1)[0]))
+        os.close(fd)
+        print("i2c-%d: %s" % (bus, "  ".join(out)))
+    except Exception as e:
+        print("i2c-%d: cannot read (%s)" % (bus, e))
+if not glob.glob("/sys/bus/i2c/devices/*-0045"):
+    print("no device at 0x45 (display microcontroller not bound; wrong DSI port, cable, or overlay not loaded)")
+PY
+  fi
+  sec "touch"
+  for i in "$R"/sys/class/input/input*; do [[ -e "$i/name" ]] && echo "  $(basename "$i"): $(cat "$i/name")"; done
+  echo "modules: $(lsmod 2>/dev/null | awk '$1 ~ /goodix|ili9881|panel|rpi_panel|vc4|drm_dma|i2c_dev|tc358|backlight/ {printf "%s ", $1}')"
+  sec "kernel messages (dsi / panel / goodix / regulator / i2c)"
+  { dmesg 2>/dev/null || journalctl -k --no-pager 2>/dev/null; } | grep -iE 'dsi|ili9881|panel|goodix|rpi_touch|rp1|regulator|i2c.*(timed|fail)|drm.*(error|fail)|fb0' | tail -n 45
+  sec "services"
+  for u in fieldnote-kiosk sdr-web nginx sdr-screen sdr-screen-final sdr-touch-reload sdr-panel-off goodix-reload plymouth-start plymouth-reboot snapd; do
+    s="$(systemctl is-active "$u" 2>/dev/null)"; [[ "$s" == unknown || -z "$s" ]] && continue
+    echo "  $u: $s ($(systemctl is-enabled "$u" 2>/dev/null))"
+  done
+  echo "kiosk: $(systemctl show fieldnote-kiosk -p ActiveEnterTimestamp -p NRestarts 2>/dev/null | tr '\n' ' ')"
+  echo "web:   $(systemctl show sdr-web -p ActiveEnterTimestamp 2>/dev/null)"
+  echo "processes: $(pgrep -ac '^cage$') cage, $(pgrep -ac 'chrom') chromium"
+  T=12 t systemd-analyze 2>/dev/null | head -n 2
+  T=12 t systemd-analyze blame 2>/dev/null | head -n 8
+  sec "kiosk journal (this boot, last 25 lines)"
+  journalctl -b -u fieldnote-kiosk --no-pager -n 25 2>/dev/null | cut -c1-200
+  sec "end of the previous boot (panel-off / screen-final / shutdown lines)"
+  journalctl -b -1 --no-pager -o short-monotonic 2>/dev/null | grep -iE 'sdr-panel-off|sdr-screen|plymouth|Reached target (Reboot|Power-Off)|systemd-shutdown|Rebooting|Powering off' | tail -n 14 | cut -c1-200
+  echo "-- /var/log/sdr-power.log:"; tail -n 4 "$R/var/log/sdr-power.log" 2>/dev/null
+  if [[ -x "$R/usr/local/sbin/sdr-screen" && -z "$R" ]]; then
+    sec "sdr-screen probe (screen control the kiosk uses)"
+    T=15 t /usr/local/sbin/sdr-screen probe | head -n 25
+  fi
+  echo; echo "=== end ==="
+}
+
+if [[ -n "$SAVE" ]]; then
+  [[ $EUID -eq 0 || -n "$R" ]] || { echo "Run: sudo sdr-panel-diag --save $SAVE" >&2; exit 1; }
+  mkdir -p "$LOGDIR"; chmod 755 "$LOGDIR"
+  F="$LOGDIR/$SAVE-$(date +%Y%m%d-%H%M%S).txt"
+  report | tee "$F"
+  echo; echo "Saved: $F"
+  ls -1t "$LOGDIR"/*.txt 2>/dev/null | tail -n +13 | xargs -r rm -f
+else
+  report
+fi
+exit 0

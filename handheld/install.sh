@@ -3,6 +3,8 @@
 #   sudo bash install.sh                 install / update the station (keeps /etc/sdr settings)
 #   sudo bash install.sh --display       same, then set up the 5" Touch Display 2 kiosk
 #   sudo bash install.sh --display-only  only the display/kiosk part (fieldnote-display-setup, alias trace-display-setup)
+#   options for --display:  --dsi-port 0|1   Pi 5 only: ribbon in DISP0 (0 -> dtoverlay=...,dsi0) or DISP1 (1, the default)
+#                           --force-edition  convert a box that runs Trace Desktop into handheld Trace (see below)
 #   sudo bash install.sh --upgrade       non-interactive upgrade (used by sdr-update): no apt / internet, no network
 #                                        or display/kiosk changes, keeps Icecast passwords and every /etc/sdr file
 # The installer never switches the network: if the Pi is on Wi-Fi it stays on Wi-Fi.
@@ -10,9 +12,19 @@ DO_DISPLAY=0
 DISPLAY_ONLY=0
 UPGRADE=0
 RESUME=0
+DSI_PORT=""
+FORCE_EDITION=0
 [[ "${SDR_UPDATE_RUN:-}" == 1 ]] && UPGRADE=1
+prev=""
 for arg in "$@"; do
+  if [[ "$prev" == --dsi-port ]]; then
+    case "$arg" in 0|1) DSI_PORT="$arg" ;; *) echo "--dsi-port must be 0 (DISP0) or 1 (DISP1)" >&2; exit 2 ;; esac
+    prev=""; continue
+  fi
   case "$arg" in
+    --dsi-port) prev="--dsi-port" ;;
+    --dsi-port=*) DSI_PORT="${arg#--dsi-port=}"; case "$DSI_PORT" in 0|1) ;; *) echo "--dsi-port must be 0 (DISP0) or 1 (DISP1)" >&2; exit 2 ;; esac ;;
+    --force-edition) FORCE_EDITION=1 ;;
     --display) DO_DISPLAY=1 ;;
     --display-only) DO_DISPLAY=1; DISPLAY_ONLY=1 ;;
     --upgrade) UPGRADE=1 ;;
@@ -21,6 +33,8 @@ for arg in "$@"; do
     *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
+[[ -z "$prev" ]] || { echo "$prev needs a value (0 or 1)" >&2; exit 2; }
+DSI_ARGS=(); [[ -n "$DSI_PORT" ]] && DSI_ARGS=(--dsi-port "$DSI_PORT")
 if [[ $UPGRADE -eq 1 ]]; then DO_DISPLAY=0; DISPLAY_ONLY=0; fi
 echo "Stillwave Trace installer starting ($( [[ $UPGRADE -eq 1 ]] && echo upgrade || echo install ) of $(cat "$(dirname "${BASH_SOURCE[0]}")/VERSION" 2>/dev/null || echo '?'))..."
 if [[ ${EUID} -ne 0 ]]; then
@@ -29,6 +43,28 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 set -eu
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ---- 1.2.2 edition guard: handheld Trace says so in /usr/local/lib/sdr-station/EDITION (sdr-update refuses packages of
+# the other edition). A box that runs Trace Desktop is only converted on purpose (--force-edition), like the desktop
+# installer does in the other direction. ----
+EDITION_FILE=/usr/local/lib/sdr-station/EDITION
+HERE_ED="$(cat "$EDITION_FILE" 2>/dev/null || echo handheld)"
+HERE_ED="${HERE_ED//[[:space:]]/}"
+CONVERTING=0
+if [[ "$HERE_ED" == desktop ]]; then
+  if [[ $FORCE_EDITION -ne 1 || $UPGRADE -eq 1 ]]; then
+    echo "This box already runs Trace Desktop ($(cat /usr/local/lib/sdr-station/VERSION 2>/dev/null || echo '?')). Handheld Trace will not install over it." >&2
+    if [[ $UPGRADE -eq 1 ]]; then
+      echo "(An upgrade never changes the edition. To convert this box on purpose, run the full installer with internet:" >&2
+    else
+      echo "(To convert this box on purpose:" >&2
+    fi
+    echo " sudo bash install.sh --display --force-edition   (Pi 5 with the ribbon in DISP0: add --dsi-port 0))" >&2
+    exit 1
+  fi
+  CONVERTING=1
+  echo "NOTE: converting this box from Trace Desktop to handheld Trace (--force-edition). Settings in /etc/sdr and Wi-Fi stay."
+fi
 
 # ---- 1.0.8: SSH-safe. A full install over SSH re-runs itself as a detached systemd unit (log: /var/log/trace-install.log),
 # so a dropped SSH session or Ctrl-C only stops the log view, never the install. ----
@@ -152,10 +188,62 @@ RUN_GROUP="$(id -gn "$RUN_USER")"
 echo "[progress] 10 Checking the system"
 echo "Service user: $RUN_USER"
 
+# ---- 1.2.2 Raspberry Pi 5 + Touch Display 2 helpers (all idempotent; removed by: sudo fieldnote-display-setup --undo) ----
+# 1. sdr-touch-reload.service: reload the Goodix touch driver at boot when its first probe failed (-121 / -5). Replaces a
+#    hand-made goodix-reload.service (moved to /var/lib/sdr-station/, not deleted).
+# 2. sdr-panel-off.service: put the display into its power-off state as the last step before a reboot / power-off, the same
+#    two register writes as Raspberry Pi's kernel driver shutdown hook (sdr-panel-off).
+# 3. /etc/modules-load.d/sdr-i2c-dev.conf: i2c-dev at boot (sdr-panel-off and sdr-panel-diag talk to the display over it).
+# The three scripts are always installed (they are harmless and sdr-panel-diag is useful anywhere); the units and the
+# autoload file only on a Pi 5 / CM5 that has the Touch Display 2 set up (overlay line in config.txt, or its chip on I2C).
+install_pi5_helpers() {
+  install -d -m 755 /usr/local/sbin
+  install -m 755 "$SRC/bin/sdr-panel-off" /usr/local/sbin/sdr-panel-off
+  install -m 755 "$SRC/bin/sdr-touch-reload" /usr/local/sbin/sdr-touch-reload
+  install -m 755 "$SRC/bin/sdr-panel-diag" /usr/local/sbin/sdr-panel-diag
+  local model cfg d have_dsi=0
+  model="$(cat /proc/device-tree/model 2>/dev/null | tr -d '\0')"
+  if [[ "$model" != *"Raspberry Pi 5"* && "$model" != *"Compute Module 5"* ]]; then
+    return 0
+  fi
+  cfg=/boot/firmware/config.txt; [[ -f "$cfg" ]] || cfg=/boot/config.txt
+  grep -qE '^[[:space:]]*dtoverlay=vc4-kms-dsi-ili9881' "$cfg" 2>/dev/null && have_dsi=1
+  for d in /sys/bus/i2c/devices/*-0045 /sys/bus/i2c/devices/*-005d; do
+    [[ -e "$d" ]] && have_dsi=1
+  done
+  if [[ $have_dsi -eq 0 ]]; then
+    echo "Pi 5: no Touch Display 2 set up (no panel overlay in config.txt); touch-reload / panel-off units not installed"
+    return 0
+  fi
+  echo "Pi 5 + Touch Display 2: installing the touch-reload and panel-off helpers"
+  install -m 644 "$SRC/systemd/sdr-touch-reload.service" /etc/systemd/system/sdr-touch-reload.service
+  install -m 644 "$SRC/systemd/sdr-panel-off.service" /etc/systemd/system/sdr-panel-off.service
+  install -d -m 755 /etc/modules-load.d
+  printf '# Stillwave Trace 1.2.2: sdr-panel-off / sdr-panel-diag talk to the Touch Display 2 over I2C\ni2c-dev\n' >/etc/modules-load.d/sdr-i2c-dev.conf
+  chmod 644 /etc/modules-load.d/sdr-i2c-dev.conf
+  # a hand-made reload unit (from the 1.2.1 Pi 5 test) would reload the driver a second time: set it aside
+  if [[ -f /etc/systemd/system/goodix-reload.service ]] && grep -q 'goodix_ts' /etc/systemd/system/goodix-reload.service; then
+    install -d -m 755 /var/lib/sdr-station
+    systemctl disable goodix-reload.service >/dev/null 2>&1 || true
+    mv -f /etc/systemd/system/goodix-reload.service /var/lib/sdr-station/goodix-reload.service.pre-1.2.2
+    echo "Moved your goodix-reload.service to /var/lib/sdr-station/ (sdr-touch-reload.service does the same, with checks)"
+  fi
+  systemctl daemon-reload || true
+  systemctl enable sdr-touch-reload.service sdr-panel-off.service >/dev/null 2>&1 || echo "WARNING: could not enable the Pi 5 helper units"
+  systemctl start sdr-panel-off.service >/dev/null 2>&1 || true            # no-op start: so its ExecStop runs at this boot's reboot too
+  systemctl start --no-block sdr-touch-reload.service >/dev/null 2>&1 || true   # does nothing when touch already works
+  return 0
+}
+
 if [[ $DISPLAY_ONLY -eq 1 ]]; then
   install -m 755 "$SRC/bin/fieldnote-display-setup" /usr/local/sbin/fieldnote-display-setup
   ln -sfn fieldnote-display-setup /usr/local/sbin/trace-display-setup   # same script, new-brand name
-  exec /usr/local/sbin/fieldnote-display-setup --user "$RUN_USER"
+  install -d -m 755 /usr/local/lib/sdr-station
+  printf 'handheld\n' >"$EDITION_FILE"
+  rc=0
+  /usr/local/sbin/fieldnote-display-setup --user "$RUN_USER" ${DSI_ARGS[@]+"${DSI_ARGS[@]}"} || rc=$?
+  install_pi5_helpers || true
+  exit "$rc"
 fi
 
 rand_pw() {
@@ -615,7 +703,7 @@ if [[ $UPGRADE -eq 1 ]]; then
   fi
 elif [[ $DO_DISPLAY -eq 1 ]]; then
   echo
-  /usr/local/sbin/fieldnote-display-setup --user "$RUN_USER" && mark_step display || echo "WARNING: display setup reported a problem (see above). Resume: sudo bash $SRC/install.sh --resume --display"
+  /usr/local/sbin/fieldnote-display-setup --user "$RUN_USER" ${DSI_ARGS[@]+"${DSI_ARGS[@]}"} && mark_step display || echo "WARNING: display setup reported a problem (see above). Resume: sudo bash $SRC/install.sh --resume --display"
 elif [[ -f /etc/systemd/system/fieldnote-kiosk.service ]]; then
   # Existing cage kiosk (it may be hand-edited): apply ONLY the hidden-pointer drop-in, never rewrite the unit.
   if grep -qx 'CURSOR=shown' /etc/sdr/display.env 2>/dev/null; then
@@ -627,6 +715,12 @@ elif ls /sys/class/drm/card*-DSI-* >/dev/null 2>&1 && [[ ! -f /etc/sdr/display.e
   echo "A DSI display is connected. For the full-screen Trace kiosk run:"
   echo "  sudo trace-display-setup     (same as fieldnote-display-setup; then sudo reboot)"
 fi
+
+install_pi5_helpers || echo "WARNING: Pi 5 helper step reported a problem (see above)"
+# 1.2.2: record the edition explicitly (sdr-update's edition guard reads this file; no file also means handheld)
+install -d -m 755 /usr/local/lib/sdr-station
+printf 'handheld\n' >"$EDITION_FILE"
+[[ $CONVERTING -eq 1 ]] && echo "Edition: this box is now handheld Trace (was Trace Desktop)."
 
 # ---- network (1.0.8: after the display step, so a network change can never stop the kiosk setup) ----
 if [[ $UPGRADE -eq 0 ]]; then

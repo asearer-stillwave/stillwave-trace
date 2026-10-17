@@ -110,6 +110,12 @@ fi
 echo "==== kiosk screen (sdr-screen) ===="
 echo "sdr-screen=$(systemctl is-active sdr-screen 2>/dev/null)  sdr-screen-final=$(systemctl is-active sdr-screen-final 2>/dev/null)"
 /usr/local/sbin/sdr-screen status 2>/dev/null || echo "sdr-screen missing"
+if grep -q 'Raspberry Pi 5\|Compute Module 5' /proc/device-tree/model 2>/dev/null; then
+  echo "==== Pi 5 touch display helpers (1.2.2) ===="
+  echo "sdr-touch-reload=$(systemctl is-active sdr-touch-reload 2>/dev/null)  sdr-panel-off=$(systemctl is-active sdr-panel-off 2>/dev/null)"
+  /usr/local/sbin/sdr-touch-reload --check 2>/dev/null || true
+  echo "full report: sudo sdr-panel-diag   (save: sudo sdr-panel-diag --save NAME)"
+fi
 echo -n "api/screen: "; curl -sS --max-time 3 http://127.0.0.1/api/screen | head -c 300; echo
 echo "==== bootloader power setting ===="
 if [[ $EUID -eq 0 ]]; then
