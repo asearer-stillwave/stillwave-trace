@@ -188,17 +188,39 @@ RUN_GROUP="$(id -gn "$RUN_USER")"
 echo "[progress] 10 Checking the system"
 echo "Service user: $RUN_USER"
 
-# ---- 1.2.2 Raspberry Pi 5 + Touch Display 2 helpers (all idempotent; removed by: sudo fieldnote-display-setup --undo) ----
-# 1. sdr-touch-reload.service: reload the Goodix touch driver at boot when its first probe failed (-121 / -5). Replaces a
-#    hand-made goodix-reload.service (moved to /var/lib/sdr-station/, not deleted).
-# 2. sdr-panel-off.service: put the display into its power-off state as the last step before a reboot / power-off, the same
-#    two register writes as Raspberry Pi's kernel driver shutdown hook (sdr-panel-off).
-# 3. /etc/modules-load.d/sdr-i2c-dev.conf: i2c-dev at boot (sdr-panel-off and sdr-panel-diag talk to the display over it).
-# The three scripts are always installed (they are harmless and sdr-panel-diag is useful anywhere); the units and the
-# autoload file only on a Pi 5 / CM5 that has the Touch Display 2 set up (overlay line in config.txt, or its chip on I2C).
+# ---- Raspberry Pi 5 + Touch Display 2 helpers (all idempotent; removed by: sudo fieldnote-display-setup --undo) ----
+# 1. sdr-touch-reload.service (1.2.2): reload the Goodix touch driver at boot when its first probe failed (-121 / -5).
+#    Replaces a hand-made goodix-reload.service (moved to /var/lib/sdr-station/, not deleted).
+# 2. /etc/modules-load.d/sdr-i2c-dev.conf: i2c-dev at boot (sdr-panel-diag reads the display over it).
+# 3. 1.2.3: sdr-panel-off.service (the 1.2.2 shutdown hook) is REMOVED. It wrote to the display's microcontroller (I2C 0x45)
+#    right before a reboot; so did sdr-screen-final. That write is what left the panel blank after a warm reboot (a hung
+#    0x45 chip: only a power cut recovers it). Nothing in Trace touches the display over I2C while the box reboots any more.
+# The two scripts are always installed (harmless; sdr-panel-diag is useful anywhere); the unit and the autoload file only on
+# a Pi 5 / CM5 that has the Touch Display 2 set up (overlay line in config.txt, or its chip on I2C).
+remove_panel_off() {
+  # idempotent; safe when it was disabled by hand (or masked, or never installed). Order matters: the script goes first, so
+  # that stopping a still-active unit cannot run its old ExecStop (the display-off write) one more time.
+  local had=0 f
+  for f in /usr/local/sbin/sdr-panel-off /etc/systemd/system/sdr-panel-off.service /etc/systemd/system/multi-user.target.wants/sdr-panel-off.service; do
+    [[ -e "$f" || -L "$f" ]] && had=1
+  done
+  [[ -d /etc/systemd/system/sdr-panel-off.service.d ]] && had=1
+  [[ $had -eq 1 ]] || return 0
+  rm -f /usr/local/sbin/sdr-panel-off
+  systemctl disable sdr-panel-off.service >/dev/null 2>&1 || true
+  if systemctl is-active --quiet sdr-panel-off.service 2>/dev/null; then
+    systemctl stop sdr-panel-off.service >/dev/null 2>&1 || true
+  fi
+  rm -f /etc/systemd/system/sdr-panel-off.service /etc/systemd/system/multi-user.target.wants/sdr-panel-off.service
+  rm -rf /etc/systemd/system/sdr-panel-off.service.d
+  systemctl daemon-reload || true
+  systemctl reset-failed sdr-panel-off.service >/dev/null 2>&1 || true
+  echo "Removed sdr-panel-off.service (1.2.2): nothing writes to the display chip at shutdown any more"
+  return 0
+}
 install_pi5_helpers() {
   install -d -m 755 /usr/local/sbin
-  install -m 755 "$SRC/bin/sdr-panel-off" /usr/local/sbin/sdr-panel-off
+  remove_panel_off || true
   install -m 755 "$SRC/bin/sdr-touch-reload" /usr/local/sbin/sdr-touch-reload
   install -m 755 "$SRC/bin/sdr-panel-diag" /usr/local/sbin/sdr-panel-diag
   local model cfg d have_dsi=0
@@ -212,14 +234,13 @@ install_pi5_helpers() {
     [[ -e "$d" ]] && have_dsi=1
   done
   if [[ $have_dsi -eq 0 ]]; then
-    echo "Pi 5: no Touch Display 2 set up (no panel overlay in config.txt); touch-reload / panel-off units not installed"
+    echo "Pi 5: no Touch Display 2 set up (no panel overlay in config.txt); touch-reload unit not installed"
     return 0
   fi
-  echo "Pi 5 + Touch Display 2: installing the touch-reload and panel-off helpers"
+  echo "Pi 5 + Touch Display 2: installing the touch-reload helper"
   install -m 644 "$SRC/systemd/sdr-touch-reload.service" /etc/systemd/system/sdr-touch-reload.service
-  install -m 644 "$SRC/systemd/sdr-panel-off.service" /etc/systemd/system/sdr-panel-off.service
   install -d -m 755 /etc/modules-load.d
-  printf '# Stillwave Trace 1.2.2: sdr-panel-off / sdr-panel-diag talk to the Touch Display 2 over I2C\ni2c-dev\n' >/etc/modules-load.d/sdr-i2c-dev.conf
+  printf '# Stillwave Trace: sdr-panel-diag talks to the Touch Display 2 over I2C (read-only)\ni2c-dev\n' >/etc/modules-load.d/sdr-i2c-dev.conf
   chmod 644 /etc/modules-load.d/sdr-i2c-dev.conf
   # a hand-made reload unit (from the 1.2.1 Pi 5 test) would reload the driver a second time: set it aside
   if [[ -f /etc/systemd/system/goodix-reload.service ]] && grep -q 'goodix_ts' /etc/systemd/system/goodix-reload.service; then
@@ -229,8 +250,7 @@ install_pi5_helpers() {
     echo "Moved your goodix-reload.service to /var/lib/sdr-station/ (sdr-touch-reload.service does the same, with checks)"
   fi
   systemctl daemon-reload || true
-  systemctl enable sdr-touch-reload.service sdr-panel-off.service >/dev/null 2>&1 || echo "WARNING: could not enable the Pi 5 helper units"
-  systemctl start sdr-panel-off.service >/dev/null 2>&1 || true            # no-op start: so its ExecStop runs at this boot's reboot too
+  systemctl enable sdr-touch-reload.service >/dev/null 2>&1 || echo "WARNING: could not enable the Pi 5 helper unit"
   systemctl start --no-block sdr-touch-reload.service >/dev/null 2>&1 || true   # does nothing when touch already works
   return 0
 }
@@ -394,6 +414,11 @@ touch /var/log/sdr-power.log && chmod 644 /var/log/sdr-power.log
 # ---- kiosk screen: off button, timeout, wake on touch, brightness, dark screen at power-off (sdr-screen) ----
 install -m 755 "$SRC/bin/sdr-screen" /usr/local/sbin/sdr-screen
 install -m 644 "$SRC/systemd/sdr-screen.service" /etc/systemd/system/sdr-screen.service
+# 1.2.3: a unit that was switched off by hand (the warm-reboot test on a Pi 5) is simply enabled again below: the new
+# "sdr-screen final" never touches the backlight on a reboot, so there is nothing left to keep it disabled for.
+if [[ -f /etc/systemd/system/sdr-screen-final.service ]] && ! systemctl is-enabled --quiet sdr-screen-final.service 2>/dev/null; then
+  echo "sdr-screen-final.service was disabled; enabling it again (1.2.3: it does nothing on a reboot; backlight off only at power-off)"
+fi
 install -m 644 "$SRC/systemd/sdr-screen-final.service" /etc/systemd/system/sdr-screen-final.service
 install -d -m 755 /var/lib/sdr-screen
 if [[ ! -f /etc/sdr/screen.env ]]; then

@@ -1,7 +1,11 @@
 [Unit]
-Description=Stillwave Trace: kiosk backlight off as the last step of a power-off (left on for a reboot)
+Description=Stillwave Trace: kiosk backlight off as the last step of a POWER-OFF (does nothing on a reboot)
 DefaultDependencies=no
 # Started before (so stopped AFTER) the kiosk, the web app and sdr-screen; stopped before shutdown.target.
+# 1.2.3: "sdr-screen final" writes the backlight ONLY when the job is poweroff/halt. On a reboot it touches nothing:
+# on a Raspberry Pi Touch Display 2 a backlight write is an I2C write to the display's microcontroller (0x45), and a
+# write just before the warm reset hung that chip (blank panel until the power is cut).
+# Switch the power-off backlight step off with: sudo systemctl disable --now sdr-screen-final   (a reboot is safe either way)
 After=local-fs.target
 Before=sdr-screen.service sdr-web.service nginx.service fieldnote-kiosk.service shutdown.target
 Conflicts=shutdown.target

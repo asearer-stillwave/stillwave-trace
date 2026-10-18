@@ -112,7 +112,13 @@ echo "sdr-screen=$(systemctl is-active sdr-screen 2>/dev/null)  sdr-screen-final
 /usr/local/sbin/sdr-screen status 2>/dev/null || echo "sdr-screen missing"
 if grep -q 'Raspberry Pi 5\|Compute Module 5' /proc/device-tree/model 2>/dev/null; then
   echo "==== Pi 5 touch display helpers (1.2.2) ===="
-  echo "sdr-touch-reload=$(systemctl is-active sdr-touch-reload 2>/dev/null)  sdr-panel-off=$(systemctl is-active sdr-panel-off 2>/dev/null)"
+  echo "sdr-touch-reload=$(systemctl is-active sdr-touch-reload 2>/dev/null)"
+  # 1.2.3: nothing may write to the display chip (I2C 0x45) while the box reboots: no sdr-panel-off, and "sdr-screen final" only at power-off
+  if [[ -e /usr/local/sbin/sdr-panel-off || -e /etc/systemd/system/sdr-panel-off.service ]]; then
+    echo "WARNING: the 1.2.2 sdr-panel-off hook is still installed (it can leave the panel blank after a warm reboot); run: sudo bash install.sh --upgrade"
+  else
+    echo "shutdown hooks: no sdr-panel-off (ok); sdr-screen-final=$(systemctl is-enabled sdr-screen-final 2>/dev/null) (it writes the backlight at power-off only)"
+  fi
   /usr/local/sbin/sdr-touch-reload --check 2>/dev/null || true
   echo "full report: sudo sdr-panel-diag   (save: sudo sdr-panel-diag --save NAME)"
 fi

@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.2.3] and [1.2.3-desktop] - 2026-10-17 (PT) - Raspberry Pi 5 warm-reboot blank panel fixed; both editions
+Found and confirmed on a real Raspberry Pi 5 (Ubuntu 24.04, linux-raspi 6.8, 5-inch Touch Display 2 in DISP0): the panel stayed blank after a warm reboot (backlight on, no picture, no touch) and only unplugging the power brought it back.
+### Fixed
+- **Blank panel after a warm reboot (Pi 5, Touch Display 2).** Root cause, found by switching units off one at a time (A/B tested twice on the hardware): `sdr-screen-final.service` wrote the backlight on the display's microcontroller (I2C address 0x45) about a second before the reboot (log line `final: reboot, backlight 10-0045 left on`). The warm reset then left that chip hung: the I2C controller timed out, 0x45 and the touch chip 0x5d vanished from the bus, the DSI panel never bound, and only a power cut recovered it. With that unit disabled, two warm reboots in a row came back normally. Not the cause (tested): the 1.2.2 `sdr-panel-off` hook (it was disabled during failing runs) and the bootloader EEPROM version (updating to 2025-12-08 changed nothing).
+- **No shutdown-time I2C access to the display on a reboot.** `sdr-screen final` now acts only when the systemd job is poweroff/halt; on a reboot (or when it cannot tell) it does nothing and logs `final: reboot; backlight not touched`. Before, it wrote the backlight "on" on every reboot. The other two places that wrote the backlight while the box shuts down are closed too: `sdr-screen.service`'s `ExecStopPost` (`sdr-screen on --direct`) and the daemon's own exit step skip the write when the box is shutting down, and a reboot no longer wakes a sleeping screen through the backlight (a screen that was asleep stays dark during the reboot and `sdr-screen` turns it on at boot). Screens driven by `wlopm` / the black overlay (HDMI, desktop edition) are not I2C devices and behave as before.
+- **A real power-off still turns the backlight off** as the last act (so "Safe to unplug when this screen goes dark" stays true). That one write happens only for poweroff/halt, never for a reboot. Risk to know about: a Pi that is powered off and then started again with its power button (not unplugged) keeps its display chip powered; if that ever shows a blank panel, run `sudo systemctl disable --now sdr-screen-final` (the backlight then stays lit after a shutdown, a reboot is unaffected).
+### Removed (handheld)
+- **`sdr-panel-off.service` and `/usr/local/sbin/sdr-panel-off`** (the 1.2.2 shutdown hook): it also wrote to the display chip right before a reboot, which is the very thing that must not happen. The installer deletes both on every install and upgrade, including when the unit had been disabled or masked by hand. The old script is removed first, so stopping a still-active unit cannot run the display-off write one more time. `fieldnote-display-setup --undo` still cleans up a leftover copy.
+### Changed
+- Upgrade from a Pi where `sdr-screen-final` was switched off by hand: the installer enables it again (the fixed version is safe on a reboot) and says so in its output.
+- `sdr-panel-diag` (handheld): new "shutdown safety" section (is a `sdr-panel-off` hook still installed, is `sdr-screen-final` enabled). `verify.sh` shows the same on a Pi 5.
+- Kept as is: `sdr-touch-reload.service`, the DSI port option, everything else.
+- **Desktop edition**: the same `sdr-screen` fix and unit comments (identical code), version `1.2.3-desktop`. The desktop edition has no Pi 5 panel helpers and never had `sdr-panel-off`.
+
 ## [1.2.2] and [1.2.2-desktop] - 2026-10-16 (PT) - handheld gets the Raspberry Pi 5 work, desktop is version-aligned only
 Found on a real Raspberry Pi 5 (Ubuntu 24.04, linux-raspi 6.8, 5-inch Touch Display 2 in the DISP0 connector, cage + Chromium snap).
 ### Added (handheld)

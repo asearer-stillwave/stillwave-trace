@@ -161,7 +161,7 @@ journalctl -u sdr-screen -b     # what it did
 
 To force a method, set `SCREEN_METHOD=backlight|wlopm|wlr-randr|overlay` (and `SCREEN_BACKLIGHT=` / `SCREEN_TOUCH=` to pick devices) in `/etc/sdr/screen.env`, then `sudo systemctl restart sdr-screen`.
 
-**Shutdown screen:** when the box shuts down (Power menu or `sudo systemctl poweroff`), the kiosk wakes the screen and shows **Shutting down… Safe to unplug when this screen goes dark.** for about 4 s (`sdr-screen notice`, run as `sdr-screen.service` stops). Late in the shutdown, `sdr-screen-final.service` turns the backlight off as its last act. On a **reboot** it leaves the backlight on (and `sdr-screen` restores the saved brightness at every boot), so a reboot never leaves a dark screen. Only the backlight method can truly go dark at the end; with the overlay method the message simply stays until the display loses power.
+**Shutdown screen:** when the box shuts down (Power menu or `sudo systemctl poweroff`), the kiosk wakes the screen and shows **Shutting down… Safe to unplug when this screen goes dark.** for about 4 s (`sdr-screen notice`, run as `sdr-screen.service` stops). Late in the shutdown, `sdr-screen-final.service` turns the backlight off as its last act, **on a power-off only**. On a **reboot** it (and every other part of `sdr-screen`) leaves the backlight alone (1.2.3: no write at all; on a Touch Display 2 a backlight write is an I2C write to the display's microcontroller, and one just before the warm reset left the panel blank). A screen that was asleep stays dark through a reboot and comes back when the new boot starts (`sdr-screen` turns the backlight on at every boot, at the saved brightness). Only the backlight method can truly go dark at the end; with the overlay method the message simply stays until the display loses power.
 
 ## Boot and shutdown screen (1.0.5)
 
@@ -597,7 +597,7 @@ curl -sN --max-time 4 http://127.0.0.1/api/scope/stream | cut -c1-120
 - `/var/log/sdr-net.log` — every network switch step, one `RESULT` line per switch
 - `/tmp/sdr-web-net.log` — web-side network calls
 
-Services: `sdr-fm` (stream), `sdr-spectrum` / `sdr-detect` (scope on 127.0.0.1:8081, proxied at `/api/scope/`), `sdr-adsb` (aircraft decoder), `sdr-mode` (boot restore of the dongle mode), `sdr-web` (Flask on 8080), `nginx` (port 80 proxy), `icecast2` (8000), `sdr-net` (Wi-Fi boot restore), `sdr-bt-reconnect` (reconnects the saved speaker at boot), `fieldnote-kiosk` (cage kiosk, Lite/Ubuntu), `sdr-screen` (kiosk screen off / timeout / wake), `sdr-screen-final` (backlight off as the last step of a power-off). Only one of `sdr-fm`, `sdr-spectrum`, `sdr-detect`, `sdr-adsb` runs at a time.
+Services: `sdr-fm` (stream), `sdr-spectrum` / `sdr-detect` (scope on 127.0.0.1:8081, proxied at `/api/scope/`), `sdr-adsb` (aircraft decoder), `sdr-mode` (boot restore of the dongle mode), `sdr-web` (Flask on 8080), `nginx` (port 80 proxy), `icecast2` (8000), `sdr-net` (Wi-Fi boot restore), `sdr-bt-reconnect` (reconnects the saved speaker at boot), `fieldnote-kiosk` (cage kiosk, Lite/Ubuntu), `sdr-screen` (kiosk screen off / timeout / wake), `sdr-screen-final` (backlight off as the last step of a power-off only; nothing on a reboot). Only one of `sdr-fm`, `sdr-spectrum`, `sdr-detect`, `sdr-adsb` runs at a time.
 
 ## If AP mode does not start
 

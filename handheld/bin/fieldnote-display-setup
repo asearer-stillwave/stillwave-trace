@@ -33,8 +33,8 @@
 #
 #  * Pi 5 (1.2.2): two DSI ports (DISP0 / DISP1), see --dsi-port. The panel's touch chip is reset by the display's own
 #    microcontroller and can miss the touch driver's first look at boot; install.sh therefore also installs
-#    sdr-touch-reload.service (reloads goodix_ts when no touch device exists) and sdr-panel-off.service (puts the display
-#    in its power-off state before a reboot, like Raspberry Pi's own kernel driver does). --undo removes both.
+#    sdr-touch-reload.service (reloads goodix_ts when no touch device exists). --undo removes it. (1.2.3: the 1.2.2
+#    sdr-panel-off.service is gone: install.sh removes it on upgrade, and --undo still cleans up a leftover one.)
 #
 # Every line this script disables is prefixed "#fieldnote# " and every line it adds sits in one
 # marked block at the end of config.txt, so --undo restores the file byte for byte.
@@ -53,7 +53,7 @@ CURSOR_THEME_DIR="$R/usr/share/icons/fieldnote-blank"     # fully transparent Xc
 CURSOR_PATH_DIR="$R/usr/local/share/fieldnote-cursor"     # XCURSOR_PATH for the kiosk only
 CURSOR_DROPIN="$R/etc/systemd/system/fieldnote-kiosk.service.d/fieldnote-cursor.conf"
 UNIT_TOUCH="$R/etc/systemd/system/sdr-touch-reload.service"     # 1.2.2, Pi 5 only (installed by install.sh)
-UNIT_POFF="$R/etc/systemd/system/sdr-panel-off.service"         # 1.2.2, Pi 5 only (installed by install.sh)
+UNIT_POFF="$R/etc/systemd/system/sdr-panel-off.service"         # 1.2.2 leftover only (1.2.3 removes it; --undo cleans it up too)
 MODLOAD_I2C="$R/etc/modules-load.d/sdr-i2c-dev.conf"
 TS="$(date +%Y%m%d-%H%M%S)"
 
@@ -828,8 +828,8 @@ undo() {
     run systemctl daemon-reload || true
   fi
   rm -rf "$CURSOR_THEME_DIR" "$CURSOR_PATH_DIR"
-  # 1.2.2: the Pi 5 helper units (touch reload, panel power-off) belong to the display setup too. No --now: stopping
-  # sdr-panel-off would run its ExecStop (display off) right now.
+  # 1.2.2: the Pi 5 helper units (touch reload; a leftover panel power-off unit) belong to the display setup too. No --now:
+  # stopping a leftover sdr-panel-off would run its ExecStop (display off) right now.
   if [[ -f "$UNIT_TOUCH" || -f "$UNIT_POFF" || -f "$MODLOAD_I2C" ]]; then
     run systemctl disable sdr-touch-reload.service sdr-panel-off.service >/dev/null 2>&1 || true
     rm -f "$UNIT_TOUCH" "$UNIT_POFF" "$MODLOAD_I2C"

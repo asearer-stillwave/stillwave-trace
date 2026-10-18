@@ -11,13 +11,17 @@ brightness, and the dark screen at power-off. Works with no network at all.
   sdr-screen daemon                            sdr-screen.service
   sdr-screen notice                            ExecStop of sdr-screen.service: "Shutting down…" on the kiosk
   sdr-screen final                             ExecStop of sdr-screen-final.service: backlight off as the last
-                                               step of a power-off; makes sure it is ON for a reboot
+                                               step of a POWER-OFF only; does nothing at all on a reboot
 
 Settings: /etc/sdr/screen.env (kept by updates). Live state: /run/sdr-screen/state.json.
 How the screen is turned off, best first: the panel backlight (/sys/class/backlight/*: bl_power, else
 brightness 0), display power through wlopm or wlr-randr in the kiosk session, else a black overlay
 that the kiosk page draws. While the screen is off the touch device is grabbed (EVIOCGRAB), so the
 touch that wakes it never reaches the browser; it is let go only after the finger lifts.
+
+1.2.3: while the box is REBOOTING nothing here touches the backlight (on a Raspberry Pi Touch Display 2 every backlight
+write is an I2C write to the display's microcontroller at 0x45, and a write just before the warm reset can hang that
+chip until the power is cut). Only a real power-off (poweroff.target / halt.target) turns the backlight off, once, at the end.
 """
 import errno
 import fcntl
@@ -428,6 +432,7 @@ class Output:
     def __init__(self, conf):
         self.conf = conf
         self.failed = set()
+        self.frozen = False      # 1.2.3: a reboot is under way: no backlight (I2C) writes at all
         self.bl = None
         self.level = 0
         self.method = "overlay"
@@ -474,6 +479,8 @@ class Output:
     def off(self):
         try:
             if self.method == "backlight":
+                if self.frozen:
+                    return
                 cur = self.bl.level()
                 if cur > 0:
                     self.level = cur
@@ -491,6 +498,8 @@ class Output:
     def on(self):
         try:
             if self.method == "backlight":
+                if self.frozen:
+                    return
                 self.bl.on(self.level)
             elif self.method in ("wlopm", "wlr-randr"):
                 self._wl(True)
@@ -503,7 +512,7 @@ class Output:
         n = max(self.bl.min_level(), min(self.bl.max, int(n)))
         self.level = n
         save_level(n)
-        if lit and self.method == "backlight":
+        if lit and self.method == "backlight" and not self.frozen:
             self.bl.on(n)
         return n
 
@@ -681,7 +690,10 @@ class Daemon:
         if cmd == "shutdown":
             kind = req.get("kind") or "poweroff"
             self.off_at = None
-            if self.state == "off":
+            # 1.2.3: never write the backlight (an I2C write on the Touch Display 2) in the seconds before a warm reset.
+            # A screen that is asleep stays dark until the new boot; the daemon turns it on at start.
+            self.out.frozen = kind == "reboot" and self.out.method == "backlight"
+            if self.state == "off" and not self.out.frozen:
                 self.wake("shutdown")
             self.grab_all(False)
             self.hold = False
@@ -834,7 +846,7 @@ class Daemon:
         log("stopping")
         for p in list(self.inputs):
             self.drop(p, "service stopping")
-        if not self.shutdown:
+        if not self.shutdown and not shutdown_kind():      # 1.2.3: never write the backlight while the box shuts down
             self.out.on()
         try:
             os.unlink(SOCK)
@@ -965,27 +977,25 @@ def probe(as_json, test):
 
 
 def final():
+    """ExecStop of sdr-screen-final.service. 1.2.3: acts ONLY on a real power-off. A reboot (and anything else) is left
+    completely alone: no backlight write, so nothing talks to the display's I2C microcontroller before the warm reset."""
     kind = shutdown_kind()
+    if kind != "poweroff":
+        log("final: %s; backlight not touched" % (kind or "not shutting down"))
+        return 0
     conf = read_conf()
     bl = find_backlight(conf.get("SCREEN_BACKLIGHT", ""))
     if not bl:
-        log("final: no backlight device; nothing to do (%s)" % (kind or "not shutting down"))
+        log("final: no backlight device; nothing to do (power-off)")
         return 0
-    if kind == "poweroff":
-        cur = bl.level()
-        if cur > 0:
-            save_level(cur)
-        try:
-            bl.off()
-            log("final: power-off, backlight %s off" % bl.name)
-        except OSError as e:
-            log("final: could not turn the backlight off (%s)" % e)
-    else:
-        try:
-            bl.on(start_level(bl, conf))
-            log("final: %s, backlight %s left on" % (kind or "not shutting down", bl.name))
-        except OSError as e:
-            log("final: could not turn the backlight on (%s)" % e)
+    cur = bl.level()
+    if cur > 0:
+        save_level(cur)
+    try:
+        bl.off()
+        log("final: power-off, backlight %s off" % bl.name)
+    except OSError as e:
+        log("final: could not turn the backlight off (%s)" % e)
     return 0
 
 
@@ -1030,7 +1040,11 @@ def main(argv):
     if cmd in ("off", "on", "toggle"):
         if cmd == "on" and "--direct" in args:
             try:
-                Output(read_conf()).on()
+                out = Output(read_conf())
+                if out.method == "backlight" and shutdown_kind():
+                    log("on --direct: the box is shutting down; backlight not touched")      # 1.2.3
+                    return 0
+                out.on()
             except Exception as e:
                 log("on --direct: %s" % e)
             return 0

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Stillwave Trace (1.2.2) DIAGNOSTIC HELPER: prints the state of the Touch Display 2 chain (display, backlight, touch, I2C,
+# Stillwave Trace (1.2.3) DIAGNOSTIC HELPER: prints the state of the Touch Display 2 chain (display, backlight, touch, I2C,
 # kiosk) in one report. READ-ONLY: it changes nothing (it only reads three registers of the display microcontroller).
-# Made for the Pi 5 "panel stays blank after a warm reboot" problem: run it
+# Made for the Pi 5 "panel stays blank after a warm reboot" problem (fixed in 1.2.3: nothing writes to the display chip any
+# more while the box reboots; if it still happens, this report shows whether the 0x45 chip answers on I2C). Run it
 #   1. after a cold power-up with a working picture            (sudo sdr-panel-diag --save good)
 #   2. after a warm reboot that left the panel blank (SSH in)   (sudo sdr-panel-diag --save bad)
 # then compare the two files in /var/log/sdr-panel-diag/ (diff good bad) or send both.
@@ -98,7 +99,14 @@ PY
   T=12 t systemd-analyze blame 2>/dev/null | head -n 8
   sec "kiosk journal (this boot, last 25 lines)"
   journalctl -b -u fieldnote-kiosk --no-pager -n 25 2>/dev/null | cut -c1-200
-  sec "end of the previous boot (panel-off / screen-final / shutdown lines)"
+  sec "shutdown safety (1.2.3): nothing may write to the display chip (0x45) while the box reboots"
+  if [[ -e "$R/usr/local/sbin/sdr-panel-off" || -e "$R/etc/systemd/system/sdr-panel-off.service" ]]; then
+    echo "  PROBLEM: the 1.2.2 sdr-panel-off hook is still installed (sudo bash install.sh --upgrade removes it)"
+  else
+    echo "  ok: no sdr-panel-off hook"
+  fi
+  fin="$(systemctl is-enabled sdr-screen-final 2>/dev/null)"; echo "  sdr-screen-final: ${fin:-not installed} (writes the backlight at power-off only; log line 'final: reboot; backlight not touched' on a reboot)"
+  sec "end of the previous boot (screen-final / shutdown lines)"
   journalctl -b -1 --no-pager -o short-monotonic 2>/dev/null | grep -iE 'sdr-panel-off|sdr-screen|plymouth|Reached target (Reboot|Power-Off)|systemd-shutdown|Rebooting|Powering off' | tail -n 14 | cut -c1-200
   echo "-- /var/log/sdr-power.log:"; tail -n 4 "$R/var/log/sdr-power.log" 2>/dev/null
   if [[ -x "$R/usr/local/sbin/sdr-screen" && -z "$R" ]]; then
