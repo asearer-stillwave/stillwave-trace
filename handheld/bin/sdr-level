@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Trace 1.2.5: pass-through audio level meter for the airband / NOAA stream (map listen strip QUIET / TALKING).
+  rtl_fm ... | sdr-level RATE | ffmpeg ...
+Copies s16le mono from stdin to stdout unchanged and writes the level 4x a second to $SDR_LEVEL_FILE
+(default /run/sdr-listen/level.json): {"t", "db", "talking", "rx_age"}. rtl_fm sends silence or nothing while its squelch is
+closed, so "talking" = real audio in the last 0.6 s. Never stops the audio: any meter error only stops the meter."""
+import json, math, os, sys, threading, time
+RATE = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 24000
+OUT = os.environ.get("SDR_LEVEL_FILE", "/run/sdr-listen/level.json")
+THR = float(os.environ.get("SDR_LEVEL_TALK_DB", "-45"))
+st = {"db": -120.0, "last_loud": 0.0, "ok": True}
+def rms_db(b):
+    n = len(b) // 2
+    if not n: return -120.0
+    s = 0
+    mv = memoryview(b)[:n * 2].cast("h")
+    step = 4 if n > 400 else 1               # every 4th sample is plenty for a meter (keeps the Pi 4 CPU low)
+    cnt = 0
+    for i in range(0, n, step):
+        v = mv[i]; s += v * v; cnt += 1
+    r = math.sqrt(s / max(cnt, 1)) / 32768.0
+    return 20 * math.log10(r) if r > 1e-6 else -120.0
+def writer():
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    while st["ok"]:
+        now = time.time(); age = now - st["last_loud"]
+        d = {"t": round(now, 2), "db": round(st["db"], 1), "talking": age < 0.6, "rx_age": round(min(age, 9999), 1)}
+        try:
+            tmp = OUT + ".tmp"
+            with open(tmp, "w") as f: json.dump(d, f)
+            os.replace(tmp, OUT)
+        except OSError: pass
+        st["db"] = max(-120.0, st["db"] - 6)   # decays when rtl_fm sends nothing (squelch closed)
+        time.sleep(0.25)
+def main():
+    try: threading.Thread(target=writer, daemon=True).start()
+    except Exception: pass
+    fi, fo = sys.stdin.buffer.raw, sys.stdout.buffer.raw
+    chunk = max(2, (RATE // 10) * 2)
+    while True:
+        b = fi.read(chunk)
+        if not b: break
+        mv = memoryview(b)
+        while mv:
+            n = fo.write(mv); mv = mv[n:]
+        try:
+            db = rms_db(b); st["db"] = db
+            if db > THR: st["last_loud"] = time.time()
+        except Exception: pass
+    st["ok"] = False
+if __name__ == "__main__":
+    try: main()
+    except (BrokenPipeError, KeyboardInterrupt): pass

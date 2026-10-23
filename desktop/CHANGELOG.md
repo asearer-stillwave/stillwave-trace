@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.2.5] and [1.2.5-desktop] - 2026-10-23 (PT) - FM page fixes, two radios at once, aircraft models; both editions
+### Added
+- **Listen › FM: EDIT PRESETS ›** pill on the FM stations card opens Preset settings; **‹ FM RADIO** at the top of Preset settings goes back to Listen › FM.
+- **Radio roles** (More › Radio roles, was "SDR dongles"): pick a job for each dongle by serial number: Map · 1090 (SDR 1), Airband (SDR 2) or Spare. Identify (unplug test), Save roles, Swap. Saved in `/etc/sdr/sdr-roles.json`; the 1.0.9 STILLWAVE-ADSB / STILLWAVE-RADIO labels still work. Numeric serials (e.g. 00000001) are looked up to the right device number. Duplicate serials are detected and the box stays on one dongle.
+- **Two radios at once:** with roles saved and both dongles plugged in, the ADS-B map runs on SDR 1 while SDR 2 plays airband (or Scan / Spectrum), using the 1.0.9 dual-dongle services.
+- **Map listen strip** (two radios only): bottom bar on the map with what SDR 2 plays, a signal meter and QUIET / TALKING from the squelch (new `sdr-level` pass-through meter on AM / narrow FM; broadcast FM unchanged). ▴ opens a quick-tune sheet (Tower / Ground / Approach / ATIS + squelch) without leaving the map.
+- **Airport focus (KLAX):** tap the LAX label or the KLAX pill: the map zooms in, a chooser tunes Tower / Ground / Approach / ATIS, and planes on approach are ringed. Frequencies in `config/airports.json` from FAA Chart Supplement data (AOPA / airnav, checked 2026-10-23); SoCal Approach 124.5 / 124.9 / 128.5 by sector.
+- **Header chip** with two radios: "ADS-B ✓ / Airband ✓"; amber with ✕ when a saved radio is missing, plus a map notice ("Airband radio missing · map still live"). With one dongle and no roles saved, nothing changes.
+- **Aircraft models:** offline lookup (Mictronics aircraft database, ODC-By 1.0, via tar1090-db; bundled `vendor/aircraft-db/aircraft.csv.gz`, built into `/var/lib/sdr/aircraft/aircraft.sqlite` by `sdr-aircraft-db`). `/api/adsb` adds `reg`, `type`, `model`; the map card shows "N12345 · Boeing 737-800 · B738" and the List view shows the model under the flight; "Unknown type" when not listed.
+- **More › About & licenses:** map, aircraft data (ODC-By credit) and frequency sources, plus **Update aircraft database** (needs internet, ~8 MB).
+### Fixed
+- Preset settings form no longer runs off the screen at Large / Extra large text on the handheld (one column on narrow screens, inputs shrink to fit).
+- Listen: the AIRBAND tab no longer breaks mid-word at Extra large.
+
 ## [1.2.4] and [1.2.4-desktop] - 2026-10-22 (PT) - weak power supply warning; both editions
 ### Added
 - **Weak power supply warning.** The web service checks the Pi's under-voltage flags every 5 s (`vcgencmd get_throttled` bits 0 and 16, and/or the `rpi_volt` hwmon `in0_lcrit_alarm`; Pi 4 and Pi 5; a missing tool is skipped). Each new event is logged (`[power] under-voltage … at HH:MM`) and kept for this boot in `/run/sdr-power/psu.json`. No I2C access at all.

@@ -1242,3 +1242,39 @@ html.shell.mapfs #qframes { top: 0; }
 .mrow .ms.pv-ok { color: var(--green, var(--ok)); }
 .mrow .ms.pv-warn { color: var(--orange); }
 .pv-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: currentColor; margin-right: .45em; vertical-align: .05em; }
+
+/* ======================= Stillwave Trace 1.2.5: FM presets shortcut + Large/XL form reflow ======================= */
+.fm-presets-h { display:flex; align-items:center; justify-content:space-between; gap:.6rem; flex-wrap:wrap; margin-bottom:.5rem; }
+.fm-presets-h h2 { margin:0; }
+a.fm-edit { display:inline-flex; align-items:center; gap:.35rem; min-height:44px; padding:0 1rem; border-radius:999px; border:1px solid var(--line);
+  background:var(--panel); color:var(--signal); font-family:var(--mono); font-weight:700; text-transform:uppercase; letter-spacing:.08em; font-size:.8rem; text-decoration:none; white-space:nowrap; }
+/* grid tracks may shrink below the inputs' intrinsic width; inputs fill their cell */
+form.grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+form.grid2 label { min-width:0; }
+form.grid2 label > input, form.grid2 label > select { width:100%; min-width:0; box-sizing:border-box; }
+form.grid2 .row button { flex:1 1 auto; white-space:nowrap; }
+/* Large / XL on the portrait handheld (720 px / zoom = 626 / 554 css px): one column */
+@media (max-width: 800px) { html[data-ts="large"] form.grid2, html[data-ts="xl"] form.grid2 { grid-template-columns: minmax(0,1fr); } }
+/* XL: band tabs no longer break "AIRBAND" mid-word */
+html[data-ts="xl"] .v-sub button { letter-spacing:.02em; white-space:nowrap; }
+
+.pre-back-h { display:flex; justify-content:flex-start; margin:.2rem 0 .6rem; }
+
+/* ======================= Stillwave Trace 1.2.5: radio roles, header chip, aircraft model in the list ======================= */
+.qs-chip.dual-chip .qs-k.ok, .qs-chip.dual-chip .qs-v.ok { color: var(--signal); }
+.qs-chip.dual-chip .qs-v.no { color: #f5a524; }
+.qs-chip.dual-chip.warn { border-color: #f5a524; }
+.amodel.hide { display: none; }
+#planes .mrow2 { display: block; font-family: var(--mono); font-size: .78em; letter-spacing: .03em; color: var(--static); font-weight: 600; white-space: nowrap; }
+#planes .mrow2.hide { display: none; }
+#planes .mrow2 .unk { font-style: italic; opacity: .75; }
+.role-card .rc-h { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.role-card .rc-h h2 { margin: 0; }
+.role-card .rc-sn { font-family: var(--mono); font-size: .85rem; color: var(--static); letter-spacing: .04em; margin: .35rem 0 .8rem; overflow-wrap: anywhere; }
+.role-card .v-seg2 { display: flex; flex-wrap: wrap; }
+.role-card .v-seg2 button { flex: 1 1 7rem; }
+.role-card .rc-live { font-family: var(--mono); font-size: .8rem; color: var(--signal); margin: .7rem 0 0; letter-spacing: .04em; }
+.role-card.ident { border-color: var(--signal); box-shadow: 0 0 0 2px rgba(74, 222, 128, .35), 0 0 24px rgba(74, 222, 128, .35); }
+.role-card.gone { opacity: .5; }
+.role-card.gone .rc-live { color: #f5a524; }
+.about-list p { margin: .35rem 0; }

@@ -1,8 +1,5 @@
 # Stillwave Trace (station package)
 
-> Licensed under the Apache License 2.0 (see `LICENSE` and `NOTICE` at the repository root). 1.2.1 removed the per-unit license system.
-> The offline map file `maps/la.pmtiles` is not stored in this repository (it is a 55 MB build artifact). Create it on the Pi with `sudo sdr-maps fetch` (needs internet once); until then the ADS-B map uses its built-in outline.
-
 Trace is the Stillwave desk / station radio: a Raspberry Pi 4 with an RTL-SDR (Nooelec NESDR v5) that tunes FM to Icecast, shows a live spectrum + waterfall, runs RF detection, or shows ADS-B aircraft on an offline live map. Only one of those owns the dongle at a time (see **Dongle modes**).
 
 > **Names.** Stillwave Trace was called Quietline Fieldnote. Only the user-facing name changed. Commands, services and files keep their `sdr-*` and `fieldnote-*` names so an installed Pi upgrades in place: `fieldnote-display-setup` (now also `trace-display-setup`), `fieldnote-kiosk.service`, the Chromium profile `~/snap/chromium/common/fieldnote-kiosk`, `fieldnote.css`, `80-fieldnote-headless.*`.
@@ -103,6 +100,14 @@ From SSH:
 sudo sdr-power reboot       # or: sudo sdr-power poweroff
 tail /var/log/sdr-power.log # who asked, when, from where
 ```
+
+`/usr/local/sbin/sdr-power` accepts exactly `reboot` or `poweroff`. The web user may run only those two commands through sudo, the same way it runs `sdr-net-mode`.
+
+## Two radios, map listen strip, aircraft models (1.2.5)
+- **Radio roles** (More › Radio roles): with two RTL-SDR dongles, pick Map · 1090 (SDR 1), Airband (SDR 2) or Spare for each serial, then Save. The map then runs full time on SDR 1 while SDR 2 plays airband. SSH: `sudo sdr-dongles list`, `sudo sdr-dongles assign SERIAL=adsb SERIAL=radio`, `sudo sdr-dongles swap`. Each dongle needs its own serial (`rtl_eeprom -d 0 -s TRACE001`, one dongle plugged in at a time). One dongle: everything works as before.
+- **Map listen strip / airport focus:** only with two radios. Squelch Low or High gives QUIET / TALKING. Tap LAX (or the KLAX pill) for Tower / Ground / Approach / ATIS. Frequencies: `config/airports.json`.
+- **Aircraft models:** `sudo sdr-aircraft-db status|fetch`. Data: Mictronics aircraft database (ODC-By 1.0) via tar1090-db; credit on More › About & licenses.
+
 ## Power supply warning (1.2.4)
 A Pi on a weak battery or cable browns out (the SDR drops, the panel flickers, the box can reset). Trace now watches the Pi's own power flags and tells you.
 - **What it reads** (every 5 s, in the web service; nothing else): `vcgencmd get_throttled` bit 0 (under-voltage now) and bit 16 (under-voltage has happened since boot), and/or the kernel's `rpi_volt` hwmon alarm (`/sys/class/hwmon/*/in0_lcrit_alarm`). Works on a Pi 4 and a Pi 5; when neither tool exists (not a Pi), the row says so and no banner shows. **No I2C access**: the display chip (0x45) is never read or written.
@@ -110,9 +115,6 @@ A Pi on a weak battery or cable browns out (the SDR drops, the panel flickers, t
 - **More › This box › Power supply** (first row): green **Power OK**, or orange **Weak supply seen at HH:MM** (local time of the last event this boot; **Weak supply now** while it is happening).
 - **Log:** `journalctl -u sdr-web | grep '\[power\]'` (one line per event with the local date and time). The last event of this boot is in `/run/sdr-power/psu.json` (survives a web restart, cleared by a reboot). `sdr-psu status` prints the raw flags; `GET /api/power/supply` returns `state` = `ok` / `weak_now` / `weak_seen` / `unknown`, `seen_at` (HH:MM), `event` (count this boot).
 - **Raspberry Pi 5 only:** the installer (fresh install and every over-the-air upgrade) adds `usb_max_current_enable=1` to `config.txt` in Trace's own marked block (`# >>> stillwave-trace-power >>>` … `# <<< stillwave-trace-power <<<`), so the USB ports are not capped at 600 mA in total on a 3 A power bank (a Pi 5 only lifts that cap by itself on a 5 A USB-PD supply). **It takes effect after one reboot.** Idempotent; a `usb_max_current_enable` line you set yourself is respected and left alone. Undo: `sudo sdr-psu config undo` (`sudo fieldnote-display-setup --undo` removes it too). A Pi 4 `config.txt` is never touched.
-
-
-`/usr/local/sbin/sdr-power` accepts exactly `reboot` or `poweroff`. The web user may run only those two commands through sudo, the same way it runs `sdr-net-mode`.
 
 ## Kiosk screen (screen off, timeout, wake on touch)
 

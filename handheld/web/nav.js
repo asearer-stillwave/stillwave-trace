@@ -168,9 +168,30 @@
     }
     return null;
   }
+  // 1.2.5: two radios (roles saved by serial): the job chip shows both, "ADS-B ✓ / Airband ✓"; a missing one turns amber
+  function renderDual() {
+    const rd = S && S.radios, md = S && S.mode;
+    if (!rd || !(rd.dual || rd.degraded) || busyTo || (md && md.off)) return false;
+    const dot = $('qsDot'), job = $('qsJob'), miss = rd.missing || [], mode = md && md.mode;
+    const adsbOk = !miss.includes('adsb'), radioOk = !miss.includes('radio');
+    const live = !!(md && md.adsb_live);
+    const rjob = (mode === 'fm' && S.metric && S.metric.band === 'airband') ? 'Airband' : (mode === 'fm' && S.metric && S.metric.band === 'noaa') ? 'NOAA'
+      : (mode && MODE_NAME[mode] && mode !== 'adsb') ? MODE_NAME[mode] : 'Airband';
+    $('qsJobK').textContent = 'ADS-B ' + (adsbOk ? (live ? '✓' : '–') : '✕');
+    text('qsJobV', rjob + ' ' + (radioOk ? (mode && mode !== 'adsb' && mode !== 'none' ? '✓' : '–') : '✕'), null, radioOk ? '' : 'warn');
+    job.classList.add('dual-chip'); job.classList.toggle('warn', !(adsbOk && radioOk));
+    dot.className = 'qs-dot ' + (adsbOk && radioOk ? 'ok' : 'warn');
+    job.href = '/dongles'; job.title = '';
+    job.setAttribute('aria-label', 'Radios: ADS-B ' + (adsbOk ? (live ? 'running' : 'idle') : 'missing') + ', ' + rjob + ' ' + (radioOk ? 'ready' : 'missing') + '. Open Radio roles.');
+    tabs.querySelectorAll('.qlive').forEach(x => x.remove());
+    ['map', MODE_TAB[mode]].forEach(id => { const t = id && (id !== 'map' || live) && tabs.querySelector('[data-tab="' + id + '"]'); if (t && !t.querySelector('.qlive')) { const i = D.createElement('i'); i.className = 'qlive'; t.appendChild(i); } });
+    return true;
+  }
   function renderJob() {
     const md = S && S.mode, mode = md && md.mode;
     const dot = $('qsDot'), job = $('qsJob');
+    if (renderDual()) return;
+    job.classList.remove('dual-chip', 'warn');
     let k = 'SDR', v = ['—'], cls = 'dash', d = 'unk', label;
     if (busyTo) {
       k = 'SDR'; v = ['Switching…', 'Switching to ' + (MODE_NAME[busyTo] || busyTo) + '…']; cls = 'warn'; d = 'warn';

@@ -6,6 +6,7 @@ import os
 import re
 import socket
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -229,8 +230,21 @@ def more_page():
 
 @app.get("/dongles")
 @app.get("/dongles.html")
+@app.get("/roles")
+@app.get("/roles.html")
 def dongles_page():
     return _html("dongles.html")
+
+
+@app.get("/about")
+@app.get("/about.html")
+def about_page():
+    return _html("about.html")
+
+
+@app.get("/airmap.js")
+def airmap_js():
+    return send_from_directory(WEBDIR, "airmap.js", mimetype="application/javascript", max_age=0)
 
 
 @app.get("/shots")
@@ -673,6 +687,123 @@ def dongles_label():
     if role not in ("adsb", "radio"):
         return jsonify(ok=False, error="role must be adsb or radio"), 400
     return _json_call([DONGLES_BIN, "label", role, "--json"], 120, "label")
+
+
+# ---------- 1.2.5: radio roles (dual SDR by serial), listen level, airports, aircraft models ----------
+@app.get("/api/radios")
+def radios_list():
+    return _json_call([DONGLES_BIN, "list", "--json"], 15, "radio list")
+
+
+@app.post("/api/radios/roles")
+def radios_roles():
+    roles = (request.get_json(silent=True) or {}).get("roles")
+    if not isinstance(roles, dict) or not roles:
+        return jsonify(ok=False, error="roles must be {serial: adsb|radio|spare}"), 400
+    args = []
+    for ser, role in roles.items():
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", str(ser)) or role not in ("adsb", "radio", "spare"):
+            return jsonify(ok=False, error="bad serial or role"), 400
+        args.append("%s=%s" % (ser, role))
+    return _json_call([DONGLES_BIN, "assign", *args, "--json"], 150, "saving roles")
+
+
+@app.post("/api/radios/swap")
+def radios_swap():
+    return _json_call([DONGLES_BIN, "swap", "--json"], 150, "swap")
+
+
+LEVEL_FILE = Path(os.environ.get("SDR_LEVEL_FILE", "/run/sdr-listen/level.json"))
+
+
+@app.get("/api/listen/level")
+def listen_level():
+    """Map listen strip: what SDR 2 is playing + QUIET / TALKING (sdr-level meter, airband / NOAA only)."""
+    e = env()
+    band = e.get("BAND") or ("fm" if (e.get("DEMOD") or "wfm") == "wfm" else "other")
+    sq = e.get({"airband": "AIRBAND_SQUELCH", "noaa": "NOAA_SQUELCH"}.get(band, "SQUELCH")) or e.get("SQUELCH") or "0"
+    try:
+        lv = json.loads(LEVEL_FILE.read_text())
+        fresh = time.time() - float(lv.get("t", 0)) < 3
+    except (OSError, ValueError):
+        lv, fresh = {}, False
+    st = current_station()
+    state = "off"
+    if fresh:
+        state = "squelch_off" if str(sq) in ("", "0") else ("talking" if lv.get("talking") else "quiet")
+    resp = jsonify(ok=True, band=band, name=st.get("name") or "", frequency=st.get("frequency") or e.get("FREQ") or "",
+                   demod=e.get("DEMOD") or "wfm", squelch=int(sq) if str(sq).isdigit() else 0, state=state,
+                   db=lv.get("db") if fresh else None, live=fresh)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+AIRPORTS_FILE = Path(os.environ.get("SDR_AIRPORTS_FILE", str(WEBDIR.parent / "config" / "airports.json")))
+
+
+@app.get("/api/airports")
+def airports():
+    try:
+        return jsonify(json.loads(AIRPORTS_FILE.read_text()))
+    except (OSError, ValueError):
+        return jsonify(ok=False, airports=[])
+
+
+AIRCRAFT_DB = Path(os.environ.get("SDR_AIRCRAFT_DB", "/var/lib/sdr/aircraft/aircraft.sqlite"))
+AIRCRAFT_BIN = os.environ.get("SDR_AIRCRAFT_BIN", "/usr/local/sbin/sdr-aircraft-db")
+_ac = {"conn": None, "mtime": 0, "cache": {}, "lock": threading.Lock()}
+
+
+def _ac_db():
+    """Read-only SQLite handle to the offline aircraft DB (reopened when sdr-aircraft-db replaces the file)."""
+    import sqlite3
+    try:
+        mt = AIRCRAFT_DB.stat().st_mtime
+    except OSError:
+        return None
+    with _ac["lock"]:
+        if _ac["conn"] is None or _ac["mtime"] != mt:
+            try:
+                if _ac["conn"] is not None:
+                    _ac["conn"].close()
+                _ac["conn"] = sqlite3.connect("file:%s?mode=ro" % AIRCRAFT_DB, uri=True, check_same_thread=False)
+                _ac["mtime"] = mt
+                _ac["cache"] = {}
+            except Exception:
+                _ac["conn"] = None
+                return None
+        return _ac["conn"]
+
+
+def _ac_add(row):
+    hx = str(row.get("hex") or "").lower()   # "~xxxxxx" = non-ICAO (TIS-B) address: no lookup
+    c = _ac_db()
+    if c is None or not re.fullmatch(r"[0-9a-f]{6}", hx):
+        return
+    cache = _ac["cache"]
+    if hx not in cache:
+        try:
+            with _ac["lock"]:
+                r = c.execute("select reg, type, model from a where hex=?", (hx,)).fetchone()
+        except Exception:
+            r = None
+        if len(cache) > 5000:
+            cache.clear()
+        cache[hx] = r
+    r = cache[hx]
+    row["reg"], row["type"], row["model"] = (r[0] or None, r[1] or None, r[2] or None) if r else (None, None, None)
+
+
+@app.get("/api/aircraft-db")
+def aircraft_db_status():
+    return _json_call([AIRCRAFT_BIN, "status", "--json"], 15, "aircraft database")
+
+
+@app.post("/api/aircraft-db/update")
+def aircraft_db_update():
+    if _net_offline():
+        return jsonify(ok=False, error=OFFLINE_MSG), 400
+    return _json_call([AIRCRAFT_BIN, "fetch", "--json"], 300, "aircraft database update")
 
 
 @app.get("/api/shots")
@@ -1272,12 +1403,13 @@ def adsb():
             "category": a.get("category", ""),
             "dist_nm": None,
         }
+        _ac_add(row)
         if row["lat"] is not None and row["lon"] is not None:
             row["dist_nm"] = round(_nm(home[0], home[1], row["lat"], row["lon"]), 1)
         out.append(row)
     out.sort(key=lambda r: (r["dist_nm"] is None, r["dist_nm"] or 0, r["seen"]))
     return jsonify(ok=True, running=age < 15, age=round(age, 1), now=raw.get("now"), receiver=rcv,
-                   messages=raw.get("messages"), count=len(out),
+                   messages=raw.get("messages"), count=len(out), model_db=_ac_db() is not None,
                    with_pos=sum(1 for r in out if r["lat"] is not None), aircraft=out)
 
 
@@ -1450,7 +1582,7 @@ def audio_output():
 # bluetoothctl) never holds the request: that part is just null and the strip shows a dash.
 import threading  # noqa: E402
 
-_STRIP_TTL = {"mode": 5.0, "net": 10.0, "audio": 15.0, "scope": 5.0}
+_STRIP_TTL = {"mode": 5.0, "net": 10.0, "audio": 15.0, "scope": 5.0, "radios": 5.0}
 _STRIP_WAIT = 3.0          # first request waits this long at most for a cold source
 _strip_cache = {}          # name -> {"t": time, "data": dict|None, "busy": bool}
 _strip_lock = threading.Lock()
@@ -1502,7 +1634,15 @@ def _strip_scope():
             "center_hz": cfg.get("center_hz"), "start_hz": cfg.get("start_hz"), "stop_hz": cfg.get("stop_hz")}
 
 
-_STRIP_SRC = {"mode": _strip_mode, "net": _strip_net, "audio": _strip_audio, "scope": _strip_scope}
+def _strip_radios():
+    """1.2.5: radio roles summary for the header chips (no root needed: sysfs + /etc/sdr/sdr-roles.json)."""
+    r = subprocess.run([DONGLES_BIN, "list", "--json"], capture_output=True, text=True, timeout=8)
+    d = json.loads(r.stdout.strip().splitlines()[-1])
+    return {"count": d.get("count"), "dual": bool(d.get("dual")), "assigned": bool(d.get("assigned")),
+            "degraded": bool(d.get("degraded")), "missing": d.get("missing") or [], "duplicates": d.get("duplicates") or []}
+
+
+_STRIP_SRC = {"mode": _strip_mode, "net": _strip_net, "audio": _strip_audio, "scope": _strip_scope, "radios": _strip_radios}
 
 
 def _strip_refresh(name):
@@ -1594,6 +1734,8 @@ def _strip_after_post(resp):
             _strip_invalidate("mode")
         elif p.startswith("/api/net"):
             _strip_invalidate("net")
+        elif p.startswith("/api/radios") or p.startswith("/api/dongles"):
+            _strip_invalidate("radios", "mode")
         elif p.startswith("/api/audio"):
             _strip_invalidate("audio")
         elif p.startswith("/api/scope"):
@@ -1603,7 +1745,7 @@ def _strip_after_post(resp):
 
 @app.get("/api/strip")
 def strip_status():
-    parts = _strip_get(["mode", "net", "audio"])
+    parts = _strip_get(["mode", "net", "audio", "radios"])
     mode = (parts["mode"] or {}).get("mode")
     pending = parts["_pending"]
     scope = None
@@ -1620,7 +1762,7 @@ def strip_status():
         metric = None
     psu_start()
     resp = jsonify(ok=True, t=round(time.time(), 1), mode=parts["mode"], net=parts["net"],
-                   audio=parts["audio"], metric=metric, pending=pending, psu=psu_state())
+                   audio=parts["audio"], metric=metric, pending=pending, psu=psu_state(), radios=parts.get("radios"))
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

@@ -115,17 +115,22 @@ DEV=(); [[ -n "${RADIO_DEVICE:-}" ]] && DEV=(-d "$RADIO_DEVICE")
 echo "Demod ${DEMOD}: gain ${EFF_GAIN}, squelch ${EFF_SQ}, ${IN_RATE} Hz${RADIO_DEVICE:+, dongle ${RADIO_DEVICE}}" >&2
 if [[ -n "${FM_STREAM_DRY:-}" ]]; then
   printf '%q ' rtl_fm "${DEV[@]}" -f "$FREQ" "${RTL[@]}" -p "$RTL_PPM" -g "$EFF_GAIN" -; echo
+  [[ "$DEMOD" != wfm ]] && echo "| sdr-level $IN_RATE"
   printf 'ffmpeg -f s16le -ar %s -ac 1 -i pipe:0 ' "$IN_RATE"
   printf '%q ' ffmpeg "${OUT[@]}"; echo; exit 0
 fi
 
+# 1.2.5: AM / narrow FM go through sdr-level (pass-through meter for the map listen strip: QUIET / TALKING). Broadcast FM is unchanged.
+LEVEL="${SDR_LEVEL_BIN:-/usr/local/lib/sdr-station/bin/sdr-level}"
+METER=(cat)
+if [[ "$DEMOD" != wfm && -x "$LEVEL" ]] && command -v python3 >/dev/null 2>&1; then METER=("$LEVEL" "$IN_RATE"); fi
 exec rtl_fm \
   "${DEV[@]}" \
   -f "$FREQ" \
   "${RTL[@]}" \
   -p "$RTL_PPM" \
   -g "$EFF_GAIN" \
-  - | ffmpeg \
+  - | "${METER[@]}" | ffmpeg \
   -hide_banner \
   -loglevel warning \
   -f s16le \

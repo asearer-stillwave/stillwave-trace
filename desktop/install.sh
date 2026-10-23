@@ -276,6 +276,16 @@ install -d -m 755 /var/lib/sdr/screenshots
 install -m 755 "$SRC/bin/sdr-display-res" /usr/local/sbin/sdr-display-res  # desktop: HDMI 720p only
 install -d -m 755 /usr/local/lib/sdr-station/config
 install -m 644 "$SRC/config/listen-presets.json" /usr/local/lib/sdr-station/config/listen-presets.json
+install -m 644 "$SRC/config/airports.json" /usr/local/lib/sdr-station/config/airports.json        # 1.2.5: airport focus frequencies (KLAX)
+install -m 755 "$SRC/bin/sdr-level" /usr/local/lib/sdr-station/bin/sdr-level                   # 1.2.5: airband level meter (map listen strip)
+install -m 755 "$SRC/bin/sdr-aircraft-db" /usr/local/sbin/sdr-aircraft-db                      # 1.2.5: offline aircraft models (ODC-By)
+install -d -m 755 /var/lib/sdr/aircraft
+if [[ -s "$SRC/vendor/aircraft-db/aircraft.csv.gz" ]]; then
+  install -d -m 755 /usr/local/lib/sdr-station/vendor/aircraft-db
+  install -m 644 "$SRC/vendor/aircraft-db/aircraft.csv.gz" "$SRC/vendor/aircraft-db/SOURCE.txt" /usr/local/lib/sdr-station/vendor/aircraft-db/
+  /usr/local/sbin/sdr-aircraft-db install-local /usr/local/lib/sdr-station/vendor/aircraft-db/aircraft.csv.gz \
+    || echo "WARNING: aircraft model database not built; the map shows no aircraft models (try: sudo sdr-aircraft-db fetch)"
+fi
 for u in sdr-net-retry.service sdr-net-retry.timer sdr-firstboot-done.service sdr-firstboot-done.timer; do install -m 644 "$SRC/systemd/$u" /etc/systemd/system/$u; done
 install -m 755 "$SRC/bin/fieldnote-display-setup" /usr/local/sbin/fieldnote-display-setup
 ln -sfn fieldnote-display-setup /usr/local/sbin/trace-display-setup   # alias (same script; internal names stay fieldnote-*)
@@ -476,7 +486,7 @@ sed -e "s/FIELDNOTE_UID/${AUDIO_UID:-0}/g" "$SRC/systemd/sdr-bt-reconnect.servic
 [[ -n "$AUDIO_UID" ]] || sed -i 's/ user@0.service//' /etc/systemd/system/sdr-bt-reconnect.service
 
 cat >/etc/sudoers.d/sdr-station <<EOF
-${RUN_USER} ALL=(root) NOPASSWD: /usr/local/sbin/sdr-select-station, /usr/local/sbin/sdr-scan, /usr/local/sbin/sdr-tune-freq, /usr/local/sbin/sdr-add-station, /usr/local/sbin/sdr-apply-settings, /usr/local/sbin/sdr-save-preset, /usr/local/sbin/sdr-delete-preset, /usr/local/sbin/sdr-net-mode, /usr/local/sbin/sdr-svc, /usr/local/sbin/sdr-mode, /usr/local/sbin/sdr-bt, /usr/local/sbin/sdr-maps, /usr/local/sbin/sdr-update, /usr/local/sbin/sdr-screen, /usr/local/sbin/sdr-listen, /usr/local/sbin/sdr-usb-reset, /usr/local/sbin/sdr-display-res, /usr/local/sbin/sdr-dongles, /usr/local/sbin/sdr-shot, /usr/local/sbin/sdr-power reboot, /usr/local/sbin/sdr-power poweroff
+${RUN_USER} ALL=(root) NOPASSWD: /usr/local/sbin/sdr-select-station, /usr/local/sbin/sdr-scan, /usr/local/sbin/sdr-tune-freq, /usr/local/sbin/sdr-add-station, /usr/local/sbin/sdr-apply-settings, /usr/local/sbin/sdr-save-preset, /usr/local/sbin/sdr-delete-preset, /usr/local/sbin/sdr-net-mode, /usr/local/sbin/sdr-svc, /usr/local/sbin/sdr-mode, /usr/local/sbin/sdr-bt, /usr/local/sbin/sdr-maps, /usr/local/sbin/sdr-update, /usr/local/sbin/sdr-screen, /usr/local/sbin/sdr-listen, /usr/local/sbin/sdr-usb-reset, /usr/local/sbin/sdr-display-res, /usr/local/sbin/sdr-dongles, /usr/local/sbin/sdr-aircraft-db, /usr/local/sbin/sdr-shot, /usr/local/sbin/sdr-power reboot, /usr/local/sbin/sdr-power poweroff
 EOF
 chmod 440 /etc/sudoers.d/sdr-station
 

@@ -99,6 +99,7 @@ html.kiosk .rseg button, html.kiosk .rshead button { min-height:var(--tap-touch)
           <button id="aFollow" aria-pressed="false">Follow</button>
           <button id="aClose" aria-label="Close details">✕</button>
         </div>
+        <div class="amodel hide" id="aModel"></div>
         <dl class="agrid">
           <div><dt>Altitude</dt><dd id="aAlt">—</dd></div>
           <div><dt>Speed</dt><dd id="aSpd">—</dd></div>
@@ -198,6 +199,19 @@ function showReceiver(r){
   if (map) map.setReceiver(r);
 }
 
+// 1.2.5: aircraft model from the offline DB (Mictronics via tar1090-db): "N12345 · Boeing 737-800 · B738", "Unknown type" when not listed
+function modelText(a){
+  if (!a.model && !a.type) return '';
+  return a.model ? a.model + (a.type ? ' · ' + a.type : '') : a.type;
+}
+function modelLine(el, a, withReg){
+  const db = !!(last && last.model_db), t = modelText(a);
+  if (!db && !t) { el.classList.add('hide'); el.textContent = ''; return; }
+  el.classList.remove('hide');
+  el.innerHTML = '';
+  if (withReg && a.reg) { const r = document.createElement('span'); r.className = 'mreg'; r.textContent = a.reg + ' · '; el.appendChild(r); }
+  const m = document.createElement('span'); m.className = 'mdl' + (t ? '' : ' unk'); m.textContent = t || 'Unknown type'; el.appendChild(m);
+}
 function renderTable(j){
   const tb = $('planes'); tb.innerHTML = '';
   j.aircraft.forEach(a => {
@@ -205,7 +219,8 @@ function renderTable(j){
     if (a.seen > 20) tr.className = 'stale';
     if (map && map.selected === a.hex) tr.classList.add('pick');
     const alt = a.alt === 'ground' ? 'ground' : v(a.alt);
-    tr.innerHTML = `<td class="flight">${v(a.flight) || '—'}</td><td>${v(a.hex)}</td><td>${alt}</td><td>${v(a.gs)}</td><td class="opt">${v(a.track)}</td><td>${v(a.dist_nm, 1)}</td><td class="opt">${v(a.squawk)}</td><td class="opt">${v(a.rssi, 1)}</td><td>${v(a.seen, 0)} s</td>`;
+    tr.innerHTML = `<td class="flight">${v(a.flight) || (a.reg ? v(a.reg) : '—')}<span class="mrow2"></span></td><td>${v(a.hex)}</td><td>${alt}</td><td>${v(a.gs)}</td><td class="opt">${v(a.track)}</td><td>${v(a.dist_nm, 1)}</td><td class="opt">${v(a.squawk)}</td><td class="opt">${v(a.rssi, 1)}</td><td>${v(a.seen, 0)} s</td>`;
+    const m2 = tr.querySelector('.mrow2'); if (m2) modelLine(m2, a, false);
     tb.appendChild(tr);
   });
   if (!j.aircraft.length) tb.innerHTML = '<tr><td colspan="9" class="note">No aircraft yet. Give it a minute, and check the antenna.</td></tr>';
@@ -219,15 +234,16 @@ function render(j){
 
 function showCard(p){
   const card = $('acard');
-  if (!p) { card.classList.add('hide'); setFollowBtn(false); return; }
+  if (!p) { card.classList.add('hide'); document.documentElement.classList.remove('cardopen'); setFollowBtn(false); return; }
   const a = p.a;
-  card.classList.remove('hide');
+  card.classList.remove('hide'); document.documentElement.classList.add('cardopen');
   $('aTitle').textContent = (a.flight || a.hex.toUpperCase()) + (a.flight ? '  ·  ' + a.hex.toUpperCase() : '');
   $('aAlt').textContent = a.alt === 'ground' ? 'ground' : (typeof a.alt === 'number' ? fmt(a.alt) + ' ft' : '—');
   $('aSpd').textContent = typeof a.gs === 'number' ? Math.round(a.gs) + ' kt' : '—';
   $('aTrk').textContent = typeof a.track === 'number' ? Math.round(a.track) + '°' : '—';
   $('aVr').textContent = typeof a.vr === 'number' ? (a.vr > 0 ? '+' : a.vr < 0 ? '−' : '') + fmt(Math.abs(a.vr)) + ' fpm' : '—';
   $('aHex').textContent = a.hex.toUpperCase();
+  modelLine($('aModel'), a, true);
   $('aSq').textContent = a.squawk || '—';
   $('aDist').textContent = typeof a.dist_nm === 'number' ? a.dist_nm.toFixed(1) + ' nm' : '—';
   const age = a.seen_pos != null ? a.seen_pos : a.seen;
@@ -257,7 +273,7 @@ function stopPolling(){
 }
 
 document.addEventListener('sdr-mode', e => {
-  const s = e.detail; on = !!(s && s.mode === 'adsb');
+  const s = e.detail; on = !!(s && (s.mode === 'adsb' || (s.dual && s.adsb_live)));   // 1.2.5: two radios: the map runs on SDR 1 while SDR 2 plays
   $('off').classList.toggle('hide', on);
   if (s && !s.adsb_available) {
     $('offtxt').textContent = 'No ADS-B decoder is installed. Re-run install.sh with internet, or: sudo apt-get install --no-install-recommends dump1090-mutability';
@@ -359,5 +375,6 @@ setView(view);
 try { const s0 = window.sdrMode && window.sdrMode.get(); if (s0) document.dispatchEvent(new CustomEvent('sdr-mode', { detail: s0 })); } catch (e) {}
 </script>
 <script src="/map108.js"></script>
+<script src="/airmap.js"></script>
 </body>
 </html>
