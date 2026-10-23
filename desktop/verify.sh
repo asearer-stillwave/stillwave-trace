@@ -102,6 +102,10 @@ echo -n "display setup: "; ls /usr/local/sbin/fieldnote-display-setup /usr/local
 ls -l /usr/local/sbin/sdr-power 2>/dev/null || echo "sdr-power missing"
 sudo -n -l /usr/local/sbin/sdr-power reboot >/dev/null 2>&1 && echo "sudoers: sdr-power reboot/poweroff allowed for $(id -un)" || echo "sudoers: sdr-power not allowed for $(id -un) (the web Power menu needs it for the sdr-web user)"
 tail -3 /var/log/sdr-power.log 2>/dev/null || true
+echo "==== power supply (1.2.4) ===="
+if [[ -x /usr/local/sbin/sdr-psu ]]; then /usr/local/sbin/sdr-psu status 2>/dev/null || echo "sdr-psu status failed"; else echo "sdr-psu missing"; fi
+curl -s -m 3 http://127.0.0.1:8080/api/power/supply 2>/dev/null || echo "(web power API not answering)"; echo
+grep -n 'stillwave-trace-power\|usb_max_current_enable' /boot/firmware/config.txt /boot/config.txt 2>/dev/null || echo "config.txt: no usb_max_current_enable (expected on a Pi 4)"
 if [[ -f /etc/systemd/system/fieldnote-kiosk.service.d/fieldnote-cursor.conf ]]; then
   echo "kiosk pointer: hidden ($(systemctl show fieldnote-kiosk -p Environment --value 2>/dev/null | tr ' ' '\n' | grep XCURSOR_PATH))"
 else

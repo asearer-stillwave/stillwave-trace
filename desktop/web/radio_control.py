@@ -1618,8 +1618,9 @@ def strip_status():
         metric = _strip_metric(mode, scope)
     except Exception:
         metric = None
+    psu_start()
     resp = jsonify(ok=True, t=round(time.time(), 1), mode=parts["mode"], net=parts["net"],
-                   audio=parts["audio"], metric=metric, pending=pending)
+                   audio=parts["audio"], metric=metric, pending=pending, psu=psu_state())
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -1912,7 +1913,186 @@ def screen_action(action):
     return _no_store(jsonify(d))
 
 
+
+# ---------- 1.2.4 power supply watch (under-voltage) ----------
+# A light background check (every SDR_PSU_INTERVAL s, default 5) of the Pi's own power flags:
+#   * vcgencmd get_throttled (Pi 4 and Pi 5): bit 0 = under-voltage now, bit 16 = under-voltage has occurred since boot
+#   * /sys/class/hwmon/*/name == rpi_volt: in0_lcrit_alarm = 1 while the supply is too low
+# Either source may be missing (Ubuntu without vcgencmd, older kernels): the other is used, or the state is "unknown".
+# Nothing here touches I2C (the display chip at 0x45 is never read or written). The last event of THIS boot is kept in
+# /run/sdr-power/psu.json (tmpfs: survives a web restart, cleared by a reboot) and logged to the journal.
+PSU_STATE = Path(os.environ.get("SDR_PSU_STATE", "/run/sdr-power/psu.json"))
+PSU_INTERVAL = float(os.environ.get("SDR_PSU_INTERVAL", "5"))
+PSU_VCGENCMD = os.environ.get("SDR_VCGENCMD", "")
+PSU_HWMON = Path(os.environ.get("SDR_HWMON_DIR", "/sys/class/hwmon"))
+PSU_BOOT_ID = Path(os.environ.get("SDR_BOOT_ID_FILE", "/proc/sys/kernel/random/boot_id"))
+_psu_lock = threading.Lock()
+_psu = {"started": False, "vc": None, "hw": None, "hw_scan": 0.0, "prev_now": False, "prev_seen": False,
+        "first": True, "weak_now": False, "event": 0, "last_ts": None, "source": None, "available": False,
+        "checked": None, "boot": ""}
+
+
+def parse_throttled(text):
+    """'throttled=0x50005' -> {'raw': 0x50005, 'now': True, 'seen': True}; None when the text has no value."""
+    m = re.search(r"throttled\s*=\s*(0x[0-9a-fA-F]+|\d+)", text or "")
+    if not m:
+        return None
+    v = int(m.group(1), 0)
+    return {"raw": v, "now": bool(v & 0x1), "seen": bool(v & 0x10000)}
+
+
+def _psu_vcgencmd():
+    if _psu["vc"] is None:
+        c = PSU_VCGENCMD or _shutil.which("vcgencmd") or ("/usr/bin/vcgencmd" if os.path.exists("/usr/bin/vcgencmd") else "")
+        _psu["vc"] = c
+    return _psu["vc"]
+
+
+def _psu_read_vc():
+    cmd = _psu_vcgencmd()
+    if not cmd:
+        return None
+    try:
+        r = subprocess.run([cmd, "get_throttled"], capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return parse_throttled(r.stdout) if r.returncode == 0 else None
+
+
+def _psu_hwmon_file():
+    now = time.monotonic()
+    if _psu["hw"] is None and now - _psu["hw_scan"] > 60:      # look for rpi_volt at most once a minute
+        _psu["hw_scan"] = now
+        try:
+            for d in sorted(PSU_HWMON.iterdir()):
+                try:
+                    if (d / "name").read_text().strip() == "rpi_volt" and (d / "in0_lcrit_alarm").exists():
+                        _psu["hw"] = d / "in0_lcrit_alarm"
+                        break
+                except OSError:
+                    continue
+        except OSError:
+            pass
+    return _psu["hw"]
+
+
+def _psu_read_hw():
+    f = _psu_hwmon_file()
+    if f is None:
+        return None
+    try:
+        return f.read_text().strip() == "1"
+    except OSError:
+        _psu["hw"] = None
+        return None
+
+
+def _psu_boot_id():
+    try:
+        return PSU_BOOT_ID.read_text().strip()
+    except OSError:
+        return ""
+
+
+def _psu_save():
+    d = {"boot": _psu["boot"], "event": _psu["event"], "last_ts": _psu["last_ts"], "source": _psu["source"]}
+    try:
+        PSU_STATE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PSU_STATE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d))
+        os.replace(tmp, PSU_STATE)
+    except OSError:
+        pass
+
+
+def _psu_load():
+    _psu["boot"] = _psu_boot_id()
+    try:
+        d = json.loads(PSU_STATE.read_text())
+    except (OSError, ValueError):
+        return
+    if isinstance(d, dict) and d.get("boot") == _psu["boot"] and isinstance(d.get("event"), int):
+        _psu["event"], _psu["last_ts"], _psu["source"] = d["event"], d.get("last_ts"), d.get("source")
+
+
+def _psu_hhmm(ts):
+    return time.strftime("%H:%M", time.localtime(ts)) if ts else None
+
+
+def _psu_poll_once(now_ts=None):
+    """One check. Returns the public state. A NEW event = under-voltage starts (now: off -> on), or the sticky
+    'occurred' bit appears between two checks (a dip shorter than the poll interval)."""
+    vc, hw = _psu_read_vc(), _psu_read_hw()
+    t = now_ts if now_ts is not None else time.time()
+    with _psu_lock:
+        avail = vc is not None or hw is not None
+        now = bool((vc and vc["now"]) or hw)
+        seen = bool(vc and vc["seen"])
+        src = "+".join(n for n, x in (("vcgencmd", vc), ("hwmon", hw)) if x is not None) or None
+        new = False
+        if _psu["first"]:
+            _psu["first"] = False
+            # already flagged when we start (e.g. a sag during boot) and not yet recorded for this boot
+            new = (now or seen) and _psu["event"] == 0
+        else:
+            new = (now and not _psu["prev_now"]) or (seen and not _psu["prev_seen"] and not now)
+        if new:
+            _psu["event"] += 1
+            _psu["last_ts"] = t
+            _psu["source"] = src
+            _psu_save()
+            print(f"[power] under-voltage {'now' if now else 'seen (short dip)'} at {_psu_hhmm(t)} "
+                  f"({time.strftime('%Y-%m-%d %H:%M:%S %Z', time.localtime(t))}; source {src}; event #{_psu['event']})"
+                  " - the supply is too weak: use 5 V, 3 A or more", flush=True)
+        elif _psu["prev_now"] and not now and avail:
+            print(f"[power] supply back above the limit at {_psu_hhmm(t)}", flush=True)
+        _psu["prev_now"], _psu["prev_seen"] = now, seen
+        _psu["weak_now"], _psu["available"], _psu["checked"] = now, avail, t
+    return psu_state()
+
+
+def psu_state():
+    s = _psu
+    if not s["available"] and s["checked"] is None and s["event"] == 0:
+        state = "unknown"
+    elif s["weak_now"]:
+        state = "weak_now"
+    elif s["event"]:
+        state = "weak_seen"
+    elif s["available"]:
+        state = "ok"
+    else:
+        state = "unknown"
+    return {"state": state, "weak_now": bool(s["weak_now"]), "event": s["event"],
+            "seen_at": _psu_hhmm(s["last_ts"]), "seen_ts": s["last_ts"], "source": s["source"],
+            "available": bool(s["available"]), "boot": (s["boot"] or "")[:8]}
+
+
+def _psu_loop():
+    while True:
+        try:
+            _psu_poll_once()
+        except Exception as e:  # never let the watch die
+            print(f"[power] check failed: {e}", flush=True)
+        time.sleep(max(2.0, PSU_INTERVAL))
+
+
+def psu_start():
+    with _psu_lock:
+        if _psu["started"] or PSU_INTERVAL <= 0:
+            return
+        _psu["started"] = True
+        _psu_load()
+    threading.Thread(target=_psu_loop, name="psu-watch", daemon=True).start()
+
+
+@app.get("/api/power/supply")
+def power_supply():
+    psu_start()
+    return _no_store(jsonify(ok=True, **psu_state()))
+
 if __name__ == "__main__":
+    psu_start()   # 1.2.4 power supply watch
     port = int(os.environ.get("SDR_WEB_PORT", "8080"))
     print(f"SDR web listening on 0.0.0.0:{port}", flush=True)
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

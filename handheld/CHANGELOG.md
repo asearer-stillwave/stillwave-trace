@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.2.4] and [1.2.4-desktop] - 2026-10-22 (PT) - weak power supply warning; both editions
+### Added
+- **Weak power supply warning.** The web service checks the Pi's under-voltage flags every 5 s (`vcgencmd get_throttled` bits 0 and 16, and/or the `rpi_volt` hwmon `in0_lcrit_alarm`; Pi 4 and Pi 5; a missing tool is skipped). Each new event is logged (`[power] under-voltage … at HH:MM`) and kept for this boot in `/run/sdr-power/psu.json`. No I2C access at all.
+- **Banner on every main page:** "Power supply too weak. Use a stronger battery (5 V, 3 A or more)." It pushes the content down; ✕ hides it until the next new weak-power event.
+- **More › This box › Power supply** (first row): green "Power OK" or orange "Weak supply seen at HH:MM".
+- **`GET /api/power/supply`** (state ok / weak_now / weak_seen / unknown, seen_at, event count). `/api/strip` carries the same data, so the pages poll nothing extra.
+- **`sdr-psu`** (`/usr/local/sbin`): `sdr-psu status` (raw flags + last event), `sdr-psu config apply|undo|status`.
+- **Raspberry Pi 5 only:** the installer (also over the air) adds `usb_max_current_enable=1` to `config.txt` in Trace's own marked block (`stillwave-trace-power`), so the USB ports are not capped at 600 mA on a 3 A pack. Needs one reboot. Idempotent; a hand-set value is respected; removed by `sdr-psu config undo` and by `fieldnote-display-setup --undo`. A Pi 4 is never touched.
+- `verify.sh` shows the power supply state.
+### Unchanged
+- Everything else.
+
 ## [1.2.3] and [1.2.3-desktop] - 2026-10-17 (PT) - Raspberry Pi 5 warm-reboot blank panel fixed; both editions
 Found and confirmed on a real Raspberry Pi 5 (Ubuntu 24.04, linux-raspi 6.8, 5-inch Touch Display 2 in DISP0): the panel stayed blank after a warm reboot (backlight on, no picture, no touch) and only unplugging the power brought it back.
 ### Fixed

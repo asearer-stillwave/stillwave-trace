@@ -33,6 +33,7 @@
 
   <h2 class="mgrp">This box</h2>
   <div class="mlist">
+    <div class="mrow" id="mPsu"><span class="mt">Power supply</span><span class="ms" id="mPsuS">—</span></div>
     <button type="button" class="mrow" id="mWifi" role="switch" aria-checked="true"><span class="mt">Wi‑Fi</span><span class="ms" id="mWifiS">—</span><span class="v-sw on" id="mWifiSw" aria-hidden="true"></span></button>
     <a class="mrow" href="/network"><span class="mt">Network</span><span class="ms" id="mNet">—</span><span class="mchev" aria-hidden="true">›</span></a>
     <a class="mrow" href="/audio"><span class="mt">Audio</span><span class="ms" id="mAud">—</span><span class="mchev" aria-hidden="true">›</span></a>
@@ -86,6 +87,15 @@
   function set(id, t, warn){ const el = $(id); el.textContent = t || '—'; el.classList.toggle('warn', !!warn); }
   document.addEventListener('fieldnote-strip', e => {
     const s = e.detail || {};
+    // 1.2.4 power supply (under-voltage flags, from the strip poll)
+    const p = s.psu, ps = $('mPsuS');
+    ps.className = 'ms';
+    if (p && (p.state === 'ok' || p.state === 'weak_now' || p.state === 'weak_seen')) {
+      const w = p.state !== 'ok';
+      ps.classList.add(w ? 'pv-warn' : 'pv-ok');
+      ps.innerHTML = '<span class="pv-dot"></span>';
+      ps.appendChild(document.createTextNode(!w ? 'Power OK' : p.state === 'weak_now' ? 'Weak supply now' : 'Weak supply seen at ' + (p.seen_at || '—')));
+    } else ps.textContent = p && p.state === 'unknown' && p.available === false ? 'No power flags on this box' : '—';
     const n = s.net, a = s.audio;
     if (!n) set('mNet', '—');
     else if (n.switching) set('mNet', 'Switching…', true);

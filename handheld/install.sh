@@ -223,11 +223,17 @@ install_pi5_helpers() {
   remove_panel_off || true
   install -m 755 "$SRC/bin/sdr-touch-reload" /usr/local/sbin/sdr-touch-reload
   install -m 755 "$SRC/bin/sdr-panel-diag" /usr/local/sbin/sdr-panel-diag
-  local model cfg d have_dsi=0
+  install -m 755 "$SRC/bin/sdr-psu" /usr/local/sbin/sdr-psu      # 1.2.4: power supply status + Pi 5 USB current block
+  local model cfg d have_dsi=0 prc=0
   model="$(cat /proc/device-tree/model 2>/dev/null | tr -d '\0')"
   if [[ "$model" != *"Raspberry Pi 5"* && "$model" != *"Compute Module 5"* ]]; then
     return 0
   fi
+  # 1.2.4 (Pi 5 only; a Pi 4 config.txt is never touched): usb_max_current_enable=1 in Trace's own marked block, so the USB
+  # ports are not capped at 600 mA on a 3 A power bank. Idempotent; undo: sudo sdr-psu config undo (or fieldnote-display-setup --undo).
+  /usr/local/sbin/sdr-psu config apply || prc=$?
+  if [[ $prc -eq 3 ]]; then echo "Pi 5: reboot once so the USB current setting takes effect (sudo reboot)"
+  elif [[ $prc -ne 0 ]]; then echo "WARNING: could not set usb_max_current_enable in config.txt (see above)"; fi
   cfg=/boot/firmware/config.txt; [[ -f "$cfg" ]] || cfg=/boot/config.txt
   grep -qE '^[[:space:]]*dtoverlay=vc4-kms-dsi-ili9881' "$cfg" 2>/dev/null && have_dsi=1
   for d in /sys/bus/i2c/devices/*-0045 /sys/bus/i2c/devices/*-005d; do

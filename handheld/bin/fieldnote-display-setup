@@ -798,6 +798,14 @@ undo() {
       say "config.txt: nothing of ours in it"
     fi
     rm -f "$tmp"
+    # 1.2.4: Trace's Pi 5 power block (usb_max_current_enable=1, written by install.sh via sdr-psu) goes too
+    local psu="$R/usr/local/sbin/sdr-psu"
+    [[ -x "$psu" ]] || psu="$(dirname "$(readlink -f "$0")")/sdr-psu"
+    if [[ -x "$psu" ]]; then
+      SDR_PSU_CONFIG="$CONFIG" "$psu" config undo | sed 's/^/[display] /' || warn "could not remove the Trace power block from config.txt"
+    elif grep -q '^# >>> stillwave-trace-power >>>' "$CONFIG"; then
+      warn "config.txt still has the Trace power block (usb_max_current_enable); remove it by hand"
+    fi
   fi
   if [[ "$(get_state ADDED_CONSOLEBLANK)" == "1" && -f "$CMDLINE" ]]; then   # set by older versions
     backup "$CMDLINE"

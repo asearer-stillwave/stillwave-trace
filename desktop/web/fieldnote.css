@@ -1224,3 +1224,21 @@ button.net.on { background: var(--signal-wash); border-color: var(--signal); }
 /* ===== 1.2.1 ===== */
 .v-gate .v-ico svg { width: 72px; height: 72px; display: inline-block; }   /* START screen aircraft: line icon (same path as the Map tab) */
 html.kiosk .maplibregl-ctrl-attrib a { pointer-events: none; text-decoration: none; cursor: default; }   /* map credit is text only on the kiosk */
+
+/* 1.2.4 weak power supply banner (nav.js, shell + standalone pages): sits under the status strip and pushes the content
+   down by its own height (--pwr-h); the X hides it until the next new under-voltage event. Hidden with the full-screen map. */
+#pwrwarn { position: fixed; left: calc(var(--rail, 0px) + 10px); right: 10px; top: calc(var(--chrome-top) + 8px); z-index: 50;
+  display: flex; align-items: center; gap: .7rem; margin: 0; padding: .55rem .55rem .55rem .85rem; box-shadow: 0 8px 22px rgba(0,0,0,.45); }
+#pwrwarn[hidden] { display: none; }
+#pwrwarn .pw-ico { flex: none; color: var(--orange); display: flex; }
+#pwrwarn .pw-t { flex: 1; min-width: 0; line-height: 1.35; }
+#pwrwarn .pw-t b { color: var(--orange); font-weight: 700; }
+#pwrwarn .pw-x { flex: none; min-width: var(--tap); min-height: var(--tap); padding: 0; display: flex; align-items: center; justify-content: center; }
+html.shell #qframes { top: calc(var(--chrome-top) + var(--pwr-h, 0px)); }
+html:not(.shell):not(.embed) body { padding-top: calc(var(--chrome-top) + var(--pwr-h, 0px) + var(--pad)); }
+html.shell.mapfs #pwrwarn { display: none; }
+html.shell.mapfs #qframes { top: 0; }
+/* More > This box: power supply row */
+.mrow .ms.pv-ok { color: var(--green, var(--ok)); }
+.mrow .ms.pv-warn { color: var(--orange); }
+.pv-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: currentColor; margin-right: .45em; vertical-align: .05em; }

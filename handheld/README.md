@@ -103,6 +103,14 @@ From SSH:
 sudo sdr-power reboot       # or: sudo sdr-power poweroff
 tail /var/log/sdr-power.log # who asked, when, from where
 ```
+## Power supply warning (1.2.4)
+A Pi on a weak battery or cable browns out (the SDR drops, the panel flickers, the box can reset). Trace now watches the Pi's own power flags and tells you.
+- **What it reads** (every 5 s, in the web service; nothing else): `vcgencmd get_throttled` bit 0 (under-voltage now) and bit 16 (under-voltage has happened since boot), and/or the kernel's `rpi_volt` hwmon alarm (`/sys/class/hwmon/*/in0_lcrit_alarm`). Works on a Pi 4 and a Pi 5; when neither tool exists (not a Pi), the row says so and no banner shows. **No I2C access**: the display chip (0x45) is never read or written.
+- **Banner** (all main pages, under the status strip): **Power supply too weak.** Use a stronger battery (5 V, 3 A or more). It pushes the page down instead of covering it. ✕ hides it until the next *new* weak-power event (saved per device; a reboot starts over).
+- **More › This box › Power supply** (first row): green **Power OK**, or orange **Weak supply seen at HH:MM** (local time of the last event this boot; **Weak supply now** while it is happening).
+- **Log:** `journalctl -u sdr-web | grep '\[power\]'` (one line per event with the local date and time). The last event of this boot is in `/run/sdr-power/psu.json` (survives a web restart, cleared by a reboot). `sdr-psu status` prints the raw flags; `GET /api/power/supply` returns `state` = `ok` / `weak_now` / `weak_seen` / `unknown`, `seen_at` (HH:MM), `event` (count this boot).
+- **Raspberry Pi 5 only:** the installer (fresh install and every over-the-air upgrade) adds `usb_max_current_enable=1` to `config.txt` in Trace's own marked block (`# >>> stillwave-trace-power >>>` … `# <<< stillwave-trace-power <<<`), so the USB ports are not capped at 600 mA in total on a 3 A power bank (a Pi 5 only lifts that cap by itself on a 5 A USB-PD supply). **It takes effect after one reboot.** Idempotent; a `usb_max_current_enable` line you set yourself is respected and left alone. Undo: `sudo sdr-psu config undo` (`sudo fieldnote-display-setup --undo` removes it too). A Pi 4 `config.txt` is never touched.
+
 
 `/usr/local/sbin/sdr-power` accepts exactly `reboot` or `poweroff`. The web user may run only those two commands through sudo, the same way it runs `sdr-net-mode`.
 

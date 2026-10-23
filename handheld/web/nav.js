@@ -229,8 +229,34 @@
     ic.innerHTML = icon; ic.className = 'qs-ico' + (on ? '' : ' off');
     a.setAttribute('aria-label', 'Audio: ' + (v[1] || v[0]) + '. Open Audio.');
   }
+  // ---- 1.2.4 weak power supply banner (from /api/strip psu; no extra polling). Pushes the content down; the X hides it
+  // until the NEXT new under-voltage event (event number + boot id, saved per device). ----
+  let pwr = null;
+  function psuKey(p) { return (p.boot || '') + ':' + (p.event || 0); }
+  function psuFit() {
+    const h = pwr && !pwr.hidden ? Math.ceil(pwr.getBoundingClientRect().height) + 16 : 0;
+    if (h) H.style.setProperty('--pwr-h', h + 'px'); else H.style.removeProperty('--pwr-h');
+  }
+  function renderPsu() {
+    const p = S && S.psu;
+    let dis = null; try { dis = localStorage.getItem('tracePsuDismissed'); } catch (e) {}
+    const show = !!(p && (p.state === 'weak_now' || p.state === 'weak_seen') && dis !== psuKey(p));
+    if (show && !pwr) {
+      pwr = D.createElement('div'); pwr.id = 'pwrwarn'; pwr.className = 'umsg warn'; pwr.setAttribute('role', 'status');
+      pwr.innerHTML = '<span class="pw-ico"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span>' +
+        '<span class="pw-t"><b>Power supply too weak.</b> Use a stronger battery (5&nbsp;V, 3&nbsp;A or more).</span>' +
+        '<button type="button" class="pw-x" aria-label="Dismiss">\u2715</button>';
+      pwr.querySelector('.pw-x').onclick = () => {
+        try { if (S && S.psu) localStorage.setItem('tracePsuDismissed', psuKey(S.psu)); } catch (e) {}
+        pwr.hidden = true; psuFit();
+      };
+      D.body.appendChild(pwr);
+      if (window.ResizeObserver) new ResizeObserver(psuFit).observe(pwr);
+    }
+    if (pwr) { pwr.hidden = !show; psuFit(); }
+  }
   function render() {
-    renderJob(); renderNet(); renderAudio();
+    renderJob(); renderNet(); renderAudio(); renderPsu();
     D.dispatchEvent(new CustomEvent('fieldnote-strip', { detail: S }));
     eachFrame(w => w.document.dispatchEvent(new w.CustomEvent('fieldnote-strip', { detail: S })));
   }

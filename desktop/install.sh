@@ -321,6 +321,7 @@ install -m 755 "$SRC/bin/sdr-svc" /usr/local/sbin/sdr-svc
 install -m 755 "$SRC/bin/sdr-bt" /usr/local/sbin/sdr-bt
 echo "[progress] 50 Writing settings"
 install -m 755 "$SRC/bin/sdr-power" /usr/local/sbin/sdr-power
+install -m 755 "$SRC/bin/sdr-psu" /usr/local/sbin/sdr-psu          # 1.2.4: power supply status (desktop = Pi 4: config.txt is never changed)
 install -m 755 "$SRC/bin/sdr-boot-setup" /usr/local/lib/sdr-station/bin/sdr-boot-setup
 touch /var/log/sdr-power.log && chmod 644 /var/log/sdr-power.log
 # ---- kiosk screen: off button, timeout, wake on touch, brightness, dark screen at power-off (sdr-screen) ----

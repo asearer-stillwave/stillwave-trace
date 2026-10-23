@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Stillwave Trace 1.2.4: power supply helper (no I2C, ever).
+
+  sdr-psu status              under-voltage flags now (vcgencmd get_throttled / hwmon rpi_volt) + the web watch's last event
+  sdr-psu config apply        Pi 5 only: usb_max_current_enable=1 in Trace's own marked block at the end of config.txt
+  sdr-psu config undo         remove that block again (also run by: fieldnote-display-setup --undo)
+  sdr-psu config status
+
+Why: a Pi 5 that does not see a 5 A USB-PD supply caps its USB ports at 600 mA in total. On a 3 A power bank that starves
+the SDR dongle. usb_max_current_enable=1 lifts the cap. It only takes effect after a reboot. A Pi 4 is never touched.
+The block is idempotent; a usb_max_current_enable line you set yourself (outside the block) is respected and left alone.
+Env (tests): SDR_PSU_CONFIG (config.txt path), SDR_PSU_MODEL (board model text).
+"""
+import json, os, re, subprocess, sys, shutil, time
+
+BEGIN = "# >>> stillwave-trace-power >>> (managed by Trace install.sh; remove with: sudo sdr-psu config undo)"
+END = "# <<< stillwave-trace-power <<<"
+LINE = "usb_max_current_enable=1"
+
+
+def model():
+    m = os.environ.get("SDR_PSU_MODEL")
+    if m is not None:
+        return m
+    try:
+        return open("/proc/device-tree/model", "rb").read().replace(b"\0", b"").decode(errors="replace")
+    except OSError:
+        return ""
+
+
+def is_pi5(m):
+    return "Raspberry Pi 5" in m or "Compute Module 5" in m
+
+
+def config_path():
+    p = os.environ.get("SDR_PSU_CONFIG")
+    if p:
+        return p
+    for c in ("/boot/firmware/config.txt", "/boot/config.txt"):
+        if os.path.isfile(c):
+            return c
+    return ""
+
+
+def strip_block(text):
+    lines, out, i = text.split("\n"), [], 0
+    while i < len(lines):
+        if lines[i] == BEGIN:
+            j = i
+            while j < len(lines) and lines[j] != END:
+                j += 1
+            if out and out[-1] == "":
+                out.pop()          # the blank separator we added
+            i = j + 1
+            continue
+        out.append(lines[i]); i += 1
+    return "\n".join(out)
+
+
+def user_setting(text):
+    """a usb_max_current_enable line outside our block (the user's own choice), or None"""
+    for l in strip_block(text).split("\n"):
+        if re.match(r"^\s*usb_max_current_enable\s*=", l):
+            return l.strip()
+    return None
+
+
+def apply_text(text):
+    base = strip_block(text)
+    if user_setting(text):
+        return base
+    if not base.endswith("\n"):
+        base += "\n"
+    # find the section in force at the end of the file; add our own [all] when it is a board filter
+    sec = "all"
+    for l in base.split("\n"):
+        m = re.match(r"^\s*\[([^\]]+)\]\s*(#.*)?$", l)
+        if m:
+            sec = m.group(1).strip().lower()
+    hdr = "" if sec == "all" else "[all]\n"
+    return base + "\n" + BEGIN + "\n" + hdr + LINE + "\n" + END + "\n"
+
+
+def write(cfg, old, new):
+    if new == old:
+        return False
+    bak = cfg + ".trace-" + time.strftime("%Y%m%d-%H%M%S")
+    shutil.copy2(cfg, bak)
+    with open(cfg, "r+", newline="") as f:       # keeps owner/mode of config.txt
+        f.seek(0); f.write(new); f.truncate()
+    print("backup: " + bak, file=sys.stderr)
+    return True
+
+
+def config(action):
+    cfg = config_path()
+    if not cfg or not os.path.isfile(cfg):
+        print("sdr-psu: no config.txt found; nothing to do")
+        return 0
+    old = open(cfg, newline="").read()
+    if action == "undo":
+        if write(cfg, old, strip_block(old)):
+            print("config.txt: removed the Trace power block (usb_max_current_enable). Reboot to apply.")
+        else:
+            print("config.txt: no Trace power block in it")
+        return 0
+    m = model()
+    if action == "status":
+        print(json.dumps({"model": m, "pi5": is_pi5(m), "config": cfg, "block": BEGIN in old, "user_line": user_setting(old)}))
+        return 0
+    if not is_pi5(m):
+        print("Power: not a Raspberry Pi 5 (%s); config.txt left alone" % (m or "unknown board"))
+        return 0
+    u = user_setting(old)
+    new = apply_text(old)
+    if write(cfg, old, new):
+        if u:
+            print("Pi 5: your own '%s' in config.txt is kept; removed Trace's duplicate block" % u)
+        else:
+            print("Pi 5: added usb_max_current_enable=1 to config.txt (USB ports no longer capped at 600 mA on a 3 A pack). "
+                  "Takes effect after the next reboot.")
+            return 3       # changed: reboot needed
+    elif u:
+        print("Pi 5: config.txt already has your own '%s'; left alone" % u)
+    else:
+        print("Pi 5: usb_max_current_enable=1 already in config.txt")
+    return 0
+
+
+def status():
+    out = {"vcgencmd": None, "hwmon_alarm": None}
+    vc = shutil.which("vcgencmd")
+    if vc:
+        try:
+            r = subprocess.run([vc, "get_throttled"], capture_output=True, text=True, timeout=3)
+            m = re.search(r"throttled\s*=\s*(0x[0-9a-fA-F]+|\d+)", r.stdout or "")
+            if m:
+                v = int(m.group(1), 0)
+                out["vcgencmd"] = {"raw": hex(v), "under_voltage_now": bool(v & 1), "under_voltage_since_boot": bool(v & 0x10000)}
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        for d in sorted(os.listdir("/sys/class/hwmon")):
+            p = os.path.join("/sys/class/hwmon", d)
+            try:
+                if open(os.path.join(p, "name")).read().strip() == "rpi_volt":
+                    out["hwmon_alarm"] = open(os.path.join(p, "in0_lcrit_alarm")).read().strip() == "1"
+            except OSError:
+                pass
+    except OSError:
+        pass
+    try:
+        out["last_event"] = json.load(open(os.environ.get("SDR_PSU_STATE", "/run/sdr-power/psu.json")))
+        ts = out["last_event"].get("last_ts")
+        if ts:
+            out["last_event"]["local_time"] = time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime(ts))
+    except (OSError, ValueError):
+        out["last_event"] = None
+    print(json.dumps(out, indent=1))
+    return 0
+
+
+def main(a):
+    if a[:1] == ["status"]:
+        return status()
+    if len(a) == 2 and a[0] == "config" and a[1] in ("apply", "undo", "status"):
+        return config(a[1])
+    print(__doc__.strip(), file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
