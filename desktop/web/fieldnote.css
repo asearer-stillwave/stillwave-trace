@@ -1278,3 +1278,13 @@ html[data-ts="xl"] .v-sub button { letter-spacing:.02em; white-space:nowrap; }
 .role-card.gone { opacity: .5; }
 .role-card.gone .rc-live { color: #f5a524; }
 .about-list p { margin: .35rem 0; }
+
+/* ======================= Stillwave Trace 1.2.7: navigation ======================= */
+/* ‹ More on More sub-pages */
+.nav-back { margin:.2rem 0 .5rem; }
+/* Listen: Station bank + Edit presets stay together on one line; on narrow screens (handheld XL) the pair moves to a second row */
+.fm-links { display:flex; gap:.5rem; flex-wrap:nowrap; margin-left:auto; align-items:center; }
+.fm-presets-h h2 { min-width:0; }
+html[data-ts="xl"] .fm-links a.fm-edit { padding:0 .75rem; letter-spacing:.04em; }
+.air-presets-h { flex-wrap:wrap; gap:.5rem; }
+.air-presets-h .fm-links { flex-wrap:wrap; justify-content:flex-end; }

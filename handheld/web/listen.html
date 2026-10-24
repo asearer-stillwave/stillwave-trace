@@ -24,7 +24,7 @@
   <div class="v-now" id="vnow">// NOW PLAYING · <b>…</b></div>
 
   <section id="pfm" class="card">
-    <div class="v-h fm-presets-h"><h2>Stations</h2><a class="btn sm fm-edit" href="/presets" aria-label="Edit presets">Edit presets <span aria-hidden="true">›</span></a></div>
+    <div class="v-h fm-presets-h"><h2>Stations</h2><span class="fm-links"><a class="btn sm fm-edit" href="/stations?v=fm" aria-label="Station bank, FM">Station bank <span aria-hidden="true">›</span></a><a class="btn sm fm-edit" href="/presets" aria-label="Edit presets">Edit presets <span aria-hidden="true">›</span></a></span></div>
     <div class="now" id="now" hidden>Now playing: …</div>
     <div class="fmdial" id="fmdial" aria-hidden="true"></div>
     <div class="row" id="buttons"></div>
@@ -55,7 +55,7 @@
       <p class="note bs-note"></p>
     </div>
     <div class="card">
-      <div class="v-h"><h2>Presets <span class="v-tag">LAX · FAA data</span></h2><span><button type="button" class="sm" id="aEdit">Edit</button> <button type="button" class="sm" id="aSave">+ Save</button></span></div>
+      <div class="v-h air-presets-h"><h2>Presets <span class="v-tag">LAX · FAA data</span></h2><span class="fm-links"><a class="btn sm fm-edit" href="/stations?v=air" aria-label="Station bank, airband">Station bank <span aria-hidden="true">›</span></a><button type="button" class="sm" id="aEdit">Edit</button> <button type="button" class="sm" id="aSave">+ Save</button></span></div>
       <div class="row" id="aSaveRow" hidden style="gap:.5rem;margin-bottom:.6rem"><input id="aName" placeholder="Name, e.g. LAX Tower North" maxlength="40" style="flex:1"><button type="button" class="primary sm" id="aSaveGo">Save</button></div>
       <div class="v-grid" id="aGrid"></div>
       <p class="note" style="margin-top:.7rem">LAX presets from FAA airport data (airnav.com, Oct 2026 cycle). AM, receive only.</p>

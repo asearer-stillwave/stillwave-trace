@@ -17,7 +17,7 @@
 <body>
 <script src="/nav.js"></script>
 <div class="wrap">
-  <div class="pre-back-h"><a class="btn sm fm-edit" href="/listen?band=fm" aria-label="Back to FM radio"><span aria-hidden="true">‹</span> FM radio</a><button type="button" class="btn sm fm-edit" id="newP" aria-label="New preset"><span aria-hidden="true">＋</span> New preset</button></div>
+  <div class="pre-back-h"><a class="btn sm fm-edit" href="/listen?band=fm" data-back aria-label="Back to FM radio"><span aria-hidden="true">‹</span> FM radio</a><button type="button" class="btn sm fm-edit" id="newP" aria-label="New preset"><span aria-hidden="true">＋</span> New preset</button></div>
   <div class="brand">
     <h1>Preset <span class="acc">settings</span></h1>
   </div>
@@ -218,6 +218,13 @@ refresh().catch(e=>setMsg(e.message,'err'));
   $('np').addEventListener('click', e => { if (e.target === $('np')) close(); });
   const q = new URLSearchParams(location.search); if (q.get('new')) open(q);
 })();
+</script>
+<script>
+// 1.2.7: the back button follows where you came from. More links here with ?from=more, so the button reads ‹ More and returns to More;
+// without it the button keeps its default target.
+(function(){ if (new URLSearchParams(location.search).get('from') !== 'more') return;
+  const a = document.querySelector('a[data-back]'); if (!a) return;
+  a.href = '/more'; a.setAttribute('aria-label', 'Back to More'); a.innerHTML = '<span aria-hidden="true">‹</span> More'; })();
 </script>
 </body>
 </html>

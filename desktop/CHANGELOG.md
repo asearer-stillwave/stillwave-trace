@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.2.7] and [1.2.7-desktop] - 2026-10-24 (PT) - Navigation: back buttons go where you came from, Station bank from Listen; both editions
+### Added
+- **‹ MORE back button** at the top of all nine More pages: Tuner, Radio roles, Network, Audio, Screen, Screenshots, Updates, Download maps, About & licenses. It is styled like ‹ FM RADIO and returns to the More menu.
+- **STATION BANK ›** on Listen: in the FM Stations card next to EDIT PRESETS ›, which opens the FM bank, and in the Airband Presets card next to Edit / + Save, which opens the Airband bank. At Large the buttons share the title's line; at XL on the handheld they move to their own row and never wrap.
+### Changed
+- **Back buttons follow where you came from:** opened from More (`?from=more`), Preset settings and the Station bank show **‹ MORE** and return to More. Opened from Listen they keep **‹ FM RADIO** and **‹ LISTEN**.
+- **`/radio` now redirects to `/listen`.** The old stand-alone FM page had no links to it in the app. `radio.html` itself is still installed for the Icecast page on port 8000.
+### Fixed
+- The handheld `screen.html` had a comment that wrongly said "desktop edition" on the HDMI resolution card. Comment only.
+- Update zips now hold only `latest.json`, the `.tar.gz` and its `.sig`; the `.ota` is no longer included, so each zip stays under 25 MB.
+
 ## [1.2.6] and [1.2.6-desktop] - 2026-10-24 (PT) - Download maps, US station bank, New preset; both editions
 ### Added
 - **More › Download maps:** browse regions (World › North America › United States › state › metro), see each map's size, tap **Get**. Downloads run in the background (Pause / Resume / Cancel, a waiting queue) and **resume where they stopped** after a dropped connection or Pause. Each map is checked against the **signed map list** (Ed25519, the Stillwave update key) and its **sha256** (plus its own signature file) before it is used. **1 GB is always kept free**; a map that would eat into it is refused with a clear message. **My maps** lists the built-in LA map and every download with **View** (opens the map there) and **Delete** (tap twice). With no internet the last map list is shown and the maps on the box keep working.

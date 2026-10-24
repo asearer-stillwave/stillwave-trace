@@ -157,7 +157,8 @@ def page():
 @app.get("/radio")
 @app.get("/radio.html")
 def radio_page():
-    return _html("radio.html")
+    from flask import redirect   # 1.2.7: the old FM page was orphaned; send old links/bookmarks to Listen
+    return redirect("/listen" + (("?" + request.query_string.decode()) if request.query_string else ""), code=302)
 
 
 @app.get("/listen")

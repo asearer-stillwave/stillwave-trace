@@ -11,7 +11,7 @@
 <body class="page-stations">
 <script src="/nav.js"></script>
 <div class="wrap">
-  <div class="sb-hdr"><a class="btn sm fm-edit" href="/listen"><span aria-hidden="true">‹</span> Listen</a></div>
+  <div class="sb-hdr"><a class="btn sm fm-edit" href="/listen" data-back aria-label="Back to Listen"><span aria-hidden="true">‹</span> Listen</a></div>
   <div class="brand"><h1>Station <span class="acc">bank</span></h1></div>
   <div class="sb-tabs" id="tabs" role="tablist">
     <button type="button" data-tab="fm">FM</button><button type="button" data-tab="air">Airband</button><button type="button" data-tab="search">Search</button><button type="button" data-tab="near">Near me</button>
@@ -137,6 +137,13 @@ document.addEventListener('click', async e => {
 J('/api/bank/meta').then(m => { $('foot').textContent = `FM: FCC licensing data (${m.fcc_pulled}). Airband: FAA NASR cycle ${m.nasr_cycle} (next ${m.nasr_next}). ${Number(m.counts.fm).toLocaleString()} FM stations · ${Number(m.counts.airport).toLocaleString()} airports. Receive only, not for navigation.`; }).catch(() => {});
 view();
 })();
+</script>
+<script>
+// 1.2.7: the back button follows where you came from. More links here with ?from=more, so the button reads ‹ More and returns to More;
+// without it the button keeps its default target.
+(function(){ if (new URLSearchParams(location.search).get('from') !== 'more') return;
+  const a = document.querySelector('a[data-back]'); if (!a) return;
+  a.href = '/more'; a.setAttribute('aria-label', 'Back to More'); a.innerHTML = '<span aria-hidden="true">‹</span> More'; })();
 </script>
 </body>
 </html>
