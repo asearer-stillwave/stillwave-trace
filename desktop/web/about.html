@@ -32,8 +32,15 @@
     <p class="note">Map data © OpenStreetMap contributors, Open Database License (ODbL) 1.0. Basemap tiles: Protomaps (BSD-3 / CC0 basemap styles). Map library: MapLibre GL JS (BSD-3-Clause). PMTiles (BSD-3-Clause). Fonts: Noto Sans (SIL OFL 1.1). Icons: Tangrams (MIT). Full texts: /maplib/licenses/.</p>
   </div>
   <div class="card about-list">
+    <h2>Station bank</h2>
+    <p class="note" id="sbStat">Looking…</p>
+    <p class="note">FM stations: U.S. Federal Communications Commission (FCC) licensing data. Airband and airports: U.S. Federal Aviation Administration (FAA) NASR 28-day subscription, including runway headings. ZIP code positions: U.S. Census Bureau. U.S. government works, public domain. <b>Receive only, not for navigation.</b> Frequencies change; the FAA publishes a new cycle every 28 days.</p>
+    <div class="row"><button type="button" id="sbUpd">Update station bank</button></div>
+    <p class="note" id="sbMsg">Needs internet and a content source (More › Download maps), about 2 MB. Checked against the Stillwave signature.</p>
+  </div>
+  <div class="card about-list">
     <h2>Radio frequencies</h2>
-    <p class="note">LAX airband and airport frequencies: FAA Chart Supplement data (via AOPA and airnav.com), checked October 2026. Receive only.</p>
+    <p class="note">Built-in LAX airband presets: FAA Chart Supplement data (via AOPA and airnav.com), checked October 2026. Other airports come from the station bank above. Receive only, not for navigation.</p>
   </div>
 </div>
 <script src="/mode.js"></script>
@@ -56,6 +63,18 @@
     $('acUpd').disabled = false; stat();
   };
   stat();
+  async function sb(){
+    try{ const j = await (await fetch('/api/bank/meta', {cache:'no-store'})).json();
+      $('sbStat').textContent = j.ok === false ? (j.error || 'Not installed.') : (Number(j.counts.fm).toLocaleString() + ' FM stations · ' + Number(j.counts.airport).toLocaleString() + ' airports · FAA cycle ' + j.nasr_cycle + ' (next ' + j.nasr_next + ') · FCC ' + j.fcc_pulled);
+    }catch(e){ $('sbStat').textContent = 'Could not read the station bank.'; }
+  }
+  $('sbUpd').onclick = async () => {
+    $('sbUpd').disabled = true; $('sbMsg').textContent = 'Checking for a newer station bank…';
+    try{ const r = await fetch('/api/bank/update', {method:'POST'}); const j = await r.json(); $('sbMsg').textContent = j.message || j.error || (r.ok ? 'Updated.' : 'Failed.'); }
+    catch(e){ $('sbMsg').textContent = e.message; }
+    $('sbUpd').disabled = false; sb();
+  };
+  sb();
 })();
 </script>
 </body>

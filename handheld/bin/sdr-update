@@ -142,6 +142,15 @@ def read_conf():
     return kv
 
 
+def update_url():
+    """1.2.6: UPDATE_URL wins (e.g. a Mac running http.server); else CONTENT_URL + updates/<edition>/ (home Pi / R2)."""
+    kv = read_conf()
+    u = kv.get("UPDATE_URL", "")
+    if not u and kv.get("CONTENT_URL"):
+        u = kv["CONTENT_URL"].rstrip("/") + "/updates/" + EDITION + "/"
+    return u
+
+
 def write_conf_key(key, value):
     lines, found = [], False
     try:
@@ -749,7 +758,7 @@ def install_verified(tgz, inner, source, reinstall=False):
 # ---------------------------------------------------------------- commands
 def cmd_check(url_arg):
     cur = current_version()
-    url = url_arg or read_conf().get("UPDATE_URL", "")
+    url = url_arg or update_url()
     if not url:
         raise Fail("no_url", "No update source is set. Add one under “Update source” on this page.")
     if not valid_url(url):
@@ -774,7 +783,7 @@ def cmd_check(url_arg):
 
 
 def cmd_apply_url(expect, reinstall=False):
-    url = read_conf().get("UPDATE_URL", "")
+    url = update_url()
     if not valid_url(url):
         raise Fail("no_url", "No update source is set. Add one under “Update source” on this page.", url)
     if not have_route():
@@ -903,7 +912,8 @@ def status_obj():
     if st and st.get("state") not in ("done", "rolled_back", "failed", "error", "idle") and not running \
             and time.time() - st.get("t", 0) > 30:
         st = dict(st, state="error", ok=False, message="The last update stopped unexpectedly. Check the log.")
-    return {"version": current_version(), "update_url": read_conf().get("UPDATE_URL", ""),
+    return {"version": current_version(), "update_url": read_conf().get("UPDATE_URL", ""), "effective_url": update_url(),
+            "content_url": read_conf().get("CONTENT_URL", ""),
             "running": running, "status": st, "last": rj("last.json")}
 
 

@@ -1,0 +1,37 @@
+{
+ "_about": "Stillwave Trace map pack catalog source. regions = browse tree; packs = downloadable PMTiles cut from a Protomaps daily world build. detail: street (z0-14), towns (z0-12), overview (z0-6/8). build_map_pack.py builds packs; publish_content.py lists only packs that exist.",
+ "regions": [
+  {"id": "na", "name": "North America", "parent": null, "sub": "Canada, USA, Mexico, Caribbean"},
+  {"id": "us", "name": "United States", "parent": "na"},
+  {"id": "us-ca", "name": "California", "parent": "us"},
+  {"id": "us-nv", "name": "Nevada", "parent": "us"},
+  {"id": "us-az", "name": "Arizona", "parent": "us"},
+  {"id": "us-tx", "name": "Texas", "parent": "us"},
+  {"id": "us-wa", "name": "Washington", "parent": "us"},
+  {"id": "us-ny", "name": "New York", "parent": "us"},
+  {"id": "us-co", "name": "Colorado", "parent": "us"},
+  {"id": "us-fl", "name": "Florida", "parent": "us"},
+  {"id": "us-il", "name": "Illinois", "parent": "us"},
+  {"id": "eu", "name": "Europe", "parent": null, "sub": "By country"},
+  {"id": "eu-gb", "name": "United Kingdom", "parent": "eu"}
+ ],
+ "packs": [
+  {"id": "world-overview", "name": "World overview", "parent": null, "detail": "overview", "sub": "Countries, big cities, coasts", "bbox": [-180, -85, 180, 85], "maxzoom": 6},
+  {"id": "north-america", "name": "North America", "parent": "na", "detail": "overview", "sub": "Highways and big towns", "bbox": [-170, 5, -50, 75], "maxzoom": 8},
+  {"id": "us-ca-state", "name": "California (whole state)", "parent": "us-ca", "detail": "towns", "bbox": [-124.5, 32.5, -114.1, 42.0], "maxzoom": 12},
+  {"id": "us-ca-san-diego", "name": "San Diego metro", "parent": "us-ca", "detail": "street", "sub": "SAN, MYF, NKX", "bbox": [-117.35, 32.53, -116.85, 33.10], "maxzoom": 14},
+  {"id": "us-ca-sf-bay", "name": "San Francisco Bay Area", "parent": "us-ca", "detail": "street", "sub": "SFO, OAK, SJC", "bbox": [-122.65, 37.20, -121.75, 38.05], "maxzoom": 14},
+  {"id": "us-ca-sacramento", "name": "Sacramento metro", "parent": "us-ca", "detail": "street", "sub": "SMF, MHR", "bbox": [-121.65, 38.40, -121.10, 38.80], "maxzoom": 14},
+  {"id": "us-nv-state", "name": "Nevada (whole state)", "parent": "us-nv", "detail": "towns", "bbox": [-120.0, 35.0, -114.0, 42.0], "maxzoom": 12},
+  {"id": "us-nv-las-vegas", "name": "Las Vegas metro", "parent": "us-nv", "detail": "street", "sub": "LAS, HND, VGT", "bbox": [-115.45, 35.95, -114.85, 36.40], "maxzoom": 14},
+  {"id": "us-az-phoenix", "name": "Phoenix metro", "parent": "us-az", "detail": "street", "sub": "PHX, SDL, DVT", "bbox": [-112.45, 33.20, -111.60, 33.75], "maxzoom": 14},
+  {"id": "us-tx-dallas", "name": "Dallas-Fort Worth", "parent": "us-tx", "detail": "street", "sub": "DFW, DAL", "bbox": [-97.55, 32.55, -96.55, 33.15], "maxzoom": 14},
+  {"id": "us-tx-houston", "name": "Houston metro", "parent": "us-tx", "detail": "street", "sub": "IAH, HOU", "bbox": [-95.80, 29.45, -95.00, 30.10], "maxzoom": 14},
+  {"id": "us-wa-seattle", "name": "Seattle metro", "parent": "us-wa", "detail": "street", "sub": "SEA, BFI, PAE", "bbox": [-122.50, 47.35, -122.10, 47.95], "maxzoom": 14},
+  {"id": "us-ny-nyc", "name": "New York City", "parent": "us-ny", "detail": "street", "sub": "JFK, LGA, EWR", "bbox": [-74.30, 40.50, -73.70, 40.95], "maxzoom": 14},
+  {"id": "us-co-denver", "name": "Denver metro", "parent": "us-co", "detail": "street", "sub": "DEN, APA, BJC", "bbox": [-105.25, 39.55, -104.60, 40.00], "maxzoom": 14},
+  {"id": "us-fl-miami", "name": "Miami metro", "parent": "us-fl", "detail": "street", "sub": "MIA, FLL, OPF", "bbox": [-80.50, 25.55, -80.05, 26.35], "maxzoom": 14},
+  {"id": "us-il-chicago", "name": "Chicago metro", "parent": "us-il", "detail": "street", "sub": "ORD, MDW", "bbox": [-88.10, 41.65, -87.50, 42.10], "maxzoom": 14},
+  {"id": "eu-gb-london", "name": "London", "parent": "eu-gb", "detail": "street", "sub": "LHR, LGW, LCY", "bbox": [-0.60, 51.25, 0.35, 51.75], "maxzoom": 14}
+ ]
+}

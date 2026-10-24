@@ -128,6 +128,11 @@ tail /var/log/sdr-power.log # who asked, when, from where
 
 `/usr/local/sbin/sdr-power` accepts exactly `reboot` or `poweroff`. The web user may run only those two commands through sudo, the same way it runs `sdr-net-mode`.
 
+## Download maps, US station bank, new presets (1.2.6)
+- **CONTENT_URL** (More › Download maps › Content source, or `sudo sdr-content set-url http://IP:8080/`): where map packs, the station bank and (if `UPDATE_URL` is empty) updates come from. Layout and the home-Pi / Cloudflare R2 kit: `tools/content/server/README.md`.
+- `sudo sdr-content status|catalog|download ID|pause|resume|cancel ID|delete ID|bank-update` (JSON with `--json`). Packs live in `/var/lib/sdr/maps/packs/`, the bank in `/var/lib/sdr/bank/stations.sqlite`. 1 GB is always kept free.
+- Everything downloaded is checked against the Stillwave Ed25519 signature and sha256 before use. Station data: FCC (FM), FAA NASR (airband, 28-day cycle), US Census (ZIP). Receive only, not for navigation.
+
 ## Two radios, map listen strip, aircraft models (1.2.5)
 - **Radio roles** (More › Radio roles): with two RTL-SDR dongles, pick Map · 1090 (SDR 1), Airband (SDR 2) or Spare for each serial, then Save. The map then runs full time on SDR 1 while SDR 2 plays airband. SSH: `sudo sdr-dongles list`, `sudo sdr-dongles assign SERIAL=adsb SERIAL=radio`, `sudo sdr-dongles swap`. Each dongle needs its own serial (`rtl_eeprom -d 0 -s TRACE001`, one dongle plugged in at a time). One dongle: everything works as before.
 - **Map listen strip / airport focus:** only with two radios. Squelch Low or High gives QUIET / TALKING. Tap LAX (or the KLAX pill) for Tower / Ground / Approach / ATIS. Frequencies: `config/airports.json`.

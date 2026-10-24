@@ -312,6 +312,16 @@ def maps_file(name):
     return r
 
 
+@app.get("/maps/packs/<name>")
+def maps_pack_file(name):
+    # 1.2.6: downloaded map packs (sdr-content), same Range handling as la.pmtiles
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}\.pmtiles", name):
+        abort(404)
+    r = send_from_directory(MAPS_DIR / "packs", name, conditional=True)
+    r.headers["Cache-Control"] = "no-cache"
+    return r
+
+
 @app.get("/mode.js")
 def mode_js():
     path = WEBDIR / "mode.js"
@@ -741,12 +751,104 @@ def listen_level():
 AIRPORTS_FILE = Path(os.environ.get("SDR_AIRPORTS_FILE", str(WEBDIR.parent / "config" / "airports.json")))
 
 
+BANK_DB = os.environ.get("SDR_BANK_DB", "/var/lib/sdr/bank/stations.sqlite")
+CONTENT_BIN = os.environ.get("SDR_CONTENT_BIN", "/usr/local/sbin/sdr-content")
+
+
+def _bank():
+    import sys as _sys
+    if str(WEBDIR) not in _sys.path:
+        _sys.path.insert(0, str(WEBDIR))
+    import bank
+    return bank, bank.db(BANK_DB)
+
+
 @app.get("/api/airports")
 def airports():
+    # 1.2.6: ?id=KBUR -> any US airport from the station bank (FAA NASR, runway headings for approach rings).
+    # Without an id (or without a bank) the built-in KLAX file is served, as in 1.2.5.
+    ident = (request.args.get("id") or "").strip()
+    if ident:
+        try:
+            bank, c = _bank()
+            a = bank.airport(c, ident) if c else None
+            if a:
+                return jsonify(ok=True, airports=[bank.focus_shape(a)])
+        except Exception as exc:  # a damaged bank must never break the map
+            app.logger.warning("bank airport %s: %s", ident, exc)
     try:
-        return jsonify(json.loads(AIRPORTS_FILE.read_text()))
+        d = json.loads(AIRPORTS_FILE.read_text())
     except (OSError, ValueError):
         return jsonify(ok=False, airports=[])
+    if ident:
+        hit = [a for a in d.get("airports", []) if a.get("icao", "").upper() in (ident.upper(), "K" + ident.upper())]
+        if hit:
+            d = dict(d, airports=hit)
+    return jsonify(d)
+
+
+@app.get("/api/bank/<what>")
+def bank_query(what):
+    if what not in ("meta", "states", "cities", "fm", "airports", "airport", "search", "near"):
+        abort(404)
+    try:
+        bank, c = _bank()
+        if c is None:
+            return jsonify(ok=False, error="The station bank isn't installed. Tap Update station bank on About."), 503
+        res = bank.query(c, what, request.args.to_dict())
+    except (ValueError, KeyError) as exc:
+        return jsonify(ok=False, error="bad request: %s" % exc), 400
+    except Exception as exc:
+        return jsonify(ok=False, error="station bank error: %s" % exc), 500
+    res.setdefault("ok", "error" not in res)
+    resp = jsonify(res)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/bank/update")
+def bank_update():
+    return _json_call([CONTENT_BIN, "bank-update", "--json"], 200, "station bank update")
+
+
+@app.get("/api/content")
+def content_status():
+    r = _json_call([CONTENT_BIN, "status", "--json"], 20, "map status")
+    r[0].headers["Cache-Control"] = "no-store"
+    return r
+
+
+@app.get("/api/content/catalog")
+def content_catalog():
+    return _json_call([CONTENT_BIN, "catalog", "--json"], 45, "map list")
+
+
+@app.post("/api/content/<action>")
+def content_action(action):
+    d = request.get_json(silent=True) or {}
+    if action == "url":
+        url = str(d.get("url") or "").strip()[:300]
+        return _json_call([CONTENT_BIN, "set-url", url, "--json"], 20, "content source")
+    if action in ("pause", "resume"):
+        return _json_call([CONTENT_BIN, action, "--json"], 20, action)
+    if action in ("download", "cancel", "delete"):
+        pid = str(d.get("id") or "")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", pid):
+            return jsonify(ok=False, error="bad map id"), 400
+        return _json_call([CONTENT_BIN, action, pid, "--json"], 30, action)
+    abort(404)
+
+
+@app.get("/maps")
+@app.get("/maps.html")
+def maps_page():
+    return _html("maps.html")
+
+
+@app.get("/stations")
+@app.get("/stations.html")
+def stations_page():
+    return _html("stations.html")
 
 
 AIRCRAFT_DB = Path(os.environ.get("SDR_AIRCRAFT_DB", "/var/lib/sdr/aircraft/aircraft.sqlite"))
@@ -1254,6 +1356,26 @@ def _receiver():
     return {"lat": DEFAULT_RECEIVER[0], "lon": DEFAULT_RECEIVER[1], "default": True, "name": "LAX"}
 
 
+def _map_packs():
+    """1.2.6: downloaded regions, drawn on top of the built-in LA map (each limited to its own box)."""
+    out = []
+    d = MAPS_DIR / "packs"
+    try:
+        names = sorted(d.glob("*.json"))
+    except OSError:
+        names = []
+    for j in names:
+        t = j.with_suffix(".pmtiles")
+        try:
+            m = json.loads(j.read_text())
+        except (OSError, ValueError):
+            continue
+        if t.is_file() and isinstance(m.get("bbox"), list) and len(m["bbox"]) == 4:
+            out.append({"id": j.stem, "name": m.get("name", j.stem), "url": "/maps/packs/" + t.name, "bbox": m["bbox"],
+                        "minzoom": int(m.get("minzoom", 0)), "maxzoom": int(m.get("maxzoom", 14)), "center": m.get("center")})
+    return out
+
+
 @app.get("/api/maps")
 def maps_status():
     tiles = MAPS_DIR / "la.pmtiles"
@@ -1263,7 +1385,7 @@ def maps_status():
         manifest = None
     installed = tiles.is_file() and tiles.stat().st_size > 0
     return jsonify(ok=True, installed=installed, url="/maps/la.pmtiles" if installed else None,
-                   bytes=tiles.stat().st_size if installed else 0, manifest=manifest,
+                   bytes=tiles.stat().st_size if installed else 0, manifest=manifest, packs=_map_packs(),
                    fallback="/maplib/fallback/la-lowzoom.geojson", receiver=_receiver(), rings=_adsb_rings())
 
 

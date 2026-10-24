@@ -136,7 +136,7 @@
       const cur = air ? mhz : null, gg = grp();
       sheet.innerHTML = '<div class="lsp-h"><span><b>// Quick tune</b> · map stays live</span><span>' + esc(a.icao) + '</span></div>' +
         '<div class="m-seg lsp-tabs">' + a.groups.map(x => '<button type="button" class="m-pill' + (x.id === gg.id ? ' on' : '') + '" data-g="' + esc(x.id) + '">' + esc(x.label) + '</button>').join('') + '</div>' +
-        '<div class="lsp-g">' + gg.freqs.map(f => '<button type="button" data-mhz="' + f.mhz + '" data-name="' + esc(f.name) + '" class="' + (cur && Math.abs(cur - f.mhz) < 0.002 ? 'on' : '') + '"><b>' + f3(f.mhz) + '</b><span>' + esc(f.name.replace(/^LAX /, '')) + '</span></button>').join('') + '</div>' +
+        '<div class="lsp-g">' + gg.freqs.map(f => '<button type="button" data-mhz="' + f.mhz + '" data-name="' + esc(f.name) + '" class="' + (cur && Math.abs(cur - f.mhz) < 0.002 ? 'on' : '') + '"><b>' + f3(f.mhz) + '</b><span>' + esc(f.name.replace(new RegExp('^(' + a.icao + '|' + a.icao.replace(/^K/, '') + ') '), '')) + '</span></button>').join('') + '</div>' +
         '<div class="lsp-sq"><span>Squelch</span><span class="m-seg">' + SQ.map(([v, t]) => '<button type="button" class="m-pill' + (v === sqAir ? ' on' : '') + '" data-sq="' + v + '">' + t + '</button>').join('') + '</span></div>' +
         '<p class="lsp-n">Squelch Low or High shows Quiet / Talking. Off plays the hiss between calls.</p>';
     }
@@ -191,10 +191,35 @@
 
   async function start() {
     build();
-    try { AP = (await j('/api/airports')).airports || []; } catch (e) { AP = []; }
+    // 1.2.6: KLAX from the station bank (FAA runway headings) when installed, else the built-in file
+    try { AP = (await j('/api/airports?id=KLAX')).airports || []; } catch (e) { AP = []; }
     hookMap(); pollStrip(); setInterval(pollStrip, 5000);
     setInterval(() => { if (!document.hidden) pollLevel(); }, 1000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
-  window.traceAirmap = { focus: icao => focusOn(AP.find(a => a.icao === icao) || AP[0]), unfocus, render };
+  // 1.2.6: any US airport (Stations > airport > Focus on map, or traceAirmap.focus('KBUR')).
+  // With one radio the map just flies there (no tuning); with two it opens the full airport focus.
+  async function focusIcao(icao) {
+    let a = AP.find(x => x.icao === icao);
+    if (!a) { try { a = ((await j('/api/airports?id=' + encodeURIComponent(icao))).airports || [])[0]; } catch (e) { a = null; } }
+    if (!a) return;
+    if (!AP.includes(a)) AP.push(a);
+    const m = M();
+    if (dual()) focusOn(a);
+    else if (m && m.map) { m.follow = false; m.map.easeTo({ center: [a.lon, a.lat], zoom: Math.max(a.zoom || 11, 10.5), duration: 700 }); }
+  }
+  function handoff() {
+    // other pages leave a request in localStorage (Stations: traceFocusAirport, My maps: traceMapGoto)
+    let f = null, g = null;
+    try { f = localStorage.getItem('traceFocusAirport'); g = localStorage.getItem('traceMapGoto'); } catch (e) {}
+    const m = M(); if (!m || !m.map || !m.ready) return;
+    if (f) { try { localStorage.removeItem('traceFocusAirport'); } catch (e) {} focusIcao(f); }
+    if (g) {
+      try { localStorage.removeItem('traceMapGoto'); const v = JSON.parse(g); m.follow = false; m.map.easeTo({ center: v.center, zoom: v.zoom || 9, duration: 700 }); } catch (e) {}
+    }
+  }
+  window.addEventListener('storage', e => { if (e.key === 'traceFocusAirport' || e.key === 'traceMapGoto') handoff(); if (e.key === 'traceMapsChanged') location.reload(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) handoff(); });
+  setInterval(handoff, 1500);
+  window.traceAirmap = { focus: icao => focusIcao(icao || 'KLAX'), unfocus, render };
 })();

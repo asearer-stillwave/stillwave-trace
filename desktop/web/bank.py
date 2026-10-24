@@ -1,0 +1,119 @@
+"""Trace 1.2.6 station bank queries (read-only SQLite at /var/lib/sdr/bank/stations.sqlite).
+FM: FCC licensing data. Airband: FAA NASR 28-day subscription. Both US public domain. Receive only, not for navigation."""
+import math, os, sqlite3, threading
+
+G = {"tower": "Tower", "ground": "Ground", "clearance": "Clearance", "atis": "ATIS", "approach": "Approach", "ctaf": "CTAF", "unicom": "UNICOM"}
+ORDER = list(G)
+_c = {"conn": None, "mtime": 0, "lock": threading.Lock()}
+
+
+def db(path):
+    try:
+        mt = os.stat(path).st_mtime
+    except OSError:
+        return None
+    with _c["lock"]:
+        if _c["conn"] is None or _c["mtime"] != mt:
+            try:
+                if _c["conn"] is not None: _c["conn"].close()
+            except Exception: pass
+            _c["conn"] = sqlite3.connect("file:%s?mode=ro" % path, uri=True, check_same_thread=False); _c["mtime"] = mt
+        return _c["conn"]
+
+
+def mi(a, b, c, d):
+    r = math.pi / 180; x = (d - b) * r * math.cos((a + c) / 2 * r); y = (c - a) * r
+    return math.hypot(x, y) * 3958.8
+
+
+def rows(c, sql, *a):
+    cur = c.execute(sql, a); k = [x[0] for x in cur.description]; return [dict(zip(k, r)) for r in cur]
+
+
+def apt_freqs(c, aid):
+    f = rows(c, "select grp,mhz,label from afreq where apt=? order by mhz", aid)
+    return sorted(f, key=lambda x: ORDER.index(x["grp"]) if x["grp"] in ORDER else 99)
+
+
+def airport(c, ident):
+    ident = (ident or "").strip().upper()
+    a = rows(c, "select * from airport where id=? or icao=? limit 1", ident, ident)
+    if not a: return None
+    a = a[0]; a["freqs"] = apt_freqs(c, a["id"])
+    a["runways_deg"] = [r[0] for r in c.execute("select hdg from runway where apt=? order by hdg", (a["id"],))]
+    return a
+
+
+def focus_shape(a):
+    """An airport in the 1.2.5 /api/airports shape (airmap.js)."""
+    code = a["icao"] or a["id"]; gs = []
+    for g in ("tower", "ground", "approach", "atis", "ctaf", "unicom", "clearance"):
+        fr = []
+        for f in a["freqs"]:
+            if f["grp"] != g: continue
+            name = f["label"] if g == "approach" and f["label"] else (code + " " + G[g] + ((" " + f["label"]) if f["label"] else ""))
+            fr.append({"mhz": f["mhz"], "name": name[:40]})
+        fr.sort(key=lambda x: ("Heli" in x["name"], x["mhz"]))
+        if fr: gs.append({"id": g, "label": G[g], "freqs": fr[:6]})
+    if not any(g["id"] == "tower" for g in gs) and gs:
+        gs[0] = dict(gs[0], id="tower") if gs[0]["id"] in ("ctaf", "unicom") else gs[0]
+    return {"icao": code, "name": a["name"], "lat": a["lat"], "lon": a["lon"], "zoom": 11.5 if a.get("towered") else 12.5,
+            "runways_deg": a.get("runways_deg") or [], "groups": gs[:4], "source": "bank"}
+
+
+def query(c, what, q):
+    if what == "meta":
+        m = dict(c.execute("select k,v from meta").fetchall())
+        m["counts"] = {t: c.execute("select count(*) from %s" % t).fetchone()[0] for t in ("fm", "airport", "afreq")}
+        return m
+    if what == "states":
+        t = "fm" if q.get("band") == "fm" else "airport"
+        return {"states": rows(c, "select state, count(*) n from %s where state!='' group by state order by state" % t)}
+    if what == "cities":
+        return {"cities": rows(c, "select city, count(*) n from fm where state=? group by city order by n desc, city limit ?",
+                               q.get("state", ""), min(200, int(q.get("limit") or 60)))}
+    if what == "fm":
+        return {"stations": rows(c, "select call,mhz,city,state,erp_kw from fm where state=? and city=? order by mhz", q.get("state", ""), q.get("city", ""))}
+    if what == "airports":
+        return {"airports": rows(c, "select id,icao,name,city,towered,(select count(*) from afreq where apt=id) nf from airport where state=? "
+                                    "order by towered desc, name limit ? offset ?", q.get("state", ""), min(200, int(q.get("limit") or 60)), int(q.get("offset") or 0))}
+    if what == "airport":
+        a = airport(c, q.get("id", ""))
+        return a or {"error": "not found"}
+    if what == "search":
+        s = (q.get("q") or "").strip()[:40]; out = []
+        if not s: return {"results": []}
+        like = "%" + s + "%"
+        try:
+            f = float(s)
+            out += [dict(r, kind="fm") for r in rows(c, "select call,mhz,city,state from fm where abs(mhz-?)<0.01 order by erp_kw desc limit 10", f)]
+            out += [dict(r, kind="air") for r in rows(c, "select a.icao,a.id,a.name,a.city,a.state,f.grp,f.mhz from afreq f join airport a on a.id=f.apt "
+                                                         "where abs(f.mhz-?)<0.003 order by a.towered desc, a.name limit 10", f)]
+        except ValueError:
+            u = s.upper()
+            out += [dict(r, kind="air") for r in rows(c, "select icao,id,name,city,state,towered from airport where icao=? or id=? or name like ? or city like ? "
+                                                         "order by (icao=? or id=?) desc, towered desc limit 8", u, u, like, like, u, u)]
+            out += [dict(r, kind="fm") for r in rows(c, "select call,mhz,city,state from fm where call like ? or city like ? order by erp_kw desc limit 8", u + "%", like)]
+        return {"results": out}
+    if what == "near":
+        if q.get("zip"):
+            z = rows(c, "select lat,lon from zip where zip=?", q["zip"].strip()[:5])
+            if not z: return {"error": "unknown ZIP code"}
+            lat, lon = z[0]["lat"], z[0]["lon"]
+        else:
+            lat, lon = float(q["lat"]), float(q["lon"])
+        R = min(150.0, float(q.get("mi") or 30)); d = R / 69; dl = d / max(0.2, math.cos(math.radians(lat)))
+        if q.get("band") == "fm":
+            L = rows(c, "select call,mhz,city,state,lat,lon,erp_kw from fm where lat between ? and ? and lon between ? and ?", lat - d, lat + d, lon - dl, lon + dl)
+        else:
+            L = rows(c, "select id,icao,name,city,state,lat,lon,towered from airport where lat between ? and ? and lon between ? and ?", lat - d, lat + d, lon - dl, lon + dl)
+        for r in L: r["mi"] = round(mi(lat, lon, r["lat"], r["lon"]), 1)
+        L = [r for r in L if r["mi"] <= R]
+        if q.get("band") == "fm":
+            L.sort(key=lambda r: r["mhz"])
+        else:
+            L.sort(key=lambda r: (-r["towered"], r["mi"]))
+            for a in L[:int(q.get("limit") or 40)]:
+                a["tw"] = next((f["mhz"] for f in apt_freqs(c, a["id"]) if f["grp"] in ("tower", "ctaf", "unicom") and "Heli" not in f["label"]), None)
+        return {"home": {"lat": lat, "lon": lon, "zip": q.get("zip")}, "mi": R, "n": len(L), "items": L[:int(q.get("limit") or 40)]}
+    return {"error": "unknown"}

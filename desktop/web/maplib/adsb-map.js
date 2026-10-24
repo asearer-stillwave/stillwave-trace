@@ -32,7 +32,7 @@ function basemapLayers(source, zoomPart) {
   const out = [];
   for (const l of window.basemaps.layers(source, flavor, { lang: 'en' })) {
     if (DROP.has(l.id)) continue;
-    if (zoomPart === 'core' && l.id === 'background') continue;
+    if ((zoomPart === 'core' || zoomPart === 'pack') && l.id === 'background') continue;
     const L = Object.assign({}, l, { id: source + ':' + l.id });
     if (l.id === 'pois') L.filter = ['all', l.filter, ['==', ['get', 'kind'], 'aerodrome']];  // only airports
     if (l.id === 'roads_runway') L.paint = Object.assign({}, l.paint, {
@@ -44,7 +44,20 @@ function basemapLayers(source, zoomPart) {
   return out;
 }
 
-function pmtilesStyle(url, manifest) {
+// 1.2.6: downloaded regions (sdr-content packs). Each pack is its own PMTiles source limited to its box and zoom range,
+// drawn under the built-in LA layers (LA keeps its detail where the two overlap).
+function packSources(packs) {
+  const src = {}, layers = [];
+  (packs || []).forEach((p, i) => {
+    const id = 'pk' + i;
+    src[id] = { type: 'vector', tiles: ['pmtiles://' + location.origin + p.url + '/{z}/{x}/{y}'], minzoom: p.minzoom || 0,
+                maxzoom: Math.min(15, p.maxzoom || 14), bounds: p.bbox };
+    for (const l of basemapLayers(id, 'pack')) layers.push(l);
+  });
+  return { src, layers };
+}
+
+function pmtilesStyle(url, manifest, packs) {
   const abs = location.origin + url + '/{z}/{x}/{y}';
   const core = (manifest && manifest.bbox_core) || [-118.75, 33.55, -117.90, 34.30];
   // 1.2.1: on the kiosk the credit is plain text (tapping the link navigated the kiosk away and blanked the page);
@@ -52,7 +65,7 @@ function pmtilesStyle(url, manifest) {
   const kioskPage = document.documentElement.classList.contains('kiosk');
   const att = kioskPage ? '© OpenStreetMap contributors · Protomaps'
     : '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> · <a href="https://protomaps.com">Protomaps</a>';
-  return {
+  const st = {
     version: 8,
     glyphs: location.origin + '/maplib/fonts/{fontstack}/{range}.pbf',
     sprite: location.origin + '/maplib/sprites/dark',
@@ -64,6 +77,16 @@ function pmtilesStyle(url, manifest) {
     },
     layers: [...basemapLayers('pmo', 'outer'), ...basemapLayers('pmc', 'core')],
   };
+  const pk = packSources(packs);
+  if (pk.layers.length) {
+    // interleave by basemap layer (all earth, then all water, ... roads, labels) so overlapping files merge cleanly:
+    // a low-zoom tile in one file never paints over roads or labels from another
+    Object.assign(st.sources, pk.src);
+    const base = id => id.slice(id.indexOf(':') + 1), groups = new Map();
+    for (const l of [...st.layers, ...pk.layers]) { const b = base(l.id); if (!groups.has(b)) groups.set(b, []); groups.get(b).push(l); }
+    st.layers = [].concat(...groups.values());
+  }
+  return st;
 }
 
 function fallbackStyle(url) {
@@ -152,11 +175,20 @@ export class AircraftMap {
     const proto = new window.pmtiles.Protocol();
     maplibregl.addProtocol('pmtiles', proto.tile);
     const detailed = mapInfo && mapInfo.installed;
-    const style = detailed ? pmtilesStyle(mapInfo.url, mapInfo.manifest) : fallbackStyle(mapInfo ? mapInfo.fallback : '/maplib/fallback/la-lowzoom.geojson');
+    const packs = (mapInfo && mapInfo.packs) || [];
+    const style = detailed ? pmtilesStyle(mapInfo.url, mapInfo.manifest, packs) : fallbackStyle(mapInfo ? mapInfo.fallback : '/maplib/fallback/la-lowzoom.geojson');
+    // 1.2.6: the pan limit grows to cover every downloaded region (LA box only when there are none)
+    let bounds = [[-121.5, 32.3], [-115.5, 35.8]];
+    for (const p of packs) {
+      const b = p.bbox, pad = 1.5;
+      bounds = [[Math.max(-180, Math.min(bounds[0][0], b[0] - pad)), Math.max(-85, Math.min(bounds[0][1], b[1] - pad))],
+                [Math.min(180, Math.max(bounds[1][0], b[2] + pad)), Math.min(85, Math.max(bounds[1][1], b[3] + pad))]];
+    }
+    const wide = packs.some(p => (p.bbox[2] - p.bbox[0]) > 20);
     this.detailed = detailed;
     const m = this.map = new maplibregl.Map({
-      container: this.el, style, center: LAX, zoom: (this.defaultZoom = this.el.clientWidth < 500 ? 8.9 : 9.4), minZoom: 6, maxZoom: 15.5,
-      maxBounds: [[-121.5, 32.3], [-115.5, 35.8]], attributionControl: false,
+      container: this.el, style, center: LAX, zoom: (this.defaultZoom = this.el.clientWidth < 500 ? 8.9 : 9.4), minZoom: wide ? 2 : (packs.length ? 4 : 6), maxZoom: 15.5,
+      maxBounds: bounds, attributionControl: false,
       dragRotate: false, pitchWithRotate: false, touchPitch: false, maxPitch: 0,
       fadeDuration: 0, antialias: false, renderWorldCopies: false,
       // 1.0.7 zoom-lag fix: no per-frame extras (tile resource timing, expired-tile refresh, >1x canvas on big screens)

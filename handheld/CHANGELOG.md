@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.2.6] and [1.2.6-desktop] - 2026-10-24 (PT) - Download maps, US station bank, New preset; both editions
+### Added
+- **More › Download maps:** browse regions (World › North America › United States › state › metro), see each map's size, tap **Get**. Downloads run in the background (Pause / Resume / Cancel, a waiting queue) and **resume where they stopped** after a dropped connection or Pause. Each map is checked against the **signed map list** (Ed25519, the Stillwave update key) and its **sha256** (plus its own signature file) before it is used. **1 GB is always kept free**; a map that would eat into it is refused with a clear message. **My maps** lists the built-in LA map and every download with **View** (opens the map there) and **Delete** (tap twice). With no internet the last map list is shown and the maps on the box keep working.
+- **Downloaded regions on the ADS-B map:** every installed pack is drawn in addition to the built-in LA map (layers merged so overlapping files never hide each other's roads or labels), and the pan limit grows to cover them.
+- **CONTENT_URL** (More › Download maps › Content source, or `sudo sdr-content set-url URL`, stored in `/etc/sdr/update.env`): one base address for map packs, the station bank and updates (`updates/handheld/` or `updates/desktop/`, used only when `UPDATE_URL` is empty, so serving from a Mac still works). Point it at a home Raspberry Pi now and Cloudflare R2 later.
+- **More › Stations (US station bank, offline):** 11,373 FCC FM stations and 7,538 FAA airports with 15,845 airband frequencies (Tower, Ground, Clearance, ATIS, Approach/Departure, CTAF, UNICOM). Browse **State › City** (FM) or **State › Airport** (airband), **search** by call sign, airport code (BUR or KBUR), city or frequency, **Near me** by home ZIP code or the map's home position (no GPS yet). Every row has **▶ Tune** and **＋ Preset**; airports have **Focus on map** and **Add all to presets**. Bundled (2.2 MB, FAA cycle 2026-10-01) and installed by the package.
+- **Airport focus for any US airport:** `/api/airports?id=KBUR` builds the airport from the bank, with FAA runway headings (APT_RWY true alignment) for the approach rings and cleaned-up Approach names (e.g. "SoCal Approach 225-044 LAX"). The Map's KLAX focus now uses the bank too; the 1.2.5 KLAX file stays as the fallback.
+- **About › Station bank:** counts, FAA cycle and next cycle, **Update station bank** (signed manifest + sha256 from CONTENT_URL), and the FCC / FAA / Census credit with **Receive only, not for navigation**.
+- **Preset settings › ＋ NEW PRESET** (next to ‹ FM RADIO): FM or Airband, name, frequency, gain (FM), Save / Cancel. FM saves to the preset list without retuning; Airband saves to Listen › Airband presets (airband gain stays per band). Stations' **＋ Preset** opens it prefilled.
+- `sdr-content` (map packs + station bank helper), `web/bank.py`; build tools `tools/build_station_bank.py`, `tools/content/{build_map_pack.py,publish_content.py,regions.json}` and the home server kit `tools/content/server/` (Pi OS Lite nginx setup, R2 upload with rclone).
+### Fixed
+- KLAX approach rings used magnetic-ish headings (69/249); the bank's true runway alignment (83/263) matches ADS-B track, so rings now catch aircraft on the 24/25 finals reliably.
+- Tower quick-tune picked the helicopter frequency first at LAX; helicopter frequencies now sort last.
+
 ## [1.2.5] and [1.2.5-desktop] - 2026-10-23 (PT) - FM page fixes, two radios at once, aircraft models; both editions
 ### Added
 - **Listen › FM: EDIT PRESETS ›** pill on the FM stations card opens Preset settings; **‹ FM RADIO** at the top of Preset settings goes back to Listen › FM.
