@@ -1319,3 +1319,94 @@ input, select, textarea, option, code, pre, .ulog, #log, .kbd, .kbd *, #appw, .k
 input::placeholder, textarea::placeholder { text-transform: uppercase; }
 /* 1.2.9: wider mono caps — single-word option buttons never break mid-word */
 .bs-gain button, .seg button { white-space: nowrap; overflow-wrap: normal; letter-spacing: .04em; padding-left: .2em; padding-right: .2em; min-width: 0; }
+
+/* ===== 1.3 ===== */
+/* Network: Wi-Fi switch row, one-line error with Details, hotspot form without gaps (item 12, 14) */
+#netcard .nw-row { margin: 0 0 .5rem; }
+#netcard .nw-row h2 { margin: 0; }
+.nw-err { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: .6rem; margin-top: .6rem; text-align: left;
+  border: 1px solid var(--danger-line); color: var(--red); background: var(--danger-bg); min-height: var(--tap); }
+.nw-err .nw-more { color: var(--muted); white-space: nowrap; }
+.nw-err.hide, #netlastD.hide { display: none !important; }
+#apcard .apform { gap: .5rem; margin: .4rem 0 0; }
+#apcard .apform label { margin: 0; }
+#apcard .v-lbl { margin: .6rem 0 .3rem; }
+#apcard .aprow { margin: .6rem 0; }
+#apcard .note { margin-top: .5rem; }
+/* New preset: labels line up with their fields (item 8) */
+.np-form label { display: grid !important; grid-template-columns: minmax(0, 9.5em) minmax(0, 1fr); align-items: center; gap: .6rem; flex-direction: initial; }
+.np-form label[hidden] { display: none !important; }
+.np-form label > input { width: 100%; min-width: 0; }
+html[data-ts="xl"] .np-form label, html[data-ts="large"] .np-form label { grid-template-columns: 1fr; gap: .25rem; }
+/* Station bank STATE ▾ / CITY ▾ pickers (item 11) */
+.sb-pick { display: flex; gap: .5rem; flex-wrap: wrap; margin: .6rem 0; }
+.sb-dd { position: relative; flex: 1 1 12rem; min-width: 0; }
+.sb-ddb { width: 100%; display: flex; gap: .5rem; align-items: center; justify-content: flex-start; min-height: var(--tap); text-align: left; }
+.sb-ddb .sb-ddk { color: var(--muted); white-space: nowrap; }
+.sb-ddb b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sb-ddl { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px); max-height: 50vh; overflow: auto; background: var(--panel); border: 1px solid var(--signal); border-radius: 10px; }
+.sb-ddl[hidden] { display: none; }
+.sb-ddl button { display: flex; width: 100%; justify-content: space-between; gap: .5rem; border: 0; border-bottom: 1px solid var(--grid); border-radius: 0; background: transparent; min-height: var(--tap); text-align: left; }
+.sb-ddl button.on { color: var(--signal); }
+.sb-ddl button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sb-ddl button small { color: var(--muted); white-space: nowrap; }
+.sb-about { background: transparent; border: 0; color: var(--muted); padding: .4rem 0; min-height: 0; margin-top: .6rem; }
+/* Listen (items 4, 9, 21, 22): pinned activity strip, tuner card with gear, presets right under it */
+.page-listen .wrap { position: relative; }
+.page-listen .v-now { position: sticky; top: 0; z-index: 15; display: flex; align-items: center; flex-wrap: wrap; gap: .3rem .6rem; padding: .45rem .6rem;
+  background: var(--panel); border: 1px solid var(--signal); border-left-width: 3px; border-radius: 10px; margin: 0 0 .7rem; }
+.page-listen .v-now b { white-space: nowrap; }
+.v-live { background: var(--red); color: #fff; border-radius: 5px; padding: 1px 7px; font-weight: 700; letter-spacing: .1em; white-space: nowrap; }
+.v-live.off { background: transparent; color: var(--static); border: 1px solid var(--line); }
+.v-talk { color: var(--static); white-space: nowrap; } .v-talk.on { color: var(--signal); font-weight: 700; }
+.v-sig { color: var(--static); white-space: nowrap; margin-left: auto; letter-spacing: 0; }
+.v-stop { white-space: nowrap; min-height: 40px; }
+.page-listen .v-sub { margin: 0 0 .6rem; }
+.v-tcard { padding-top: .7rem; padding-bottom: .5rem; }
+.v-tcard .v-h { margin-bottom: .3rem; }
+.v-gear { white-space: nowrap; }
+.v-gearp { border: 1px solid var(--line); border-radius: 10px; padding: .5rem .6rem; margin: .3rem 0 .5rem; }
+.v-gearp[hidden] { display: none !important; }
+.page-listen .v-freq { font-size: 54px; }
+.page-listen .v-step { min-width: 56px; min-height: 56px; }
+.v-steprow { display: flex; align-items: center; gap: .6rem; margin-top: .5rem; }
+.v-stepk { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; color: var(--static); }
+.page-listen .v-dial { height: 64px; margin-top: .7rem; cursor: pointer; }
+.page-listen .v-dial .ps { width: 13px; height: 13px; top: -7px; background: var(--signal); }
+.v-dlab { position: absolute; right: 0; bottom: 0; font-family: var(--mono); font-size: 10px; letter-spacing: .1em; color: var(--static); white-space: nowrap; }
+.page-listen .v-dial .nm { display: none; }
+.v-ph { margin: .2rem 0 .5rem; flex-wrap: wrap; gap: .4rem; }
+.v-ph h2 { margin: 0; }
+.v-ph .fm-links { display: flex; gap: .4rem; flex-wrap: wrap; }
+.v-ph .fm-links .btn, .v-ph .fm-links button { min-height: 40px; white-space: nowrap; }
+.page-listen .v-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
+.page-listen .v-pre { min-height: 58px; padding: .5rem .55rem; align-items: center; text-align: center; min-width: 0; }
+.page-listen .v-pre b, .page-listen .v-pre span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.page-listen .v-pre.on { border-color: var(--signal); color: var(--signal); }
+html[data-ts="xl"] .page-listen .v-grid, html[data-ts="large"] .page-listen .v-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+html.hdmi .page-listen .v-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.v-hint { margin: .2rem 0 .2rem; }
+.v-near { position: absolute; left: 1rem; right: 1rem; z-index: 30; background: var(--panel); border: 1px solid var(--signal); border-radius: 12px; padding: .3rem; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+.v-near[hidden] { display: none; }
+.v-nearl button { display: flex; width: 100%; justify-content: space-between; gap: .6rem; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; min-height: var(--tap); }
+.v-nearl button span { color: var(--static); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Scan (items 18, 20): FREQUENCY ▾ + gear + HOLD/RESUME; HOLD drops to a second row at XL */
+.sc-top { display: flex; flex-wrap: wrap; gap: .5rem; align-items: stretch; margin-bottom: .5rem; }
+.sc-freq { flex: 1 1 14rem; min-width: 0; display: flex; gap: .5rem; align-items: center; justify-content: flex-start; text-align: left; min-height: var(--tap); }
+.sc-freq .sc-k { white-space: nowrap; color: var(--static); }
+.sc-freq b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sc-gear { min-width: var(--tap); font-size: 1.15em; }
+.sc-hold { white-space: nowrap; min-width: 7.5rem; }
+html[data-ts="xl"] .sc-hold { flex: 1 0 100%; }
+.sc-ddl { border: 1px solid var(--signal); border-radius: 10px; background: var(--panel); margin: 0 0 .6rem; max-height: 55vh; overflow: auto; }
+.sc-ddl[hidden] { display: none; }
+.sc-ddl button { display: flex; width: 100%; justify-content: space-between; gap: .6rem; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; min-height: var(--tap); text-align: left; }
+.sc-ddl button.on { color: var(--signal); }
+.sc-ddl button small { color: var(--static); white-space: nowrap; }
+.sc-held { background: #facc15; color: #1a1400; border-radius: 5px; padding: 1px 7px; font-weight: 700; letter-spacing: .1em; white-space: nowrap; margin-right: .6rem; }
+.sc-held[hidden], .sc-heldnote[hidden], #progbox[hidden] { display: none !important; }
+.sc-held[hidden], .sc-heldnote[hidden], #progbox[hidden] { display: none !important; }
+/* 1.3 fixes: hotspot form gaps at XL, station pickers stack at XL */
+#apcard .apform label { flex: 0 0 auto; }
+html[data-ts=xl] .sb-pick, html[data-ts=large] .sb-pick { flex-direction: column; align-items: stretch; }
+html[data-ts=xl] .sb-dd, html[data-ts=large] .sb-dd { flex: 0 0 auto; width: 100%; }

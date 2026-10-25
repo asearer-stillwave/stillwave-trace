@@ -18,7 +18,8 @@
   </div>
   <div id="view"><p class="note">Loading…</p></div>
   <p class="status" id="msg"></p>
-  <p class="note" id="foot">FM: FCC licensing data. Airband: FAA NASR. Receive only, not for navigation.</p>
+  <button type="button" class="sb-about" id="foot">About the data ›</button>
+  <p class="note" id="footD" hidden>FM: FCC licensing data. Airband: FAA NASR. Receive only, not for navigation.</p>
 </div>
 <script src="/mode.js"></script>
 <script src="/kbd.js"></script>
@@ -30,7 +31,7 @@ const f3 = m => { m = +m; return m >= 118 ? m.toFixed(3) : m.toFixed(1); };   //
 const GL = {tower:'Tower', ground:'Ground', clearance:'Clearance', atis:'ATIS', approach:'Approach', ctaf:'CTAF', unicom:'UNICOM'};
 const SN = {AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',CO:'Colorado',CT:'Connecticut',DE:'Delaware',DC:'District of Columbia',FL:'Florida',GA:'Georgia',HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',IA:'Iowa',KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',MT:'Montana',NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',NJ:'New Jersey',NM:'New Mexico',NY:'New York',NC:'North Carolina',ND:'North Dakota',OH:'Ohio',OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',RI:'Rhode Island',SC:'South Carolina',SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',VT:'Vermont',VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',PR:'Puerto Rico',VI:'Virgin Islands',GU:'Guam',AS:'American Samoa',MP:'N. Mariana Islands'};
 const Q = new URLSearchParams(location.search);
-let S = {tab: Q.get('v') === 'apt' ? 'air' : (Q.get('v') || localStorage.getItem('traceBankTab') || 'fm'), state: Q.get('state') || null, city: Q.get('city') || null, apt: Q.get('id') || null,
+let S = {tab: Q.get('v') === 'apt' ? 'air' : (Q.get('v') || localStorage.getItem('traceBankTab') || 'fm'), state: Q.get('state') || localStorage.getItem('traceBankState') || null, city: Q.get('city') || null, apt: Q.get('id') || null,
          q: Q.get('q') || '', band: Q.get('band') || 'air', zip: Q.get('zip') || localStorage.getItem('traceHomeZip') || '', mi: 30, off: 0};
 async function J(u){ const r = await fetch(u, {cache:'no-store'}); const d = await r.json().catch(() => ({})); if (!r.ok || d.ok === false) throw new Error(d.error || ('HTTP ' + r.status)); return d; }
 function msg(t, k){ const m = $('msg'); m.className = 'status ' + (k || ''); m.innerHTML = t || ''; }
@@ -54,9 +55,14 @@ const act = (kind, mhz, name) => `<div class="sb-act"><button type="button" clas
 const openBtn = id => `<div class="sb-act"><button type="button" data-a="apt" data-id="${esc(id)}">Open ›</button></div>`;
 const row = (t, s, a) => `<div class="sb-row"><div class="sb-main"><div class="sb-t">${t}</div><div class="sb-s">${s}</div></div>${a}</div>`;
 const crumb = parts => `<div class="sb-crumb">${parts.map(([t, a]) => a ? `<a data-a="${a}">${esc(t)}</a>` : `<b>${esc(t)}</b>`).join(' › ')}</div>`;
-async function stateGrid(band){
+// 1.3: STATE ▾ / CITY ▾ pickers (a short list that opens under the button) replace the state grid and city buttons
+function picker(kind, label, cur, opts){
+  return `<div class="sb-dd" data-dd="${kind}"><button type="button" class="sb-ddb" data-a="dd" data-k="${kind}" aria-haspopup="listbox" aria-expanded="false"><span class="sb-ddk">${label} ▾</span><b>${esc(cur || 'Pick')}</b></button>` +
+    `<div class="sb-ddl" role="listbox" hidden>${opts.map(([v, t, n]) => `<button type="button" role="option" class="${t === cur ? 'on' : ''}" data-a="${kind}" data-${kind === 'state' ? 's' : 'c'}="${esc(v)}"><span>${esc(t)}</span><small>${n}</small></button>`).join('')}</div></div>`;
+}
+async function statePick(band){
   const st = (await J('/api/bank/states?band=' + band)).states;
-  return `<div class="sb-g">Pick a state</div><div class="sb-grid st">${st.map(x => `<button type="button" data-a="state" data-s="${esc(x.state)}" title="${esc(SN[x.state] || x.state)}">${esc(x.state)}<small>${x.n}</small></button>`).join('')}</div>`;
+  return picker('state', 'State', S.state ? (SN[S.state] || S.state) : '', st.map(x => [x.state, SN[x.state] || x.state, x.n]));
 }
 async function view(){
   document.querySelectorAll('#tabs button').forEach(b => { b.classList.toggle('on', b.dataset.tab === S.tab); b.setAttribute('aria-selected', b.dataset.tab === S.tab); });
@@ -64,15 +70,13 @@ async function view(){
   const v = $('view'); let h = '';
   try {
     if (S.tab === 'fm') {
-      if (!S.state) h = crumb([['FM']]) + await stateGrid('fm');
+      if (!S.state) h = `<div class="sb-pick">${await statePick('fm')}</div><p class="note">Pick a state to see its FM stations.</p>`;
       else {
         const c = (await J('/api/bank/cities?limit=60&state=' + S.state)).cities;
         if (!S.city) S.city = c.length ? c[0].city : null;
         const s = S.city ? (await J(`/api/bank/fm?state=${S.state}&city=${encodeURIComponent(S.city)}`)).stations : [];
-        h = crumb([['FM', 'top'], [SN[S.state] || S.state, null], [cap(S.city || '', 14), null]]) +
-          `<div class="sb-cols"><div><div class="sb-g">Cities in ${esc(SN[S.state] || S.state)} · most stations first</div><div class="sb-grid">${c.slice(0, document.documentElement.classList.contains('hdmi') ? 12 : 8).map(x => `<button type="button" class="${x.city === S.city ? 'on' : ''}" data-a="city" data-c="${esc(x.city)}">${esc(x.city)}<small>${x.n} FM</small></button>`).join('')}</div>
-          ${c.length > 8 ? `<div class="sb-more"><select id="cityAll" aria-label="All cities">${c.map(x => `<option ${x.city === S.city ? 'selected' : ''}>${esc(x.city)}</option>`).join('')}</select></div>` : ''}</div>
-          <div><div class="sb-g">${esc(S.city || '')} · ${s.length} stations</div><div class="sb-list">${s.map(x => row(`${esc(x.call)}  <span class="sb-f">${f3(x.mhz)}</span>`, `${esc(x.city)}, ${x.state}`, act('fm', x.mhz, x.call))).join('')}</div></div></div>`;
+        h = `<div class="sb-pick">${await statePick('fm')}${picker('city', 'City', S.city || '', c.map(x => [x.city, x.city, x.n + ' FM']))}</div>` +
+          `<div class="sb-g">${esc(S.city || '')} · ${s.length} stations</div><div class="sb-list">${s.map(x => row(`${esc(x.call)}  <span class="sb-f">${f3(x.mhz)}</span>`, `${esc(x.city)}, ${x.state}`, act('fm', x.mhz, x.call))).join('')}</div>`;
       }
     } else if (S.tab === 'air' && S.apt) {
       const a = await J('/api/bank/airport?id=' + encodeURIComponent(S.apt));
@@ -84,10 +88,10 @@ async function view(){
         <div class="sb-cols"><div>${gs.slice(0, half).map(grp).join('')}</div><div>${gs.slice(half).map(grp).join('')}</div></div>`;
       S._apt = a; S.state = a.state;
     } else if (S.tab === 'air') {
-      if (!S.state) h = crumb([['Airband']]) + await stateGrid('air');
+      if (!S.state) h = `<div class="sb-pick">${await statePick('air')}</div><p class="note">Pick a state to see its airports.</p>`;
       else {
         const a = (await J(`/api/bank/airports?limit=40&offset=${S.off}&state=${S.state}`)).airports;
-        h = crumb([['Airband', 'top'], [SN[S.state] || S.state, null]]) + `<div class="sb-g">Towered airports first</div><div class="sb-list">${a.map(x => row(`${esc(x.icao || x.id)}  ${esc(aptShort(x.name, x.city, x.short))}`, `${x.towered ? 'TWR' : 'CTAF'} · ${esc(x.city)} · ${x.nf} freqs`, openBtn(x.icao || x.id))).join('')}</div>` +
+        h = `<div class="sb-pick">${await statePick('air')}</div><div class="sb-g">Towered airports first</div><div class="sb-list">${a.map(x => row(`${esc(x.icao || x.id)}  ${esc(aptShort(x.name, x.city, x.short))}`, `${x.towered ? 'TWR' : 'CTAF'} · ${esc(x.city)} · ${x.nf} freqs`, openBtn(x.icao || x.id))).join('')}</div>` +
           `<div class="row sb-more">${S.off ? '<button type="button" data-a="prev">‹ Previous</button>' : ''}${a.length === 40 ? '<button type="button" data-a="next">More airports ›</button>' : ''}</div>`;
       }
     } else if (S.tab === 'search') {
@@ -113,7 +117,6 @@ async function view(){
   v.innerHTML = h;
   const sf = $('sF'); if (sf) sf.onsubmit = e => { e.preventDefault(); S.q = $('sQ').value.trim(); view(); };
   const zf = $('zF'); if (zf) zf.onsubmit = e => { e.preventDefault(); S.zip = $('zIn').value.trim(); S.ll = null; try { localStorage.setItem('traceHomeZip', S.zip); } catch (x) {} view(); };
-  const ca = $('cityAll'); if (ca) ca.onchange = () => { S.city = ca.value; view(); };
 }
 async function tune(k, mhz, name){
   msg('Tuning…');
@@ -130,7 +133,9 @@ document.addEventListener('click', async e => {
   const a = b.dataset.a;
   if (a === 'top') { S.state = null; S.city = null; S.apt = null; S.off = 0; return view(); }
   if (a === 'st') { S.apt = null; return view(); }
-  if (a === 'state') { S.state = b.dataset.s; S.city = null; S.off = 0; return view(); }
+  if (a === 'dd') { const l = b.parentNode.querySelector('.sb-ddl'), open = l.hidden; document.querySelectorAll('.sb-ddl').forEach(x => { x.hidden = true; x.parentNode.querySelector('.sb-ddb').setAttribute('aria-expanded', 'false'); });
+    l.hidden = !open; b.setAttribute('aria-expanded', open); if (open) { const on = l.querySelector('.on'); if (on) l.scrollTop = on.offsetTop - l.clientHeight / 2; } return; }
+  if (a === 'state') { S.state = b.dataset.s; S.city = null; S.off = 0; try { localStorage.setItem('traceBankState', S.state); } catch (x) {} return view(); }
   if (a === 'city') { S.city = b.dataset.c; return view(); }
   if (a === 'next') { S.off += 40; return view(); }
   if (a === 'prev') { S.off = Math.max(0, S.off - 40); return view(); }
@@ -150,16 +155,17 @@ document.addEventListener('click', async e => {
     msg(`Added ${ok} of ${list.length} to Listen › Airband presets.`, ok === list.length ? 'ok' : 'err');
   }
 });
-J('/api/bank/meta').then(m => { $('foot').textContent = `FM: FCC licensing data (${m.fcc_pulled}). Airband: FAA NASR cycle ${m.nasr_cycle} (next ${m.nasr_next}). ${Number(m.counts.fm).toLocaleString()} FM stations · ${Number(m.counts.airport).toLocaleString()} airports. Receive only, not for navigation.`; }).catch(() => {});
+$('foot').onclick = () => $('footD').hidden = !$('footD').hidden;
+J('/api/bank/meta').then(m => { $('footD').textContent = `FM: FCC licensing data (${m.fcc_pulled}). Airband: FAA NASR cycle ${m.nasr_cycle} (next ${m.nasr_next}). ${Number(m.counts.fm).toLocaleString()} FM stations · ${Number(m.counts.airport).toLocaleString()} airports. Receive only, not for navigation.`; }).catch(() => {});
 view();
 })();
 </script>
 <script>
 // 1.2.7: the back button follows where you came from. More links here with ?from=more, so the button reads ‹ More and returns to More;
 // without it the button keeps its default target.
-(function(){ if (new URLSearchParams(location.search).get('from') !== 'more') return;
+(function(){ const f = new URLSearchParams(location.search).get('from'); if (f !== 'more' && f !== 'settings') return;
   const a = document.querySelector('a[data-back]'); if (!a) return;
-  a.href = '/more'; a.setAttribute('aria-label', 'Back to More'); a.innerHTML = '<span aria-hidden="true">‹</span> More'; })();
+  a.href = '/settings'; a.setAttribute('aria-label', 'Back to Settings'); a.innerHTML = '<span aria-hidden="true">‹</span> Settings'; })();
 </script>
 </body>
 </html>

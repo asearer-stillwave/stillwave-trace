@@ -53,7 +53,7 @@
     if(noRadio){
       gate.querySelector('#vgK').textContent = '// NO RADIO DETECTED';
       gate.querySelector('#vgGo').textContent = 'Try again';
-      gate.querySelector('#vgN').textContent = 'No SDR dongle on USB. Check it is plugged in (try another USB port), then tap Try again. Still nothing: More > Reset SDR USB.';
+      gate.querySelector('#vgN').textContent = 'No SDR dongle on USB. Check it is plugged in (try another USB port), then tap Try again. Still nothing: Settings > Reset SDR USB.';
       return;
     }
     if(s.mode === 'none'){   // 1.2.0 boot idle: radio + map idle until START

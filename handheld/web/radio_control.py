@@ -224,10 +224,18 @@ def adsb_page():
     return _html("adsb.html")
 
 
+@app.get("/settings")
+@app.get("/settings.html")
+def settings_page():
+    return _html("settings.html")
+
+
 @app.get("/more")
 @app.get("/more.html")
 def more_page():
-    return _html("more.html")
+    from flask import redirect   # 1.3: More was renamed Settings; old links/bookmarks land there
+    q = request.query_string.decode()
+    return redirect("/settings" + ("?" + q if q else ""), code=302)
 
 
 @app.get("/dongles")

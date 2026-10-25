@@ -40,7 +40,7 @@
     sizes: TS, get: tsGet,
     set(k) { if (!TS[k]) return; try { localStorage.setItem('traceTextSize', k); } catch (e) {} tsApply(); window.dispatchEvent(new Event('resize')); }
   };
-  const TAB_ROOT = { '/listen': 'listen', '/radio': 'listen', '/adsb': 'map', '/scan': 'scan', '/detect': 'scan', '/spectrum': 'spectrum', '/more': 'more' };
+  const TAB_ROOT = { '/listen': 'listen', '/radio': 'listen', '/adsb': 'map', '/scan': 'scan', '/detect': 'scan', '/spectrum': 'spectrum', '/more': 'settings', '/settings': 'settings' };
   let SH = null;
   try { SH = (window.parent !== window && window.parent.fieldnoteShell) || null; } catch (e) { SH = null; }
   if (SH) {                                                  // ---- a page inside the shell: no own chrome, no own polling ----
@@ -75,7 +75,7 @@
     spectrum: svg('<path d="M2 20h20M4.5 20v-6M8.5 20V7M12.5 20v-9M16.5 20V4M20.5 20v-7"/>'),
     detect: svg('<circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2"/>'),
     dash: svg('<rect x="3" y="3" width="11" height="18" rx="1.5"/><rect x="16" y="3" width="5" height="8" rx="1"/><rect x="16" y="13" width="5" height="8" rx="1"/>'),
-    more: svg('<circle cx="5" cy="12" r="2.1"/><circle cx="12" cy="12" r="2.1"/><circle cx="19" cy="12" r="2.1"/>', true),
+    settings: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
     wifi: svg('<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.4a9.5 9.5 0 0 1 13 0M8.6 15.7a5 5 0 0 1 6.8 0"/><circle cx="12" cy="19" r="1.2" fill="currentColor"/>'),
     hotspot: svg('<circle cx="12" cy="10" r="2"/><path d="M12 12v9M8.5 6.5a5 5 0 0 0 0 7M15.5 6.5a5 5 0 0 1 0 7M5.6 3.6a9 9 0 0 0 0 12.8M18.4 3.6a9 9 0 0 1 0 12.8"/>'),
     net: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
@@ -88,22 +88,22 @@
     { id: 'map', href: '/adsb', label: 'Map' },
     { id: 'scan', href: '/scan', label: 'Scan' },
     { id: 'spectrum', href: '/spectrum', label: 'Spectrum' },
-    { id: 'more', href: '/more', label: 'More' }
+    { id: 'settings', href: '/settings', label: 'Settings' }
   ];
   ICON.scan = ICON.detect;
   const PAGE_TAB = { 'listen': 'listen', 'radio': 'listen', 'adsb': 'map', 'spectrum': 'spectrum', 'scan': 'scan', 'detect': 'scan',
-                     'more': 'more', 'presets': 'more', 'network': 'more', 'audio': 'more', 'updates': 'more', 'screen': 'more', 'dongles': 'more', 'shots': 'more', 'maps': 'more', 'stations': 'more' };
+                     'more': 'settings', 'settings': 'settings', 'presets': 'settings', 'network': 'settings', 'audio': 'settings', 'updates': 'settings', 'screen': 'settings', 'dongles': 'settings', 'shots': 'settings', 'maps': 'settings', 'stations': 'settings', 'about': 'settings', 'roles': 'settings' };
   const MODE_TAB = { fm: 'listen', adsb: 'map', spectrum: 'spectrum', detect: 'scan' };
   const MODE_NAME = { fm: 'FM radio', adsb: 'ADS-B', spectrum: 'Spectrum', detect: 'Scan' };
   const MODE_PAGE = { fm: '/listen', adsb: '/adsb', spectrum: '/spectrum', detect: '/scan' };
   const page = location.pathname.replace(/^\/+|\.html$|\/+$/g, '');
-  let here = IS_SHELL ? 'map' : (PAGE_TAB[page] || 'more');
+  let here = IS_SHELL ? 'map' : (PAGE_TAB[page] || 'settings');
 
   // ---- build ----
   const strip = D.createElement('header');
   strip.className = 'qstrip'; strip.id = 'qstrip'; strip.setAttribute('aria-label', 'Trace status');
   strip.innerHTML =
-    '<a class="qs-chip qs-job" id="qsJob" href="/more">' +
+    '<a class="qs-chip qs-job" id="qsJob" href="/settings">' +
       '<span class="qs-dot unk" id="qsDot"></span>' +
       '<span class="qs-txt"><span class="qs-k" id="qsJobK">SDR</span><span class="qs-v dash" id="qsJobV">—</span></span></a>' +
     '<a class="qs-chip qs-net" id="qsNet" href="/network">' +
@@ -111,7 +111,7 @@
       '<span class="qs-txt"><span class="qs-k" id="qsNetK">Network</span><span class="qs-v dash" id="qsNetV">—</span></span></a>' +
     '<a class="qs-chip qs-aud" id="qsAud" href="/audio">' +
       '<span class="qs-ico off" id="qsAudI">' + ICON.speaker + '</span>' +
-      '<span class="qs-txt"><span class="qs-k">Audio</span><span class="qs-v dash" id="qsAudV">—</span></span></a>' +
+      '<span class="qs-txt"><span class="qs-k" id="qsAudK">Audio</span><span class="qs-v dash" id="qsAudV">—</span></span></a>' +
     '<span class="qs-pwr" id="qsPwr"></span>';
 
   const tabs = D.createElement('nav');
@@ -211,7 +211,7 @@
     $('qsJobK').textContent = k;
     text('qsJobV', v[0], v[1], cls);
     dot.className = 'qs-dot ' + d;
-    job.href = (md && MODE_PAGE[mode]) || '/more';
+    job.href = (md && MODE_PAGE[mode]) || '/settings';
     job.title = (mode === 'fm' && S.metric && S.metric.name) ? 'FM radio: ' + S.metric.name : '';
     label = 'SDR job: ' + (md ? (MODE_NAME[mode] || (mode === 'none' ? 'off' : 'unknown')) : 'unknown') + (cls ? '' : ', ' + (v[1] || v[0]));
     job.setAttribute('aria-label', busyTo ? 'SDR job: switching' : label);
@@ -235,20 +235,18 @@
   }
   function renderAudio() {
     const au = S && S.audio, ic = $('qsAudI'), a = $('qsAud');
-    let v = ['—'], cls = 'dash', icon = ICON.speaker, on = false;
+    let k = 'Audio', v = ['—'], cls = 'dash', icon = ICON.speaker, on = false;
     if (au) {
-      const nm = au.speaker || 'Speaker';
+      // 1.3: no brand names in the chip (the speaker's full name is on the Bluetooth / Audio page)
       const wants = au.output === 'speaker' || au.output === 'both';
-      if (au.output === 'phone' || !au.output) { v = ['Phone', 'Phone stream']; cls = ''; icon = ICON.phone; on = true; }
-      else if (wants && au.connected) {
-        v = au.output === 'both' ? ['Both', nm + ' + phone'] : ['Speaker', nm]; cls = ''; on = true;
-      } else if (wants) {
-        v = au.speaker ? ['No speaker', nm + ' not connected'] : ['No speaker', 'No speaker paired']; cls = 'warn';
-      }
+      if (au.output === 'phone' || !au.output) { v = ['Phone', 'Phone']; cls = ''; icon = ICON.phone; on = true; }
+      else if (wants && au.connected) { k = 'Speaker'; v = ['✓', au.output === 'both' ? '✓ + phone' : '✓']; cls = ''; on = true; }
+      else if (wants) { k = 'Speaker'; v = ['Off', 'Off']; cls = 'warn'; }
     }
+    $('qsAudK').textContent = k;
     text('qsAudV', v[0], v[1], cls);
     ic.innerHTML = icon; ic.className = 'qs-ico' + (on ? '' : ' off');
-    a.setAttribute('aria-label', 'Audio: ' + (v[1] || v[0]) + '. Open Audio.');
+    a.setAttribute('aria-label', k + ': ' + (v[1] || v[0]) + (au && au.speaker ? ' (' + au.speaker + ')' : '') + '. Open Audio.');
   }
   // ---- 1.2.4 weak power supply banner (from /api/strip psu; no extra polling). Pushes the content down; the X hides it
   // until the NEXT new under-voltage event (event number + boot id, saved per device). ----
@@ -285,20 +283,21 @@
   // ---- shell router (1.0.8) ----
   const frames = {};             // tab id -> iframe (kept alive)
   function eachFrame(fn) { Object.values(frames).forEach(f => { try { if (f.contentWindow && f.contentWindow.document) fn(f.contentWindow); } catch (e) {} }); }
-  function tabOf(path) { const p = path.split(/[?#]/)[0].replace(/\.html$/, '').replace(/\/+$/, '') || '/adsb'; return PAGE_TAB[p.slice(1)] || 'more'; }
+  function tabOf(path) { const p = path.split(/[?#]/)[0].replace(/\.html$/, '').replace(/\/+$/, '') || '/adsb'; return PAGE_TAB[p.slice(1)] || 'settings'; }
   function setHere(id) {
     here = id;
     tabs.querySelectorAll('.qtab').forEach(t => { const on = t.dataset.tab === id; t.classList.toggle('on', on); if (on) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current'); });
   }
   function go(url, opt) {
     url = url || '/adsb';
+    url = url.replace(/^\/more(\.html)?(?=[?#]|$)/, '/settings');   // 1.3: More was renamed Settings; old links land on Settings
     if (url === '/' || url === '/app') url = '/adsb';   // 1.2.0: Trace opens on Map/ADS-B (idle START screen)
     const id = tabOf(url), root = (TABS.find(t => t.id === id) || {}).href;
     let f = frames[id];
     if (!f) {
       f = D.createElement('iframe'); f.className = 'qframe'; f.title = id; f.dataset.tab = id;
       f.src = url; frames[id] = f; D.getElementById('qframes').appendChild(f);
-    } else if ((opt && opt.reload) || (id === here && url.split('?')[0] === root) || url !== root || id === 'more') {   // 1.1.0.1: the More tab always opens the More menu itself
+    } else if ((opt && opt.reload) || (id === here && url.split('?')[0] === root) || url !== root || id === 'settings') {   // 1.1.0.1: the More tab always opens the More menu itself
       try { if (f.contentWindow.location.pathname + f.contentWindow.location.search !== url) f.contentWindow.location.replace(url); } catch (e) { f.src = url; }
     }
     Object.entries(frames).forEach(([k, el]) => { el.hidden = k !== id; });

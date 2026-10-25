@@ -471,6 +471,8 @@ if [[ -f /etc/systemd/system/sdr-screen-final.service ]] && ! systemctl is-enabl
   echo "sdr-screen-final.service was disabled; enabling it again (1.2.3: it does nothing on a reboot; backlight off only at power-off)"
 fi
 install -m 644 "$SRC/systemd/sdr-screen-final.service" /etc/systemd/system/sdr-screen-final.service
+install -m 755 "$SRC/bin/sdr-shutdown-screen" /usr/local/sbin/sdr-shutdown-screen                 # 1.3: 5 s shutdown screen (no display chip writes)
+install -m 644 "$SRC/systemd/sdr-shutdown-screen.service" /etc/systemd/system/sdr-shutdown-screen.service
 install -d -m 755 /var/lib/sdr-screen
 if [[ ! -f /etc/sdr/screen.env ]]; then
   install -m 644 "$SRC/config/screen.env.example" /etc/sdr/screen.env
@@ -493,7 +495,7 @@ install -d -m 755 /usr/local/lib/sdr-station/web/img   # kiosk shutdown art (sam
 install -m 644 "$SRC/web/img/trace-art.png" /usr/local/lib/sdr-station/web/img/trace-art.png
 # boot + shutdown splash: Plymouth theme files + sdr-splash (turned on at the end of this script)
 install -d -m 755 /usr/local/lib/sdr-station/plymouth/stillwave-trace
-for f in stillwave-trace.plymouth stillwave-trace.script bg.png bg-shutdown.png sweep.png hub.png; do
+for f in stillwave-trace.plymouth stillwave-trace.script bg.png bg-shutdown.png sweep.png hub.png bg-stillwave.png ok.png cd0.png cd1.png cd2.png cd3.png cd4.png cd5.png g0.png g1.png g2.png g3.png g4.png g5.png g6.png g7.png g8.png g9.png g10.png g11.png g12.png g13.png g14.png g15.png g16.png g17.png g18.png g19.png g20.png g21.png g22.png g23.png g24.png g25.png g26.png g27.png g28.png g29.png g30.png g31.png g32.png g33.png g34.png g35.png g36.png g37.png g38.png g39.png g40.png g41.png g42.png g43.png g44.png g45.png g46.png g47.png g48.png g49.png g50.png g51.png g52.png g53.png g54.png g55.png g56.png g57.png g58.png g59.png g60.png g61.png g62.png g63.png g64.png g65.png g66.png g67.png g68.png g69.png g70.png g71.png g72.png g73.png g74.png g75.png g76.png g77.png g78.png g79.png g80.png g81.png g82.png g83.png g84.png g85.png g86.png g87.png g88.png g89.png g90.png g91.png g92.png; do
   install -m 644 "$SRC/plymouth/stillwave-trace/$f" "/usr/local/lib/sdr-station/plymouth/stillwave-trace/$f"
 done
 install -m 755 "$SRC/bin/sdr-splash" /usr/local/lib/sdr-station/bin/sdr-splash
@@ -666,6 +668,7 @@ systemctl enable sdr-net-retry.timer sdr-firstboot-done.timer >/dev/null 2>&1 ||
 [[ $UPGRADE -eq 0 ]] && { install -d -m 755 /var/lib/sdr-station; touch /var/lib/sdr-station/first-boot; }   # no hotspot fallback during the first boot
 systemctl enable sdr-bt-reconnect >/dev/null 2>&1 || true
 systemctl enable sdr-screen sdr-screen-final >/dev/null 2>&1 || echo "WARNING: could not enable sdr-screen"
+systemctl enable sdr-shutdown-screen >/dev/null 2>&1 || echo "WARNING: could not enable sdr-shutdown-screen"
 if systemctl list-unit-files bluetooth.service >/dev/null 2>&1; then
   systemctl enable --now bluetooth >/dev/null 2>&1 || true
 fi
@@ -687,6 +690,7 @@ systemctl restart icecast2 || true
 sleep 1
 systemctl restart sdr-web nginx || true
 systemctl start sdr-screen-final >/dev/null 2>&1 || true
+systemctl start sdr-shutdown-screen >/dev/null 2>&1 || true
 systemctl restart sdr-screen >/dev/null 2>&1 || echo "WARNING: sdr-screen did not start (journalctl -u sdr-screen)"
 DONGLE_MODE="$(/usr/local/sbin/sdr-mode current 2>/dev/null || echo fm)"
 [[ "$DONGLE_MODE" == "none" ]] && DONGLE_MODE=spectrum

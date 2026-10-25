@@ -23,7 +23,8 @@ LIB="${SDR_SPLASH_LIB:-/usr/local/lib/sdr-station}"
 SRC="${SDR_SPLASH_SRC:-$LIB/plymouth/stillwave-trace}"
 THEMES="${SDR_SPLASH_THEMES:-$R/usr/share/plymouth/themes}"
 THEME=stillwave-trace; TDIR="$THEMES/$THEME"; TFILE="$TDIR/$THEME.plymouth"
-FILES=(stillwave-trace.plymouth stillwave-trace.script bg.png bg-shutdown.png sweep.png hub.png)
+FILES=(stillwave-trace.plymouth stillwave-trace.script bg.png bg-shutdown.png sweep.png hub.png bg-stillwave.png ok.png cd0.png cd1.png cd2.png cd3.png cd4.png cd5.png
+       g0.png g1.png g2.png g3.png g4.png g5.png g6.png g7.png g8.png g9.png g10.png g11.png g12.png g13.png g14.png g15.png g16.png g17.png g18.png g19.png g20.png g21.png g22.png g23.png g24.png g25.png g26.png g27.png g28.png g29.png g30.png g31.png g32.png g33.png g34.png g35.png g36.png g37.png g38.png g39.png g40.png g41.png g42.png g43.png g44.png g45.png g46.png g47.png g48.png g49.png g50.png g51.png g52.png g53.png g54.png g55.png g56.png g57.png g58.png g59.png g60.png g61.png g62.png g63.png g64.png g65.png g66.png g67.png g68.png g69.png g70.png g71.png g72.png g73.png g74.png g75.png g76.png g77.png g78.png g79.png g80.png g81.png g82.png g83.png g84.png g85.png g86.png g87.png g88.png g89.png g90.png g91.png g92.png)   # 1.3: STILLWAVE screen, countdown captions, console glyphs
 STATE_DIR="${SDR_SPLASH_STATE:-$R/var/lib/sdr-splash}"; STATE="$STATE_DIR/state.env"
 PREF="${SDR_SPLASH_PREF:-$R/etc/sdr/splash.env}"
 HOOK="$R/etc/initramfs-tools/hooks/stillwave-splash"

@@ -27,6 +27,12 @@ const FIELDNOTE = { // Protomaps "dark" flavor, Night Ops v2: near-black, neutra
 };
 const DROP = new Set(['buildings', 'address_label', 'roads_oneway', 'roads_shields', 'landuse_hospital', 'landuse_school', 'landuse_zoo']);
 
+// 1.3: canvas pixels per CSS pixel = device pixels x the UI zoom on <body> (Text size), so the map is never upscaled
+function mapPixelRatio() {
+  let z = 1;
+  try { z = parseFloat(getComputedStyle(document.body).zoom) || 1; } catch (e) {}
+  return Math.min((window.devicePixelRatio || 1) * Math.max(1, z), 3);
+}
 function basemapLayers(source, zoomPart) {
   const flavor = Object.assign({}, window.basemaps.namedFlavor('dark'), FIELDNOTE);
   const out = [];
@@ -192,8 +198,11 @@ export class AircraftMap {
       dragRotate: false, pitchWithRotate: false, touchPitch: false, maxPitch: 0,
       fadeDuration: 0, antialias: false, renderWorldCopies: false,
       // 1.0.7 zoom-lag fix: no per-frame extras (tile resource timing, expired-tile refresh, >1x canvas on big screens)
-      refreshExpiredTiles: false, collectResourceTiming: false, pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      refreshExpiredTiles: false, collectResourceTiming: false, pixelRatio: mapPixelRatio(),
     });
+    // 1.3: Large / XL text zooms <body> (CSS zoom); draw the map at the real screen density so it stays sharp, and follow
+    // text size changes (nav.js fires resize).
+    window.addEventListener('resize', () => { try { const r = mapPixelRatio(); if (Math.abs(r - m.getPixelRatio()) > 0.01) m.setPixelRatio(r); } catch (e) {} });
     m.touchZoomRotate.disableRotation();
     m.keyboard.disableRotation();
     m.addControl(new maplibregl.AttributionControl({ compact: false }), 'bottom-left');

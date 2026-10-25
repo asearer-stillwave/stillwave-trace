@@ -1,31 +1,41 @@
 # Stillwave Trace boot / shutdown screen (Plymouth script plugin).
-# bg.png / bg-shutdown.png: the whole 720x1280 picture baked in (grid, rings, STILLWAVE, TRACE, caption).
-# sweep.png turns around the radar center; hub.png (circle + wave mark) sits on top. Scales to any screen size.
+# 1.3 sequence. Boot: console (systemd status lines) -> STILLWAVE screen -> TRACE "starting up" (until the kiosk draws).
+# Shutdown: console -> shutdown screen with "SAFE TO UNPLUG WHEN DARK" and a 5 s countdown (sdr-shutdown-screen.service
+# sends TRACE-COUNTDOWN and holds poweroff for 5 s) -> off. Nothing here touches the display chip (0x45) or the backlight.
+# Text is drawn from bundled glyph pictures (g<N>.png, JetBrains Mono): no font plugin needed in the initramfs.
 Window.SetBackgroundTopColor(0.043, 0.059, 0.047);
 Window.SetBackgroundBottomColor(0.043, 0.059, 0.047);
 
 W = Window.GetWidth();
 H = Window.GetHeight();
 mode = Plymouth.GetMode();
+down = (mode == "shutdown" || mode == "reboot");
 # Desktop edition: landscape screens (HDMI 16:9) use the 1920x1080 art, radar center (640, 540).
 wide = (W > H);
 if (wide) {
-  if (mode == "shutdown" || mode == "reboot") { bg_image = Image("bg-wide-shutdown.png"); } else { bg_image = Image("bg-wide.png"); }
-  rcx = 640; rcy = 540;
+  art_w = 1920; art_h = 1080; rcx = 640; rcy = 540; cap_y = 760;
+  if (down) { img_a = "bg-wide-shutdown.png"; } else { img_a = "bg-wide-stillwave.png"; }
+  img_b = "bg-wide.png";
 } else {
-  if (mode == "shutdown" || mode == "reboot") { bg_image = Image("bg-shutdown.png"); } else { bg_image = Image("bg.png"); }
-  rcx = 360; rcy = 500;
+  art_w = 720; art_h = 1280; rcx = 360; rcy = 500; cap_y = 1120;
+  if (down) { img_a = "bg-shutdown.png"; } else { img_a = "bg-stillwave.png"; }
+  img_b = "bg.png";
 }
+fun fit(img) {
+  local.s = Math.Min(W / img.GetWidth(), H / img.GetHeight());
+  return img.Scale(Math.Int(img.GetWidth() * s), Math.Int(img.GetHeight() * s));
+}
+fun place(sp, img, z) {
+  sp.SetImage(img);
+  sp.SetPosition(Math.Int((W - img.GetWidth()) / 2), Math.Int((H - img.GetHeight()) / 2), z);
+  sp.SetOpacity(0);
+}
+s = Math.Min(W / art_w, H / art_h);
+bx = Math.Int((W - art_w * s) / 2);
+by = Math.Int((H - art_h * s) / 2);
+bg_a = Sprite(); place(bg_a, fit(Image(img_a)), 0);      # boot: STILLWAVE   / shutdown: the shutdown screen
+bg_b = Sprite(); place(bg_b, fit(Image(img_b)), 0);      # boot: TRACE starting up
 
-s = Math.Min(W / bg_image.GetWidth(), H / bg_image.GetHeight());
-bw = Math.Int(bg_image.GetWidth() * s);
-bh = Math.Int(bg_image.GetHeight() * s);
-bx = Math.Int((W - bw) / 2);
-by = Math.Int((H - bh) / 2);
-bg_sprite = Sprite(bg_image.Scale(bw, bh));
-bg_sprite.SetPosition(bx, by, 0);
-
-# radar center in the 720x1280 art: (360, 500); sweep 600x600, hub 200x200
 cx = bx + rcx * s;
 cy = by + rcy * s;
 sweep_image = Image("sweep.png");
@@ -33,30 +43,105 @@ sw = Math.Int(600 * s);
 sweep_scaled = sweep_image.Scale(sw, sw);
 sweep_sprite = Sprite(sweep_scaled);
 sweep_sprite.SetPosition(Math.Int(cx - sw / 2), Math.Int(cy - sw / 2), 1);
-
+sweep_sprite.SetOpacity(0);
 hub_image = Image("hub.png");
 hw = Math.Int(200 * s);
 hub_sprite = Sprite(hub_image.Scale(hw, hw));
 hub_sprite.SetPosition(Math.Int(cx - hw / 2), Math.Int(cy - hw / 2), 2);
+hub_sprite.SetOpacity(0);
 
-angle = 0;
-tick = 0;
-fun refresh_callback() {
-  # Rotate() turns clockwise. Redraw every 2nd refresh (25 frames/s, light on the Pi CPU): one turn every 3.6 s
-  tick = tick + 1;
-  if (tick >= 2) {
-    tick = 0;
-    angle = angle + 0.07;
-    if (angle > 6.2832) {
-      angle = angle - 6.2832;
+# countdown caption (shutdown)
+cdp = "cd"; if (wide) cdp = "cdw";
+for (i = 0; i < 6; i++) cd[i] = Image(cdp + i + ".png").Scale(Math.Int(720 * s), Math.Int(40 * s));
+cd_sprite = Sprite();
+cd_sprite.SetOpacity(0);
+
+# ---- console: glyph pictures, newest line at the bottom ----
+ALL = " !#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+for (i = 0; i < 93; i++) glyph[ALL.CharAt(i)] = Image("g" + i + ".png");
+ok_image = Image("ok.png");
+gs = Math.Min(W / 720, H / 1280);
+if (W > H) gs = H / 1080;
+if (gs < 0.7) gs = 0.7;
+CW = Math.Int(14 * gs); CH = Math.Int(28 * gs);
+if (CW != 14 || CH != 28) { for (i = 0; i < 93; i++) glyph[ALL.CharAt(i)] = glyph[ALL.CharAt(i)].Scale(CW, CH); ok_image = ok_image.Scale(CW * 8, CH); }
+COLS = Math.Int((W - 2 * CW) / CW) - 8;
+ROWS = Math.Min(40, Math.Int((H - 2 * CH) / CH));
+for (r = 0; r < ROWS; r++) {
+  okspr[r] = Sprite(); okspr[r].SetPosition(CW, CH + r * CH, 10); okspr[r].SetOpacity(0);
+  for (c = 0; c < COLS; c++) { cell[r * COLS + c] = Sprite(); cell[r * COLS + c].SetPosition(CW * 9 + c * CW, CH + r * CH, 10); }
+}
+nlines = 0;
+dirty = 0;
+fun add_line(text) {
+  if (nlines < ROWS) { lines[nlines] = text; nlines++; }
+  else { for (k = 0; k < ROWS - 1; k++) lines[k] = lines[k + 1]; lines[ROWS - 1] = text; }
+  dirty = 1;
+}
+console_on = 1;
+fun draw_console() {
+  for (r = 0; r < ROWS; r++) {
+    t = lines[r];
+    if (r < nlines && console_on) { okspr[r].SetImage(ok_image); okspr[r].SetOpacity(1); } else okspr[r].SetOpacity(0);
+    ended = 0;
+    for (c = 0; c < COLS; c++) {
+      sp = cell[r * COLS + c];
+      ch = "";
+      if (r < nlines && console_on && !ended) { ch = t.CharAt(c); if (!ch) { ended = 1; ch = ""; } }
+      g = glyph[ch];
+      if (ch != "" && g) { sp.SetImage(g); sp.SetOpacity(1); } else sp.SetOpacity(0);
     }
+  }
+  dirty = 0;
+}
+fun status_callback(text) { if (console_on && text) add_line(text); }
+Plymouth.SetUpdateStatusFunction(status_callback);
+countdown_at = -1;
+fun message_callback(text) {
+  if (text == "TRACE-COUNTDOWN") countdown_at = tick_all;
+  else if (console_on && text) add_line(text);
+}
+Plymouth.SetMessageFunction(message_callback);
+
+# ---- phases (refresh runs ~50 times a second) ----
+tick_all = 0;
+phase = 0;
+angle = 0;
+fun show_art(sp) {
+  console_on = 0; draw_console();
+  bg_a.SetOpacity(0); bg_b.SetOpacity(0); sp.SetOpacity(1);
+  sweep_sprite.SetOpacity(1); hub_sprite.SetOpacity(1);
+}
+fun refresh_callback() {
+  tick_all++;
+  if (dirty && tick_all % 5 == 0) draw_console();
+  if (!down) {
+    if (phase == 0 && (tick_all > 250 || (tick_all > 150 && nlines > 0))) { phase = 1; show_art(bg_a); }       # console 3-5 s, then STILLWAVE
+    else if (phase == 1 && tick_all > phase1_end) { phase = 2; show_art(bg_b); }
+    if (phase == 0) phase1_end = tick_all + 125;                                                                # STILLWAVE for 2.5 s
+  } else {
+    if (phase == 0 && (countdown_at >= 0 || tick_all > 200)) { phase = 1; show_art(bg_a); }                      # console, then the shutdown screen
+    if (phase == 1) {
+      n = 0;
+      if (countdown_at >= 0) n = Math.Max(0, 5 - Math.Int((tick_all - countdown_at) / 50));
+      if (n != shown_n) {
+        im = cd[n];
+        cd_sprite.SetImage(im);
+        cdx = Math.Int((W - im.GetWidth()) / 2); if (wide) cdx = Math.Int(bx + 1003 * s);
+        cd_sprite.SetPosition(cdx, Math.Int(by + cap_y * s), 3);
+        cd_sprite.SetOpacity(1);
+        shown_n = n;
+      }
+    }
+  }
+  if (phase > 0 && tick_all % 2 == 0) {
+    angle = angle + 0.07;
+    if (angle > 6.2832) angle = angle - 6.2832;
     r = sweep_scaled.Rotate(angle);
     sweep_sprite.SetImage(r);
     sweep_sprite.SetPosition(Math.Int(cx - r.GetWidth() / 2), Math.Int(cy - r.GetHeight() / 2), 1);
   }
 }
+shown_n = -1;
+phase1_end = 125;
 Plymouth.SetRefreshFunction(refresh_callback);
-
-# No text on the screen: boot messages stay hidden (quiet); a password prompt is never used on Trace.
-fun message_callback(text) { }
-Plymouth.SetMessageFunction(message_callback);

@@ -21,19 +21,20 @@
   </div>
 
   <div class="card hide" id="off">
-    <b id="offtxt">The dongle is busy with another mode.</b>
-    <p class="note">Starting detection stops the FM stream (or spectrum / ADS-B) until you switch back.</p>
+    <b id="offtxt">The SDR is busy with another mode.</b>
+    <p class="note">Scanning stops the radio until you go back.</p>
     <button class="primary" id="start">Start detect</button>
   </div>
 
   <div class="card">
-    <div class="v-top">
-      <div class="rng" id="vRng">—<span id="vRngS">learning the noise floor…</span></div>
-      <button type="button" class="sm" id="vHold" title="Freeze the list and graph until tapped again">Hold</button>
-      <button type="button" class="sm" id="vSet" aria-expanded="false">Settings ▾</button>
+    <!-- 1.3: FREQUENCY ▾ (band presets) + a separate gear for the advanced fields; HOLD stops the SDR -->
+    <div class="sc-top">
+      <button type="button" class="sc-freq" id="vFreq" aria-haspopup="listbox" aria-expanded="false"><span class="sc-k">Frequency ▾</span><b id="vFreqV">—</b></button>
+      <button type="button" class="sm sc-gear" id="vSet" aria-expanded="false" aria-label="Advanced scan settings">⚙</button>
+      <button type="button" class="sm sc-hold" id="vHold" aria-pressed="false">❚❚ Hold</button>
     </div>
+    <div class="sc-ddl" id="presets" role="listbox" hidden></div>
     <div id="vSheet" class="v-sheetbox" hidden>
-    <div class="presets" id="presets"></div>
     <div class="ctl">
       <label>Start MHz <input id="startf" size="8" inputmode="decimal"></label>
       <label>Stop MHz <input id="stopf" size="8" inputmode="decimal"></label>
@@ -45,7 +46,9 @@
       <button id="relearn">Relearn floor</button>
     </div>
       </div>
-  <div class="prog"><div id="prog"></div></div>
+  <div class="v-top"><span class="sc-held" id="vHeld" hidden>On hold</span><div class="rng" id="vRng">—<span id="vRngS">learning the noise floor…</span></div></div>
+  <div class="prog" id="progbox"><div id="prog"></div></div>
+  <p class="note sc-heldnote" id="vHeldN" hidden>SDR stopped · spectrum frozen</p>
   <canvas id="plot" class="v-big"></canvas>
   <div class="v-meta"><span id="vCount">// waiting for the first pass</span><span id="vAge"></span></div>
   <div class="note" id="info" hidden>Connecting…</div>
@@ -80,7 +83,7 @@
   </div>
 
   <p class="status" id="msg"></p>
-  <p class="note">Settings: range, gain, threshold. dB values are relative (uncalibrated dongle). "Above floor" is what matters. A full 24–1700 MHz pass takes tens of seconds on a Pi; strong local transmitters may also show up as images at other frequencies.</p>
+  <p class="note">dB values are relative. "Above floor" is what matters.</p>
 </div>
 <script src="/mode.js"></script>
 <script src="/power.js"></script>
@@ -239,8 +242,8 @@ async function loadCfg(){
   cfg=s.config;
   const g=$('gain'); g.innerHTML=''; s.gains.forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v; g.appendChild(o); });
   fill(cfg);
-  const pr=$('presets'); pr.innerHTML='';
-  s.presets.forEach(p=>{ const b=document.createElement('button'); b.textContent=p.name; b.onclick=()=>{ $('startf').value=(p.start/1e6).toFixed(3); $('stopf').value=(p.stop/1e6).toFixed(3); $('bin').value='0'; apply({track_hz:0}); }; pr.appendChild(b); });
+  PRE=s.presets||[]; drawPresets();
+  if(typeof s.held==='boolean') holdShow(s.held);
   if(s.status && s.status.error) setMsg(s.status.error,'err');
 }
 async function apply(extra){
@@ -250,14 +253,35 @@ async function apply(extra){
     threshold_db: parseFloat($('thr').value)||10, hold_s: parseInt($('hold').value)||120
   }, extra||{});
   try{
-    const j=await post(body); cfg=j.config; fill(cfg);
+    const j=await post(body); cfg=j.config; fill(cfg); drawPresets();
     if(j.restarted){ last=null; draw(); $('peaks').innerHTML=''; $('hits').innerHTML=''; $('prog').style.width='0'; }
     setMsg(j.restarted ? 'Covering '+mhz(cfg.start_hz)+'–'+mhz(cfg.stop_hz)+' MHz; learning the floor…' : 'Updated','ok');
   }catch(e){ setMsg(e.message,'err'); }
 }
 $('apply').onclick=()=>apply();
-$('vHold').onclick=()=>{ held=!held; $('vHold').textContent=held?'Resume':'Hold'; $('vHold').classList.toggle('on',held); if(!held){ lastList=0; } $('vAge').textContent=held?'held · tap RESUME to update':'updates every 5 s'; };
-$('vSet').onclick=()=>{ const o=$('vSheet').hidden; $('vSheet').hidden=!o; $('vSet').setAttribute('aria-expanded',o); $('vSet').textContent=o?'Settings ▴':'Settings ▾'; };
+// 1.3: FREQUENCY ▾ dropdown of the band presets; the current range is named (or CUSTOM)
+let PRE=[];
+function curPreset(){ if(!cfg) return null; return PRE.find(p=>Math.abs(p.start-cfg.start_hz)<1e3&&Math.abs(p.stop-cfg.stop_hz)<1e3)||null; }
+function drawPresets(){
+  const pr=$('presets'), cur=curPreset(); pr.innerHTML='';
+  $('vFreqV').textContent = cur ? cur.name : (cfg ? 'Custom · '+trimM(cfg.start_hz)+'–'+trimM(cfg.stop_hz) : '—');
+  PRE.forEach(p=>{ const b=document.createElement('button'); b.type='button'; b.setAttribute('role','option'); b.className=p===cur?'on':'';
+    b.innerHTML='<span></span><small></small>'; b.firstChild.textContent=p.name; b.lastChild.textContent=trimM(p.start)+'–'+trimM(p.stop)+' MHz';
+    b.onclick=()=>{ ddShow(false); $('startf').value=(p.start/1e6).toFixed(3); $('stopf').value=(p.stop/1e6).toFixed(3); $('bin').value='0'; apply({track_hz:0}); }; pr.appendChild(b); });
+}
+const trimM=hz=>String(+(hz/1e6).toFixed(3));
+function ddShow(o){ $('presets').hidden=!o; $('vFreq').setAttribute('aria-expanded',o); if(o){ $('vSheet').hidden=true; $('vSet').setAttribute('aria-expanded',false); $('vSet').classList.remove('on'); } }
+$('vFreq').onclick=()=>ddShow($('presets').hidden);
+$('vSet').onclick=()=>{ const o=$('vSheet').hidden; $('vSheet').hidden=!o; $('vSet').setAttribute('aria-expanded',o); $('vSet').classList.toggle('on',o); if(o) ddShow(false); };
+// 1.3: HOLD stops the scan on the box (the SDR stops sweeping); the graph and list stay frozen; RESUME starts it again
+function holdShow(h){
+  held=h; $('vHold').textContent=h?'▶ Resume':'❚❚ Hold'; $('vHold').classList.toggle('primary',h); $('vHold').setAttribute('aria-pressed',h);
+  $('vHeld').hidden=!h; $('vHeldN').hidden=!h; $('progbox').hidden=h; if(!h) lastList=0;
+  $('vAge').textContent=h?'held · tap RESUME to update':'updates every 5 s';
+}
+$('vHold').onclick=async()=>{ const want=!held; holdShow(want);
+  try{ const j=await jfetch('/api/scope/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({held:want})}); holdShow(!!j.held); if(!j.held) setMsg(''); }
+  catch(e){ holdShow(!want); setMsg(e.message,'err'); } };
 $('relearn').onclick=async()=>{ try{ const j=await jfetch('/api/scope/relearn',{method:'POST'}); setMsg(j.message,'ok'); }catch(e){ setMsg(e.message,'err'); } };
 
 // ---------- stream ----------
@@ -267,7 +291,8 @@ function connect(){
   es.onmessage=ev=>{
     let m; try{ m=JSON.parse(ev.data); }catch(e){ return; }
     if(m.type==='sweep') onSweep(m);
-    else if(m.type==='progress'){ $('prog').style.width=m.pct+'%'; if(!last) $('info').textContent='First pass in progress… '+m.pct.toFixed(0)+'% ('+mhz(m.at)+' MHz)'; }
+    else if(m.type==='status' && typeof m.held==='boolean'){ holdShow(m.held); }
+    else if(m.type==='progress'){ if(held) return; $('prog').style.width=m.pct+'%'; if(!last) $('info').textContent='First pass in progress… '+m.pct.toFixed(0)+'% ('+mhz(m.at)+' MHz)'; }
     else if(m.type==='status' && m.error) setMsg(m.error,'err');
   };
   es.onerror=()=>{ $('info').textContent='Stream reconnecting…'; };

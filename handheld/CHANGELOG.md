@@ -5,6 +5,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.3.0] and [1.3.0-desktop] - 2026-10-25 (PT) - Listen, Scan, Settings and Network redesign (22 items); both editions
+### Changed
+- **Listen** rebuilt to the 1.3 mockups. A sticky "now playing" strip always shows what is actually tuned (it still says `AIRBAND · 128.500` while you look at the FM tab), with a LIVE light, a talking/quiet indicator, signal bars and Stop/Play. The audio player is hidden but playback continues.
+- Each band has a tuner card: a big readout, −/+ buttons and a dial. −/+ snaps to the nearest valid channel (FM 0.2 MHz; airband 25 kHz or 8.33 kHz, picked with STEP). Preset dots on the dial tune when tapped. When several dots sit close together, a tap opens a small list of the nearby presets.
+- The band settings moved behind a gear button labeled with the current values (for example `30 · LOW`, or `GAIN AUTO` on FM). Presets sit right under the tuner, with STATION BANK and EDIT PRESETS buttons. "+ Save" for airband is now in Edit mode.
+- NOAA cards show the WX channel number.
+- **Scan**: one top row with Frequency ▾ (preset picker), ⚙ (advanced fields) and HOLD. HOLD now really stops the SDR and freezes the spectrum (new `POST /api/scope/hold`). It shows an "On hold" badge, and RESUME restarts the scan. At XL text size, HOLD moves to its own row.
+- **"More" is now "Settings"** everywhere. The tab has a gear icon; the other tab icons are unchanged. Old `/more` links redirect to `/settings`.
+- The top Audio chip reads `SPEAKER ✓` or `SPEAKER OFF` (no brand name).
+- **Network**: the Wi‑Fi on/off switch moved here from Settings (where Wi‑Fi is now a link). The address is shown once, and a failed switch shows on one line, `Couldn't join · Details ›`. Shorter notes.
+- **Station bank**: the STATE ▾ and CITY ▾ dropdowns replace the state grid and city buttons, and the last state is remembered. "About the data ›" folds open. At Large and XL text size the dropdowns stack.
+- **New preset** scrolls to the top and puts the cursor in Name.
+- Maps render at the screen's real pixel density, so they're sharper on the Pi screen and at XL.
+- **Boot and shutdown screens**: boot messages appear in the Trace style. Shutdown shows "SAFE TO UNPLUG WHEN DARK" with a 5 s countdown (new `sdr-shutdown-screen` service, poweroff only, timed before the existing backlight step; there are no new display-MCU writes).
+### Fixed
+- **Hotspot security**: the "Hotspot" profile is now pinned to WPA2 (wpa-psk, RSN, CCMP, PMF off) on both NetworkManager paths, so iPhones and Macs join reliably. If the hotspot fails at boot, it retries on 2.4 GHz WPA2.
+- **A unique hotspot name per unit**: the default is `TRACE-XXXX`, taken from the unit serial. A unit that still uses the old default "Trace" gets renamed the next time the hotspot starts, and its password is kept. Names you chose yourself are not changed.
+
 ## [1.2.10] and [1.2.10-desktop] - 2026-10-25 (PT) - On-screen keyboard no longer covers the field; both editions
 ### Fixed
 - **The on-screen keyboard no longer hides the field you are typing in** (found by Searer on the Pi 5: More › Updates › Update source). Pages run inside the app frame, where a frame style overrode the keyboard's bottom space, so the page could not scroll up far enough. Now, when the keyboard opens, the page (and any scrolling sheet, such as New preset) gets bottom space equal to the keyboard height, and the field and its label scroll into view above the keyboard with a 16 px margin. Moving to another field while the keyboard is open, or switching to the number pad, does the same. The space is removed when the keyboard closes. Applies to every text field: Update source, Content source, Wi‑Fi password, hotspot, new preset, station search.

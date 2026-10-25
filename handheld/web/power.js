@@ -1,5 +1,5 @@
 // Stillwave Trace: Power menu (Reboot / Shut down) on every page.
-// Load after /mode.js and /nav.js (the status strip holds the power icon; More has a Power row too).
+// Load after /mode.js and /nav.js (the status strip holds the power icon; Settings has a Power row too).
 // Opening the sheet does nothing by itself; each action needs a second, separate confirm tap (armed after a short delay so a double tap cannot confirm it).
 (function () {
   if (window.fieldnotePower) return;
@@ -19,8 +19,8 @@
       d: 'It stays off until you unplug it and plug it back in.',
       yes: 'Yes, shut down',
       title: 'Shutting down',
-      sub: 'Wait for the green light to stop blinking before unplugging.',
-      sub2: 'On the Pi, the green light gives a final burst of quick flashes, then stays dark. The red light stays on while the cable is connected.'
+      sub: 'Safe to unplug when dark.',
+      sub2: ''
     }
   };
 

@@ -26,9 +26,23 @@ LAST_FILE="${SDR_NET_LAST:-/var/lib/sdr-station/net-last.json}"
 LOCK="${SDR_NET_LOCK:-/run/sdr-netswitch.lock}"
 RUNDIR="${SDR_NET_RUNDIR:-/run}"
 AP_NAME="${SDR_AP_NAME:-Fieldnote-AP}"   # internal NM profile name for the fallback path (kept for in-place upgrades)
-# Hotspot SSID: "Trace" only for a NEW install. An existing hotspot keeps its name and password
-# (see resolve_ap: existing NM hotspot profile > /etc/sdr/net.env > default).
-AP_SSID_DEFAULT="Trace"
+# Hotspot SSID: 1.3: a unique default per unit, TRACE-XXXX (last 4 hex of the board serial; printed on the box
+# label: "sdr-net-mode default-ssid"). Before 1.3 the default was "Trace" for every unit, which made phones and Macs
+# mix units up. A hotspot the user renamed on the Network page (AP_CUSTOM=1) is never touched; a unit still on the old
+# shared default "Trace" moves to its own TRACE-XXXX the next time its hotspot starts (password kept).
+# (see resolve_ap: Network page > existing NM hotspot profile > /etc/sdr/net.env > default).
+unit_suffix() {
+  local sn=""
+  for f in /sys/firmware/devicetree/base/serial-number /proc/device-tree/serial-number; do
+    [[ -r "$f" ]] && sn="$(tr -d '\0' <"$f" 2>/dev/null)" && [[ -n "$sn" ]] && break
+  done
+  [[ -z "$sn" ]] && sn="$(awk -F': *' '/^Serial/{print $2; exit}' /proc/cpuinfo 2>/dev/null)"
+  [[ -z "$sn" || "$sn" =~ ^0+$ ]] && sn="$(cat /etc/machine-id 2>/dev/null)"
+  sn="$(printf '%s' "$sn" | tr -cd '0-9A-Fa-f' | tr 'a-f' 'A-F')"
+  [[ ${#sn} -ge 4 ]] && printf '%s' "${sn: -4}" || printf '0000'
+}
+AP_SSID_OLD_DEFAULT="Trace"
+AP_SSID_DEFAULT="${SDR_AP_SSID_DEFAULT:-TRACE-$(unit_suffix)}"
 AP_SSID_ENV="${SDR_AP_SSID:-}"
 AP_SSID="$AP_SSID_ENV"     # provisional until resolve_ap (set below once get_kv exists)
 AP_PASS="${SDR_AP_PASS:-}"
@@ -371,6 +385,10 @@ resolve_ap() {
   fi
   AP_SSID="${AP_SSID_ENV:-${found_ssid:-$(get_kv AP_SSID)}}"
   [[ -z "$AP_SSID" ]] && AP_SSID="$AP_SSID_DEFAULT"
+  if [[ -z "$AP_SSID_ENV" && "$AP_SSID" == "$AP_SSID_OLD_DEFAULT" ]]; then   # 1.3: old shared default -> this unit's own name
+    log "hotspot identity: moving from the shared default '$AP_SSID_OLD_DEFAULT' to '$AP_SSID_DEFAULT' (never renamed by the user)"
+    AP_SSID="$AP_SSID_DEFAULT"
+  fi
   if [[ -z "$AP_PASS" && -n "$found_uuid" ]]; then
     local psk
     psk="$(nmcli -s -e no -g 802-11-wireless-security.psk connection show uuid "$found_uuid" 2>/dev/null | head -n1)"
@@ -402,7 +420,8 @@ ensure_pass() {
   set_kv AP_SSID "$AP_SSID"
 }
 
-ap_band() {   # sets AP_BAND_NM (bg|a), AP_CHAN, AP_HW (g|a) from net.env AP_BAND
+ap_band() {   # sets AP_BAND_NM (bg|a), AP_CHAN, AP_HW (g|a) from net.env AP_BAND (AP_FORCE_BG=1: 2.4 GHz for a retry)
+  if [[ "${AP_FORCE_BG:-0}" == 1 ]]; then AP_BAND_NM=bg; AP_CHAN=6; AP_HW=g; return; fi
   case "$(get_kv AP_BAND)" in
     a|5|5g|5GHz) AP_BAND_NM=a; AP_CHAN=36; AP_HW=a ;;
     *) AP_BAND_NM=bg; AP_CHAN=6; AP_HW=g ;;
@@ -462,13 +481,21 @@ bring_up_nm_ap() {
 
   # NM's own hotspot helper; creates the "Hotspot" profile (2.4 GHz so every phone sees it)
   ap_band   # 1.2.0: AP_BAND=bg (2.4 GHz, default) or a (5 GHz) from the Network page
-  if nmcli device wifi hotspot ifname "$ifc" ssid "$AP_SSID" password "$AP_PASS" band "$AP_BAND_NM" channel "$AP_CHAN" >>"$LOG" 2>>"$ERRFILE"; then
+  if [[ "${AP_PROFILE_ONLY:-0}" != 1 ]] && nmcli device wifi hotspot ifname "$ifc" ssid "$AP_SSID" password "$AP_PASS" band "$AP_BAND_NM" channel "$AP_CHAN" >>"$LOG" 2>>"$ERRFILE"; then
     log "nmcli device wifi hotspot ok (ssid=$AP_SSID)"
-    nmcli connection modify Hotspot connection.autoconnect yes connection.autoconnect-priority 200 >/dev/null 2>&1
+    # 1.3: pin WPA2-PSK (AES/CCMP, no PMF) so the security never drifts to WPA3/SAE or mixed modes with an NM update;
+    # every phone and Mac can join WPA2. The profile is re-activated so the pinned settings take effect.
+    if nmcli connection modify Hotspot connection.autoconnect yes connection.autoconnect-priority 200 \
+         wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn wifi-sec.pairwise ccmp wifi-sec.group ccmp wifi-sec.pmf disable >>"$LOG" 2>>"$ERRFILE"; then
+      nmcli connection up Hotspot ifname "$ifc" >>"$LOG" 2>>"$ERRFILE" || log "Hotspot re-activation after pinning WPA2 failed"
+      log "hotspot security pinned: wpa-psk/rsn/ccmp, pmf disable"
+    else
+      log "could not pin WPA2 on the Hotspot profile"
+    fi
     set_kv BACKEND nm
     return 0
   fi
-  log "hotspot helper failed, trying connection profile"
+  [[ "${AP_PROFILE_ONLY:-0}" == 1 ]] && log "WPA2 2.4 GHz profile retry" || log "hotspot helper failed, trying connection profile"
 
   nmcli connection add type wifi ifname "$ifc" con-name "$AP_NAME" ssid "$AP_SSID" \
     802-11-wireless.mode ap \
@@ -480,6 +507,8 @@ bring_up_nm_ap() {
     wifi-sec.key-mgmt wpa-psk \
     wifi-sec.proto rsn \
     wifi-sec.pairwise ccmp \
+    wifi-sec.group ccmp \
+    wifi-sec.pmf disable \
     wifi-sec.psk "$AP_PASS" \
     connection.autoconnect yes \
     connection.autoconnect-priority 200 \
@@ -905,7 +934,7 @@ print_status() {
   iface="$(wifi_iface || true)"
   local running=false
   switch_running && running=true
-  python3 - "$AP_NAME" "$iface" "$(ips)" "$STATE" "$(client_ipv4 "$iface")" "$running" "$LAST_FILE" "$(hostname)" <<'PY'
+  AP_SSID_DEFAULT="$AP_SSID_DEFAULT" python3 - "$AP_NAME" "$iface" "$(ips)" "$STATE" "$(client_ipv4 "$iface")" "$running" "$LAST_FILE" "$(hostname)" <<'PY'
 import json, subprocess, sys, os
 ap_name, iface, ips, state, wlan_ip, running, last_file, host = sys.argv[1:9]
 kv = {}
@@ -949,7 +978,7 @@ print(json.dumps({
     "wifi_ip": wlan_ip,
     "home_connection": kv.get("HOME_CON", ""),
     "home_ssid": kv.get("HOME_SSID", ""),
-    "ap_ssid": kv.get("AP_SSID", "") or "Trace",
+    "ap_ssid": kv.get("AP_SSID", "") or os.environ.get("AP_SSID_DEFAULT", "Trace"),
     "ap_password_set": bool(kv.get("AP_PASS")),
     "ap_band": "a" if kv.get("AP_BAND") == "a" else "bg",
     "ap_boot": kv.get("MODE", "") == "ap",
@@ -1131,7 +1160,14 @@ boot_restore() {
       result boot true "$AP_SSID" "boot: hotspot $AP_SSID up" "10.42.0.1"
       return 0
     fi
-    result boot false "$AP_SSID" "boot: hotspot failed; see $LOG"
+    # 1.3: do not give up: retry once with the plain WPA2 profile on 2.4 GHz channel 6 (the saved band is kept for later)
+    log "boot: hotspot failed; retrying with a WPA2 2.4 GHz fallback profile"
+    sleep 5
+    if AP_FORCE_BG=1 AP_PROFILE_ONLY=1 start_ap_now "$IFACE"; then
+      result boot true "$AP_SSID" "boot: hotspot $AP_SSID up (WPA2 2.4 GHz fallback)" "10.42.0.1"
+      return 0
+    fi
+    result boot false "$AP_SSID" "boot: hotspot failed (also the WPA2 2.4 GHz fallback); see $LOG"
     return 1
   fi
   if [[ "$saved" == "wifi" ]]; then
@@ -1221,6 +1257,9 @@ case "$cmd" in
     ;;
   saved)
     print_saved
+    ;;
+  default-ssid)   # 1.3: this unit's default hotspot name (for the box label)
+    printf '%s\n' "$AP_SSID_DEFAULT"
     ;;
   ap-pass)
     require_root ap-pass

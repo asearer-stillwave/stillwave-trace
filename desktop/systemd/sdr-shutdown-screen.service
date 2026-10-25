@@ -1,0 +1,18 @@
+[Unit]
+Description=Stillwave Trace: 5 s shutdown screen at power-off (SAFE TO UNPLUG WHEN DARK); never touches the display chip
+DefaultDependencies=no
+# Started after (so stopped BEFORE) sdr-screen-final, and before (so stopped AFTER) the kiosk, the web app and sdr-screen.
+# Power-off order: kiosk/web stop (console lines on the splash) -> this 5 s countdown -> sdr-screen-final -> off.
+After=local-fs.target sdr-screen-final.service
+Before=sdr-screen.service sdr-web.service nginx.service fieldnote-kiosk.service shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/local/sbin/sdr-shutdown-screen
+TimeoutStopSec=12
+
+[Install]
+WantedBy=multi-user.target

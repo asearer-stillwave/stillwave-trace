@@ -18,7 +18,7 @@
 <body class="page-screen">
 <script src="/nav.js"></script>
 <div class="wrap">
-  <div class="pre-back-h nav-back"><a class="btn sm fm-edit" href="/more" aria-label="Back to More"><span aria-hidden="true">‹</span> More</a></div>
+  <div class="pre-back-h nav-back"><a class="btn sm fm-edit" href="/settings" aria-label="Back to Settings"><span aria-hidden="true">‹</span> Settings</a></div>
   <div class="brand">
     <h1>Screen</h1>
   </div>
@@ -156,7 +156,7 @@
     mark(j.resolution);
     c.querySelector('#resSel').onclick = e => { const b = e.target.closest('button'); if(!b) return;
       fetch('/api/display/resolution', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({resolution: b.dataset.r})})
-        .then(r => r.json()).then(x => { mark(x.resolution || j.resolution); c.querySelector('#resN').textContent = x.ok ? 'Saved: ' + x.resolution + '. Reboot to apply (More > Power > Reboot).' : (x.error || 'failed'); }); };
+        .then(r => r.json()).then(x => { mark(x.resolution || j.resolution); c.querySelector('#resN').textContent = x.ok ? 'Saved: ' + x.resolution + '. Reboot to apply (Settings > Power > Reboot).' : (x.error || 'failed'); }); };
   }).catch(() => {});
 })();
 </script>

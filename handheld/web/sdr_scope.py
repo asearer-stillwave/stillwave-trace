@@ -408,6 +408,7 @@ class Scope:
         self.hub = Hub()
         self.det = Detector()
         self.proc = None
+        self.held = False   # 1.3: Scan HOLD stops the SDR (no rtl process) until RESUME
         self.status = {"running": False, "error": "", "source": "", "frames": 0, "started": 0.0, "fps": 0.0}
 
     # ----- control -----
@@ -431,6 +432,18 @@ class Scope:
             self._kill()
         return cfg, restart
 
+    def hold(self, on):
+        """1.3: HOLD really stops the sweep (frees the dongle, saves CPU/battery); the learned floor is kept for RESUME."""
+        with self.lock:
+            changed = bool(on) != self.held
+            self.held = bool(on)
+            if changed:
+                self.gen += 1
+        if changed and on:
+            self._kill()
+        self.hub.publish({"type": "status", "mode": self.mode, "held": self.held, "error": "", "t": time.time()})
+        return self.held
+
     def _kill(self):
         p = self.proc
         if p is not None:
@@ -448,6 +461,11 @@ class Scope:
     def run(self):
         while True:
             cfg, gen = self.snapshot()
+            if self.held:
+                self.status.update(running=False, error="")
+                while self.held and self.gen == gen:
+                    time.sleep(0.25)
+                continue
             try:
                 if self.mode == "spectrum":
                     self.run_spectrum(cfg, gen)
@@ -463,7 +481,8 @@ class Scope:
                 self._kill()
                 self.proc = None
             if self.gen == gen:
-                time.sleep(3)   # process died on its own: back off, then retry
+                if not self.held:
+                    time.sleep(3)   # process died on its own: back off, then retry
 
     def _started(self, source):
         self.status.update(running=True, error="", source=source, frames=0, started=time.time())
@@ -604,7 +623,7 @@ def health():
 @app.get("/api/scope/status")
 def status():
     cfg, _ = SCOPE.snapshot()
-    return jsonify(ok=True, mode=SCOPE.mode, config=cfg, status=SCOPE.status, presets=PRESETS,
+    return jsonify(ok=True, mode=SCOPE.mode, config=cfg, status=SCOPE.status, presets=PRESETS, held=SCOPE.held,
                    spans=SPANS, gains=GAINS, nffts=NFFTS, clients=SCOPE.hub.subs,
                    range=[F_MIN, F_MAX])
 
@@ -614,6 +633,12 @@ def config():
     data = request.get_json(silent=True) or {}
     cfg, restarted = SCOPE.update(data)
     return jsonify(ok=True, mode=SCOPE.mode, config=cfg, restarted=restarted)
+
+
+@app.post("/api/scope/hold")
+def hold():
+    data = request.get_json(silent=True) or {}
+    return jsonify(ok=True, held=SCOPE.hold(bool(data.get("held"))))
 
 
 @app.post("/api/scope/relearn")

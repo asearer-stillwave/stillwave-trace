@@ -18,67 +18,63 @@
 <script src="/nav.js"></script>
 <div class="wrap">
   <div class="brand"><h1>Listen <span class="acc" id="bandT">FM</span></h1></div>
+  <!-- 1.3: activity strip, pinned at the top: what is actually tuned now (any tab), LIVE, TALKING, signal, stop/play -->
+  <div class="v-now" id="vnow" role="status" aria-live="polite">
+    <span class="v-live off" id="vLive">Off</span><b id="vWhat">—</b><span class="v-talk" id="vTalk"></span>
+    <span class="v-sig" id="vSig" aria-hidden="true"></span><button type="button" class="sm v-stop" id="vStop" aria-label="Stop audio">■ Stop</button>
+  </div>
   <div class="v-sub" role="tablist" id="bands">
     <button type="button" role="tab" data-b="fm">FM</button><button type="button" role="tab" data-b="airband">Airband</button><button type="button" role="tab" data-b="noaa">NOAA</button>
   </div>
-  <div class="v-now" id="vnow">// NOW PLAYING · <b>…</b></div>
 
-  <section id="pfm" class="card">
-    <div class="v-h fm-presets-h"><h2>Stations</h2><span class="fm-links"><a class="btn sm fm-edit" href="/stations?v=fm" aria-label="Station bank, FM">Station bank <span aria-hidden="true">›</span></a><a class="btn sm fm-edit" href="/presets" aria-label="Edit presets">Edit presets <span aria-hidden="true">›</span></a></span></div>
-    <div class="now" id="now" hidden>Now playing: …</div>
-    <div class="fmdial" id="fmdial" aria-hidden="true"></div>
-    <div class="row" id="buttons"></div>
-  </section>
-  <section id="pfmset">
-    <div class="card v-bandset" data-band="fm">
-      <div class="v-h"><h2>Band settings</h2><span class="v-tag">saved for FM</span></div>
-      <div class="bs-row"><span class="bs-k">Gain</span><span class="v-seg2 bs-gain"></span></div>
-      
-      <p class="note bs-note"></p>
+  <section id="pfm">
+    <div class="card v-tcard">
+      <div class="v-h"><h2>// FM radio</h2><button type="button" class="sm v-gear" data-band="fm" aria-expanded="false" aria-label="Band settings: gain"><span aria-hidden="true">⚙</span> <span class="v-gv">—</span></button></div>
+      <div class="v-bandset v-gearp" data-band="fm" hidden>
+        <div class="bs-row"><span class="bs-k">Gain</span><span class="v-seg2 bs-gain"></span></div>
+      </div>
+      <div class="v-tune"><button type="button" class="v-step" id="fDn" aria-label="Down 0.2 MHz">−</button>
+        <div class="v-freq" id="fF">—<small>MHz FM</small></div><button type="button" class="v-step" id="fUp" aria-label="Up 0.2 MHz">+</button></div>
+      <div class="v-dial" id="fDial"></div>
     </div>
+    <div class="v-h v-ph"><h2>Stations</h2><span class="fm-links"><a class="btn sm fm-edit" href="/stations?v=fm" aria-label="Station bank, FM">Station bank</a><a class="btn sm fm-edit" href="/presets" aria-label="Edit presets">Edit presets</a></span></div>
+    <div class="now" id="now" hidden>Now playing: …</div>
+    <div class="fmdial" id="fmdial" hidden aria-hidden="true"></div>
+    <div class="v-grid" id="buttons"></div>
   </section>
 
   <section id="pairband" hidden>
-    <div class="card">
-      <div class="v-band"><span>// AM airband</span><span>118–137 MHz</span></div>
-      <div class="v-tune" style="margin-top:.6rem"><button type="button" class="v-step" id="aDn" aria-label="Down one step">−</button>
-        <div class="v-freq" id="aF">133.900<small>MHz AM</small></div><button type="button" class="v-step" id="aUp" aria-label="Up one step">+</button></div>
-      <div class="v-band" style="margin-top:.6rem;align-items:center;gap:.5rem;flex-wrap:wrap">
-        <span class="v-seg2" id="aStep"><button type="button" data-s="25" class="on">25 kHz</button><button type="button" data-s="8.33">8.33</button></span>
+    <div class="card v-tcard">
+      <div class="v-h"><h2>// AM airband</h2><button type="button" class="sm v-gear" data-band="airband" aria-expanded="false" aria-label="Band settings: gain and squelch"><span aria-hidden="true">⚙</span> <span class="v-gv">—</span></button></div>
+      <div class="v-bandset v-gearp" data-band="airband" hidden>
+        <div class="bs-row"><span class="bs-k">Gain</span><span class="v-seg2 bs-gain"></span></div><div class="bs-row"><span class="bs-k">Squelch</span><span class="v-seg2 bs-sq"><button type="button" data-q="0">Off</button><button type="button" data-q="20">Low</button><button type="button" data-q="50">High</button></span></div>
       </div>
-      <div class="v-dial" id="aDial" aria-hidden="true"></div>
+      <div class="v-tune"><button type="button" class="v-step" id="aDn" aria-label="Down one channel">−</button>
+        <div class="v-freq" id="aF">133.900<small>MHz AM</small></div><button type="button" class="v-step" id="aUp" aria-label="Up one channel">+</button></div>
+      <div class="v-steprow"><span class="v-stepk">Step</span><span class="v-seg2" id="aStep"><button type="button" data-s="25" class="on">25 kHz</button><button type="button" data-s="8.33">8.33</button></span></div>
+      <div class="v-dial" id="aDial"></div>
     </div>
-    <div class="card v-bandset" data-band="airband">
-      <div class="v-h"><h2>Band settings</h2><span class="v-tag">saved for airband</span></div>
-      <div class="bs-row"><span class="bs-k">Gain</span><span class="v-seg2 bs-gain"></span></div>
-      <div class="bs-row"><span class="bs-k">Squelch</span><span class="v-seg2 bs-sq"><button type="button" data-q="0">Off</button><button type="button" data-q="20">Low</button><button type="button" data-q="50">High</button></span></div>
-      <p class="note bs-note"></p>
-    </div>
-    <div class="card">
-      <div class="v-h air-presets-h"><h2>Presets <span class="v-tag">LAX · FAA data</span></h2><span class="fm-links"><a class="btn sm fm-edit" href="/stations?v=air" aria-label="Station bank, airband">Station bank <span aria-hidden="true">›</span></a><button type="button" class="sm" id="aEdit">Edit</button> <button type="button" class="sm" id="aSave">+ Save</button></span></div>
-      <div class="row" id="aSaveRow" hidden style="gap:.5rem;margin-bottom:.6rem"><input id="aName" placeholder="Name, e.g. LAX Tower North" maxlength="40" style="flex:1"><button type="button" class="primary sm" id="aSaveGo">Save</button></div>
-      <div class="v-grid" id="aGrid"></div>
-      <p class="note" style="margin-top:.7rem">LAX presets from FAA airport data (airnav.com, Oct 2026 cycle). AM, receive only.</p>
-    </div>
+    <div class="v-h v-ph"><h2>Presets</h2><span class="fm-links"><a class="btn sm fm-edit" href="/stations?v=air" aria-label="Station bank, airband">Station bank</a><button type="button" class="btn sm fm-edit" id="aEdit">Edit presets</button></span></div>
+    <div class="row" id="aSaveRow" hidden style="gap:.5rem;margin-bottom:.6rem"><input id="aName" placeholder="Name, e.g. LAX Tower North" maxlength="40" style="flex:1"><button type="button" class="primary sm" id="aSaveGo">＋ Save this frequency</button></div>
+    <div class="v-grid" id="aGrid"></div>
   </section>
 
   <section id="pnoaa" hidden>
-    <div class="card">
-      <div class="v-h"><h2>NOAA weather radio</h2><span class="v-tag">narrow FM</span></div>
-      <div class="v-grid" id="nGrid"></div>
-      <p class="note" style="margin-top:.7rem">The seven NWS weather channels, 162.400–162.550 MHz. Los Angeles is usually 162.550 (WX1).</p>
+    <div class="card v-tcard">
+      <div class="v-h"><h2>// NOAA weather</h2><button type="button" class="sm v-gear" data-band="noaa" aria-expanded="false" aria-label="Band settings: gain and squelch"><span aria-hidden="true">⚙</span> <span class="v-gv">—</span></button></div>
+      <div class="v-bandset v-gearp" data-band="noaa" hidden>
+        <div class="bs-row"><span class="bs-k">Gain</span><span class="v-seg2 bs-gain"></span></div><div class="bs-row"><span class="bs-k">Squelch</span><span class="v-seg2 bs-sq"><button type="button" data-q="0">Off</button><button type="button" data-q="20">Low</button><button type="button" data-q="50">High</button></span></div>
+      </div>
+      <p class="note v-hint">Los Angeles: usually WX1 (162.550)</p>
     </div>
-    <div class="card v-bandset" data-band="noaa">
-      <div class="v-h"><h2>Band settings</h2><span class="v-tag">saved for NOAA</span></div>
-      <div class="bs-row"><span class="bs-k">Gain</span><span class="v-seg2 bs-gain"></span></div>
-      <div class="bs-row"><span class="bs-k">Squelch</span><span class="v-seg2 bs-sq"><button type="button" data-q="0">Off</button><button type="button" data-q="20">Low</button><button type="button" data-q="50">High</button></span></div>
-      <p class="note bs-note"></p>
-    </div>
+    <div class="v-h v-ph"><h2>Channels</h2></div>
+    <div class="v-grid" id="nGrid"></div>
   </section>
 
-  <audio id="player" controls preload="none"></audio>
+  <div class="v-near" id="vNear" hidden role="dialog" aria-label="Presets near here"><div class="v-nearl" id="vNearL"></div></div>
+  <!-- 1.3 item 9: the audio element is hidden; playback keeps going (the strip shows LIVE and has Stop / Play) -->
+  <audio id="player" preload="none" hidden></audio>
   <p class="status" id="msg"></p>
-  <p class="note">Live radio has no track length, so the bar may stay 0:00. Changing stations drops audio for a couple of seconds, then it resumes on its own.</p>
 </div>
 <script src="/mode.js"></script>
 <script src="/power.js"></script>
@@ -131,6 +127,16 @@ function shortOf(st){
   const mhz = (f >= 87.5 && f <= 108) ? f.toFixed(1) : String(parseFloat(f.toFixed(3)));
   return call + ' ' + mhz;
 }
+// 1.3: LIVE indicator + Stop / Play in the activity strip (the audio element itself is hidden)
+let userStopped = false;
+function liveShow(){
+  const p = document.getElementById('player'), lv = document.getElementById('vLive'), b = document.getElementById('vStop');
+  if (!p || !lv) return;
+  const on = !p.paused && !p.ended && p.readyState > 2;
+  lv.textContent = on ? 'Live' : (p.paused ? (userStopped ? 'Stopped' : 'Off') : 'Wait');
+  lv.className = 'v-live' + (on ? '' : ' off');
+  b.textContent = p.paused ? '▶ Play' : '■ Stop'; b.setAttribute('aria-label', p.paused ? 'Play audio' : 'Stop audio');
+}
 function nameOf(st){ return (st && st.name) ? st.name : 'Unknown'; }
 function setMsg(t,k){ const el=document.getElementById('msg'); el.className='status '+(k||''); el.textContent=t||''; }
 
@@ -138,10 +144,11 @@ function freshPlayer(){
   const old = document.getElementById('player');
   const neu = old.cloneNode(false);
   neu.id = 'player';
-  neu.controls = true;
+  neu.controls = false; neu.hidden = true;   // 1.3: no play bar; playback continues, the strip shows LIVE
   neu.preload = 'none';
   old.replaceWith(neu);
-  neu.addEventListener('error', () => setMsg('Stream dropped. Reconnecting…', 'err'));
+  neu.addEventListener('error', () => { if (neu.getAttribute('src')) setMsg('Reconnecting…', 'err'); liveShow(); });
+  ['playing', 'pause', 'waiting', 'ended', 'emptied'].forEach(t => neu.addEventListener(t, liveShow));
   return neu;
 }
 
@@ -170,13 +177,13 @@ async function attach(autoplay){
   for(let i=0;i<8;i++){
     try{
       await p.play();
-      setMsg('Live', 'ok');
+      setMsg('');
       return;
     }catch(e){
       await new Promise(r => setTimeout(r, 400));
     }
   }
-  setMsg('▶ Tap play to start the audio (this browser blocked autoplay).', 'tip');
+  setMsg('Tap ▶ Play to start the audio.', 'tip'); liveShow();
 }
 
 async function status(){
@@ -188,18 +195,21 @@ function render(s){
   const stations=(s&&Array.isArray(s.stations)&&s.stations.length)?s.stations:FALLBACK;
   const current=(s&&s.current&&s.current.name)?s.current:null;
   document.getElementById('now').textContent='Now playing: '+(current?nameOf(current):'none yet');
-  drawDial(stations, current);
+  window.fmStations = stations; window.fmCurrent = current;
+  if (window.fmDraw) window.fmDraw();
   const box=document.getElementById('buttons'); box.innerHTML='';
   for(const st of stations){
     if(!st||!st.id) continue;
-    const b=document.createElement('button');
-    b.className='station'+(current&&current.id===st.id?' active':'');
-    b.textContent=shortOf(st);
+    const b=document.createElement('button'); b.type='button';
+    b.className='v-pre station'+(current&&current.id===st.id?' on':'');
+    const f = fmMHz(st); b.innerHTML='<b></b><span></span>';
+    b.firstChild.textContent = f == null ? '—' : f.toFixed(1); b.lastChild.textContent = nameOf(st).split(/\s+/)[0];
     b.title=nameOf(st); b.setAttribute('aria-label', nameOf(st));
     b.onclick=()=>tune(st);
     box.appendChild(b);
   }
 }
+window.fmTuneStation = st => tune(st);
 async function tune(st){
   setMsg('Tuning '+nameOf(st)+'…','ok');
   document.querySelectorAll('button.station').forEach(b=>b.disabled=true);
@@ -238,9 +248,10 @@ boot();
       const gs = card.querySelector('.bs-gain');
       gs.innerHTML = GAINS[b].map(([v, t]) => '<button type="button" data-g="' + v + '"' + (String(parseFloat(v)) === String(parseFloat(g)) || v === g ? ' class="on"' : '') + '>' + t + '</button>').join('');
       card.querySelectorAll('.bs-sq button').forEach(x => x.classList.toggle('on', x.dataset.q === sqOf(b)));
-      card.querySelector('.bs-note').textContent = b === 'fm'
-        ? (g === 'station' ? 'Gain: each station\'s own (' + (cfg.station_gain || '?') + ' dB now). Pick a number to use one gain for all FM.' : 'Gain ' + g + ' dB for every FM station. Station = use each preset\'s own gain.')
-        : 'Gain ' + g + ' dB · squelch ' + ({'0':'off','20':'low','50':'high'}[sqOf(b)] || sqOf(b)) + '. Squelch mutes the hiss between transmissions; keep it off if you hear nothing.';
+      // 1.3: the gear shows the current values ("30 · LOW", "GAIN AUTO"); no help paragraph
+      const gt = g === 'station' ? 'Gain auto' : (String(parseFloat(g)) === '49.6' ? 'Max' : String(parseFloat(g)));
+      const sq = {'0':'Off','20':'Low','50':'High'}[sqOf(b)] || sqOf(b);
+      const gv = document.querySelector('.v-gear[data-band="' + b + '"] .v-gv'); if (gv) gv.textContent = b === 'fm' ? gt : gt.replace('Gain auto', 'Auto') + ' · ' + sq;
     });
   }
   async function saveSet(b, body){
@@ -262,39 +273,95 @@ boot();
     band = b; localStorage.setItem('listenBand', b);
     document.querySelectorAll('#bands button').forEach(x => { const on = x.dataset.b === b; x.classList.toggle('on', on); x.setAttribute('aria-selected', on); });
     ['fm','airband','noaa'].forEach(k => $('p' + k).hidden = k !== b);
-    $('pfmset').hidden = b !== 'fm';
     $('bandT').textContent = {fm:'FM', airband:'airband', noaa:'NOAA'}[b];
-    nowLine();
+    document.querySelectorAll('.v-gearp').forEach(x => x.hidden = true); document.querySelectorAll('.v-gear').forEach(x => x.setAttribute('aria-expanded', 'false'));
+    nearClose(); nowLine();
   }
+  // 1.3: the strip always names what is actually tuned (stays "AIRBAND · 128.500" on the FM tab), frequency once
   function nowLine(){
-    const c = L.current || {}, nm = c.name || '—', f = parseFloat(String(c.frequency||'').replace(/[^0-9.]/g,''));
-    const kind = {airband:'AM', noaa:'NFM', other:'NFM'}[L.band] || 'FM';
-    $('vnow').innerHTML = '// NOW PLAYING · <b></b>' + (isFinite(f) ? ' · ' + (L.band === 'fm' ? f.toFixed(1) : fmt(f)) + ' MHz ' + kind : '');
-    $('vnow').querySelector('b').textContent = String(nm).toUpperCase();
+    const c = L.current || {}, f = parseFloat(String(c.frequency||'').replace(/[^0-9.]/g,''));
+    const bn = {fm:'FM', airband:'Airband', noaa:'NOAA'}[L.band] || 'Radio';
+    $('vWhat').textContent = (bn + (isFinite(f) ? ' · ' + (L.band === 'fm' ? f.toFixed(1) : fmt(f)) : '')).toUpperCase();
   }
-  function snap(f){ return step === 0.025 ? Math.round(f / 0.025) * 0.025 : Math.round(f * 120) / 120; }   // 8.33 kHz = 25/3 kHz grid
+  // 1.3: TALKING / QUIET + signal from the level meter (airband / NOAA with squelch on), polled while the page is visible
+  async function level(){
+    if (document.hidden) return;
+    try {
+      const v = await (await fetch('/api/listen/level', {cache:'no-store'})).json();
+      $('vTalk').textContent = v.state === 'talking' ? '● Talking' : v.state === 'quiet' ? 'Quiet' : '';
+      $('vTalk').className = 'v-talk' + (v.state === 'talking' ? ' on' : '');
+      const n = v.db == null ? 0 : Math.max(0, Math.min(4, Math.round((v.db + 60) / 12)));
+      $('vSig').textContent = v.db == null ? '' : '▮'.repeat(n) + '▯'.repeat(4 - n);
+    } catch (e) {}
+  }
+  setInterval(level, 1500); level();
+  $('vStop').onclick = () => { const p = $('player'); if (p.paused) { userStopped = false; attach(true); } else { userStopped = true; p.pause(); p.removeAttribute('src'); p.load(); liveShow(); } };
+  // 1.3: +/- snap to the nearest valid channel on the chosen grid (25 kHz, or 8.33 kHz = 25/3 kHz); off-grid goes to the next channel that way
+  const G = () => step === 0.025 ? 40 : 120;   // channels per MHz
+  function snap(f){ return Math.round(f * G()) / G(); }
+  function stepFrom(f, d){ const k = f * G(), r = Math.round(k); return (Math.abs(k - r) < 1e-6 ? r + d : (d > 0 ? Math.ceil(k) : Math.floor(k))) / G(); }
+  // 1.3: preset dots tap to tune; when dots sit too close to hit cleanly, a tap opens a short list of the nearby presets
+  function nearClose(){ $('vNear').hidden = true; }
+  function dialTap(el, lo, hi, list, go){
+    el.onclick = e => {
+      const r = el.getBoundingClientRect(), x = e.clientX - r.left, px = mhz => (mhz - lo) / (hi - lo) * r.width;
+      const hit = list.filter(p => Math.abs(px(p.mhz) - x) <= 22).sort((a, b) => Math.abs(px(a.mhz) - x) - Math.abs(px(b.mhz) - x));
+      if (!hit.length) return nearClose();
+      if (hit.length === 1 || hit.every(p => Math.abs(p.mhz - hit[0].mhz) < 1e-4)) { nearClose(); return go(hit[0]); }
+      const box = $('vNearL'); box.innerHTML = '';
+      hit.forEach(p => { const b = document.createElement('button'); b.type = 'button'; b.innerHTML = '<b></b><span></span>'; b.firstChild.textContent = p.label; b.lastChild.textContent = p.name; b.onclick = () => { nearClose(); go(p); }; box.appendChild(b); });
+      const n = $('vNear'), wr = document.querySelector('.wrap').getBoundingClientRect();
+      n.hidden = false; n.style.top = (r.bottom - wr.top + 6) + 'px';
+    };
+  }
+  document.addEventListener('click', e => { if (!$('vNear').hidden && !e.target.closest('#vNear,.v-dial')) nearClose(); });
+  // gear (gain / squelch) per band
+  document.querySelectorAll('.v-gear').forEach(g => g.onclick = () => { const pnl = document.querySelector('.v-gearp[data-band="' + g.dataset.band + '"]'); pnl.hidden = !pnl.hidden; g.setAttribute('aria-expanded', !pnl.hidden); });
   function drawAir(){
     $('aF').firstChild.nodeValue = fmt(af);
     const X = f => ((f - 118) / 19 * 100).toFixed(2) + '%';
     let h = '';
     for(let f = 118; f <= 136; f += 2) h += '<i class="tk" style="left:' + X(f) + ';height:18px"></i><span class="lb" style="left:' + X(f) + '">' + f + '</span>';
     L.airband.forEach(p => h += '<i class="ps" style="left:' + X(+p.mhz) + '"></i>');
+    h += '<span class="v-dlab">● = presets · tap to tune</span>';
     const cur = L.airband.find(p => Math.abs(p.mhz - af) < 0.002);
     h += '<i class="nd" style="left:' + X(af) + '"></i>' + (cur ? '<span class="nm" style="left:' + X(af) + '">' + cur.name.replace(/^LAX /,'LAX ').toUpperCase().slice(0, 14) + '</span>' : '');
     $('aDial').innerHTML = h;
+    dialTap($('aDial'), 118, 137, L.airband.map(p => ({mhz: +p.mhz, label: fmt(+p.mhz), name: p.name})), p => { af = p.mhz; drawAir(); tune(p.mhz, 'am', p.name, 'airband'); });
   }
+  // 1.3: FM tuner: big readout, -/+ 0.2 MHz (US FM channels), ruler with preset dots (tap to tune)
+  let ff = null, fTo = null;
+  function drawFm(){
+    const st = window.fmStations || [], cur = window.fmCurrent, cf = parseFloat(String((L.current||{}).frequency||'').replace(/[^0-9.]/g,''));
+    if (!fTo && L.band === 'fm' && isFinite(cf)) ff = cf;
+    if (ff == null) ff = (cur && fmMHz(cur)) || 98.7;
+    $('fF').firstChild.nodeValue = ff.toFixed(1);
+    const X = f => ((f - 88) / 20 * 100).toFixed(2) + '%';
+    let h = '';
+    for (let f = 88; f <= 108; f += 2) h += '<i class="tk" style="left:' + X(f) + ';height:18px"></i><span class="lb" style="left:' + X(f) + '">' + f + '</span>';
+    const P = st.map(x => ({mhz: fmMHz(x), name: nameOf(x).split(/\s+/)[0], st: x})).filter(p => p.mhz && p.mhz >= 88 && p.mhz <= 108);
+    P.forEach(p => h += '<i class="ps" style="left:' + X(p.mhz) + '"></i>');
+    h += '<i class="nd" style="left:' + X(ff) + '"></i><span class="v-dlab">● = presets · tap to tune</span>';
+    $('fDial').innerHTML = h;
+    dialTap($('fDial'), 88, 108, P.map(p => Object.assign(p, {label: p.mhz.toFixed(1)})), p => { ff = p.mhz; drawFm(); window.fmTuneStation(p.st); });
+  }
+  window.fmDraw = drawFm;
+  function fNudge(d){ const k = Math.round((ff - 87.9) / 0.2) + d; ff = Math.min(107.9, Math.max(87.9, +(87.9 + k * 0.2).toFixed(1))); drawFm(); clearTimeout(fTo); fTo = setTimeout(() => { fTo = null; tune(ff, 'wfm', '', 'fm'); }, 800); }
+  $('fDn').onclick = () => fNudge(-1); $('fUp').onclick = () => fNudge(1);
   function grid(el, list, b, demod){
     el.innerHTML = '';
     const cf = parseFloat(String((L.current||{}).frequency||'').replace(/[^0-9.]/g,''));
     list.forEach(p => {
       const btn = document.createElement('button'); btn.type = 'button';
       btn.className = 'v-pre' + (L.band === b && Math.abs(cf - p.mhz) < 0.002 ? ' on' : '');
-      btn.innerHTML = '<b></b><span></span>'; btn.firstChild.textContent = fmt(+p.mhz) + (edit ? '  ✕' : ''); btn.lastChild.textContent = p.name;
+      // 1.3: NOAA cards: frequency once, channel (WX2) under it
+      const sub = b === 'noaa' ? ((String(p.name).match(/WX\s?\d/i) || [String(p.name).replace(/\s*1\d\d\.\d+.*$/, '')])[0].replace(/\s/, '').toUpperCase()) : p.name;
+      btn.innerHTML = '<b></b><span></span>'; btn.firstChild.textContent = fmt(+p.mhz) + (edit ? '  ✕' : ''); btn.lastChild.textContent = sub;
       btn.onclick = () => edit ? del(b, p) : tune(+p.mhz, demod, p.name, b);
       el.appendChild(btn);
     });
   }
-  function renderAll(){ drawAir(); grid($('aGrid'), L.airband, 'airband', 'am'); grid($('nGrid'), L.noaa, 'noaa', 'nfm'); nowLine(); }
+  function renderAll(){ drawAir(); try { drawFm(); } catch (e) {} grid($('aGrid'), L.airband, 'airband', 'am'); grid($('nGrid'), L.noaa, 'noaa', 'nfm'); nowLine(); }
   async function load(){
     try{ const r = await fetch('/api/listen', {cache:'no-store'}); L = await r.json(); }catch(e){ }
     const cf = parseFloat(String((L.current||{}).frequency||'').replace(/[^0-9.]/g,''));
@@ -307,7 +374,7 @@ boot();
       const r = await fetch('/api/listen/tune', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mhz, demod, squelch: demod === 'wfm' ? 0 : +sqOf(b === 'other' ? 'noaa' : b), name: name || '', band: b})});
       const j = await r.json().catch(() => ({}));
       if(!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      if(b === 'airband') af = mhz;
+      if(b === 'airband') af = mhz; if(b === 'fm') ff = mhz;
       await load();
       if(window.sdrMode) window.sdrMode.refresh();
       if(window.fieldnoteStrip) window.fieldnoteStrip.refresh();
@@ -319,11 +386,11 @@ boot();
     await fetch('/api/listen/preset/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({band: b, mhz: p.mhz})});
     load();
   }
-  function nudge(d){ af = Math.min(137, Math.max(118, snap(af + d * step))); drawAir(); clearTimeout(tuneTo); tuneTo = setTimeout(() => tune(af, 'am', '', 'airband'), 800); }
+  function nudge(d){ af = Math.min(136.975, Math.max(118, stepFrom(af, d))); drawAir(); clearTimeout(tuneTo); tuneTo = setTimeout(() => tune(af, 'am', '', 'airband'), 800); }
   $('aDn').onclick = () => nudge(-1); $('aUp').onclick = () => nudge(1);
   $('aStep').onclick = e => { const b = e.target.closest('button'); if(!b) return; step = b.dataset.s === '25' ? 0.025 : 0.025 / 3; document.querySelectorAll('#aStep button').forEach(x => x.classList.toggle('on', x === b)); };
-  $('aEdit').onclick = () => { edit = !edit; $('aEdit').classList.toggle('on', edit); $('aEdit').textContent = edit ? 'Done' : 'Edit'; renderAll(); };
-  $('aSave').onclick = () => { $('aSaveRow').hidden = !$('aSaveRow').hidden; if(!$('aSaveRow').hidden) $('aName').focus(); };
+  // 1.3: Edit presets shows ✕ on each preset and the "save this frequency" row
+  $('aEdit').onclick = () => { edit = !edit; $('aEdit').classList.toggle('on', edit); $('aEdit').textContent = edit ? 'Done' : 'Edit presets'; $('aSaveRow').hidden = !edit; renderAll(); };
   $('aSaveGo').onclick = async () => {
     const r = await fetch('/api/listen/preset', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({band:'airband', mhz: +fmt(af), name: $('aName').value.trim()})});
     const j = await r.json().catch(() => ({})); if(!r.ok){ setMsg(j.error || 'save failed', 'err'); return; }
