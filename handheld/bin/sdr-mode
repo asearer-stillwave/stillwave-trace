@@ -144,7 +144,7 @@ case "$ACTION" in
     M="${2:-}"
     valid "$M" || { echo "unknown mode '${M}'. Use: fm, spectrum, detect, adsb" >&2; exit 2; }
     if [[ "$M" == "adsb" && -z "$(adsb_decoder)" ]]; then
-      echo "No ADS-B decoder installed (readsb or dump1090-mutability). Re-run install.sh with internet, or: sudo apt-get install --no-install-recommends dump1090-mutability" >&2
+      echo "No ADS-B decoder that can drive the RTL-SDR (readsb built with rtlsdr, or dump1090). Fix (needs internet once): sudo sdr-adsb-fix" >&2
       exit 3
     fi
     is_off && { setkey SDR_OFF ""; setkey OFF_RESUME ""; }

@@ -92,7 +92,7 @@
   ];
   ICON.scan = ICON.detect;
   const PAGE_TAB = { 'listen': 'listen', 'radio': 'listen', 'adsb': 'map', 'spectrum': 'spectrum', 'scan': 'scan', 'detect': 'scan',
-                     'more': 'more', 'advanced': 'more', 'presets': 'more', 'network': 'more', 'audio': 'more', 'updates': 'more', 'screen': 'more', 'dongles': 'more', 'shots': 'more', 'maps': 'more', 'stations': 'more' };
+                     'more': 'more', 'presets': 'more', 'network': 'more', 'audio': 'more', 'updates': 'more', 'screen': 'more', 'dongles': 'more', 'shots': 'more', 'maps': 'more', 'stations': 'more' };
   const MODE_TAB = { fm: 'listen', adsb: 'map', spectrum: 'spectrum', detect: 'scan' };
   const MODE_NAME = { fm: 'FM radio', adsb: 'ADS-B', spectrum: 'Spectrum', detect: 'Scan' };
   const MODE_PAGE = { fm: '/listen', adsb: '/adsb', spectrum: '/spectrum', detect: '/scan' };

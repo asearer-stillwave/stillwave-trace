@@ -55,6 +55,16 @@ grim (vendor/grim_1.4.0+ds-2build2_arm64.deb)
 Map outline fallback (web/maplib/fallback/la-lowzoom.geojson)
   Derived from OpenStreetMap data via Protomaps. ODbL 1.0, © OpenStreetMap contributors.
 
+readsb (built at setup time when needed; not bundled)
+  When the distribution's readsb cannot drive an RTL-SDR (Raspberry Pi OS
+  package 3.14.1630+git20240609 is built without rtlsdr), the installer's
+  sdr-adsb-fix downloads the unmodified upstream source of wiedehopf/readsb,
+  tag v3.16.18 (commit 9460652952a62fcfd9bf11a2664d737147f266a5), builds it
+  on the box with RTLSDR=yes and installs only the binary to /usr/local/bin
+  (with COPYING/LICENSE and SOURCE.txt in /usr/local/share/doc/readsb/).
+  GNU General Public License v3.0 or later. https://github.com/wiedehopf/readsb
+  It runs as a separate program; Trace does not link to it.
+
 Packages installed at setup time (not bundled): Ubuntu / Raspberry Pi OS
 packages such as Icecast, rtl-sdr, ffmpeg, readsb or dump1090-mutability,
 Flask, nginx and the Chromium snap are downloaded from their distributors and

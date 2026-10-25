@@ -1264,3 +1264,10 @@ html[data-ts="xl"] .v-sub button { letter-spacing:.02em; white-space:nowrap; }
 html[data-ts="xl"] .fm-links a.fm-edit { padding:0 .75rem; letter-spacing:.04em; }
 .air-presets-h { flex-wrap:wrap; gap:.5rem; }
 .air-presets-h .fm-links { flex-wrap:wrap; justify-content:flex-end; }
+
+/* ======================= Stillwave Trace 1.2.8 ======================= */
+/* Airband/NOAA tuner at XL on the 5" handheld: the frequency cell may shrink, so the "+" step button stays inside the card */
+.v-tune { grid-template-columns: auto minmax(0, 1fr) auto; }
+.v-freq { min-width: 0; }
+html[data-ts="xl"] .v-tune .v-freq { font-size: min(64px, 11vw); }
+html[data-ts="xl"] .v-tune .v-freq small { display: block; margin: 6px 0 0; white-space: nowrap; }

@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.2.8] and [1.2.8-desktop] - 2026-10-24 (PT) - ADS-B decoder check (Raspberry Pi OS), OS updates on fresh install, Tuner removed; both editions
+### Fixed
+- **ADS-B on Raspberry Pi OS:** its `readsb` package (3.14.1630+git20240609) is built without RTL-SDR support ("Unknown device type: rtlsdr"). sdr-adsb restart-looped and Start map flipped back to FM. The installer now checks that the decoder really supports rtlsdr. If not, the new **`sdr-adsb-fix`** builds upstream readsb **v3.16.18** (commit 9460652, GPL-3.0, binary only, readsb.service stays masked) with `RTLSDR=yes` into `/usr/local/bin`. Needs internet once.
+- `adsb_run.sh` looks in `/usr/local/bin` first and skips a readsb without rtlsdr. With no capable decoder it logs a clear error with the fix (`sudo sdr-adsb-fix`, then `sudo sdr-mode adsb`) instead of starting it. The `sdr-mode` hint says the same.
+- Handheld XL, Airband/NOAA tuner: the "+" step button no longer pokes past the right edge. The frequency may shrink, and "MHz AM" moves under it.
+### Added
+- **OS updates on a fresh install:** `apt-get full-upgrade` (non-interactive, keeps config files) before the packages. It runs once per install and never during an over-the-air update. Skip with `--no-os-upgrade`. If a new kernel/firmware lands, the installer says so and it starts at the final reboot (no mid-install reboot).
+### Removed
+- **Tuner page** (More › Tuner, `/advanced`). The Station bank and Scan replace it. `/advanced` redirects to Listen, like `/radio`. Installs and upgrades delete the old page. The `/api/scan` endpoint and `sdr-scan` helper stay for now; no page uses them any more.
+
 ## [1.2.7] and [1.2.7-desktop] - 2026-10-24 (PT) - Navigation: back buttons go where you came from, Station bank from Listen; both editions
 ### Added
 - **‹ MORE back button** at the top of all nine More pages: Tuner, Radio roles, Network, Audio, Screen, Screenshots, Updates, Download maps, About & licenses. It is styled like ‹ FM RADIO and returns to the More menu.

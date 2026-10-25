@@ -183,7 +183,8 @@ def dashboard_gone():
 @app.get("/advanced")
 @app.get("/advanced.html")
 def advanced():
-    return _html("advanced.html")
+    from flask import redirect   # 1.2.8: Tuner page removed (Station bank + Scan replace it); old links go to Listen
+    return redirect("/listen" + (("?" + request.query_string.decode()) if request.query_string else ""), code=302)
 
 
 @app.get("/presets")

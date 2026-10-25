@@ -41,7 +41,7 @@ The installer does not switch networks: if the Pi is on Wi-Fi it stays on Wi-Fi,
 
 The installer:
 
-1. Installs `rtl-sdr`, `sox`, `ffmpeg`, Icecast2, Flask, `python3-numpy`, nginx, NetworkManager, `hostapd`, and `dnsmasq`. Then tries an ADS-B decoder: `readsb` (newer Ubuntu/Debian), else `dump1090-mutability` (Ubuntu 24.04 / many Pi images), both with `--no-install-recommends` so `lighttpd` never lands on port 80. If neither installs, ADS-B mode is just greyed out.
+1. Installs `rtl-sdr`, `sox`, `ffmpeg`, Icecast2, Flask, `python3-numpy`, nginx, NetworkManager, `hostapd`, and `dnsmasq`. Then tries an ADS-B decoder: `readsb` (newer Ubuntu/Debian), else `dump1090-mutability` (Ubuntu 24.04), both with `--no-install-recommends` so `lighttpd` never lands on port 80. **1.2.8:** the installer then checks the decoder really supports RTL-SDR (`sdr-adsb-fix`). Raspberry Pi OS's `readsb` is built without it, so `sdr-adsb-fix` builds upstream readsb v3.16.18 with `RTLSDR=yes` into `/usr/local/bin` (a few minutes, internet needed once). If that fails too, ADS-B mode is just greyed out. Fix it later with `sudo sdr-adsb-fix`.
 2. Blacklists the DVB kernel modules that steal the RTL dongle.
 3. Installs helpers under `/usr/local/sbin` and the web app under `/usr/local/lib/sdr-station`.
 4. Writes `/etc/sdr/fm.env`, `/etc/sdr/stations.conf`, `/etc/sdr/mode.env`, and `/etc/sdr/adsb.env` **only if they are not already there**. A reinstall keeps your station list, gain, Icecast source password, last dongle mode, ADS-B settings, and network mode.
@@ -62,7 +62,6 @@ Replace `HOST` with `SDRpi.local` (the Pi's hostname + `.local`), the address pr
 | Spectrum + waterfall | `http://HOST/spectrum` |
 | RF detect | `http://HOST/detect` |
 | ADS-B aircraft | `http://HOST/adsb` |
-| Tuner / find FM stations | `http://HOST/advanced` |
 | Presets | `http://HOST/presets` |
 | Network and services | `http://HOST/network` |
 | Audio output / Bluetooth speaker | `http://HOST/audio` |
@@ -211,7 +210,7 @@ cat /etc/sdr/mode.env          # MODE=... restored at boot
 - Switching stops the current owner first, then starts the new one (about 1–3 seconds).
 - The units also have `Conflicts=` on each other, so anything that starts FM (a station button, Listen, Save preset, **Restart radio stream**) automatically takes the dongle back to FM.
 - The last mode is saved in `/etc/sdr/mode.env` and `sdr-mode.service` restores it at boot. A fresh install is `MODE=fm`.
-- **Find stations 88–108 MHz** on the Tuner page borrows the dongle and puts the previous mode back afterwards.
+- (1.2.8: the Tuner page was removed; find stations in More › Stations or with Scan.)
 - **Restart all** on the Network page restarts whatever mode is active instead of forcing FM.
 - The spectrum/detect pages do not grab the dongle just by opening them; they show a **Start** button unless you use `?auto=1`.
 
@@ -569,7 +568,7 @@ curl -sN --max-time 4 http://127.0.0.1/api/scope/stream | cut -c1-120
 
 ## Layout on the box
 
-- `/usr/local/lib/sdr-station/web/` — Flask app, HTML, `fieldnote.css`, `nav.js` (status strip at the top + tab bar at the bottom of every page), `more.html` (More: Tuner, Presets, Network, Audio, Screen, Updates, Power), `mode.js` (SDR mode row), `power.js` (Power menu), and `sdr_scope.py` (spectrum/detect service on 127.0.0.1:8081)
+- `/usr/local/lib/sdr-station/web/` — Flask app, HTML, `fieldnote.css`, `nav.js` (status strip at the top + tab bar at the bottom of every page), `more.html` (More: Presets, Network, Audio, Screen, Updates, Power), `mode.js` (SDR mode row), `power.js` (Power menu), and `sdr_scope.py` (spectrum/detect service on 127.0.0.1:8081)
 - `/usr/local/lib/sdr-station/bin/fm_stream.sh` — RTL-SDR to Icecast
 - `/usr/local/lib/sdr-station/bin/adsb_run.sh` — runs readsb / dump1090 for `sdr-adsb`
 - `/usr/local/sbin/sdr-mode` — `status`, `set MODE`, `boot`, `restart`, `stop-all`, `current`
@@ -651,8 +650,13 @@ calls (mode 5 s, network 10 s, audio 15 s), polled every 10 s while the page is 
 cannot read shows a dash.
 
 The **tab bar** at the bottom (Radio · Map · Spectrum · Detect · More) only opens pages; it never changes
-the SDR mode. The green dot marks the tab whose job the SDR is doing now. Tuner, Presets, Network, Audio and
+the SDR mode. The green dot marks the tab whose job the SDR is doing now. Presets, Network, Audio and
 Power live under **More**. The **SDR mode** row on each page still switches the dongle, as before.
 
 ## 1.0.8
 See CHANGELOG.md. "/" opens the single-load app on Spectrum; tabs: Listen (FM/Airband/NOAA), Map, Scan, Spectrum, More. Installer over SSH logs to /var/log/trace-install.log; resume with `sudo bash install.sh --resume`.
+
+## 1.2.8: OS updates, ADS-B decoder check
+- A fresh install runs `apt-get full-upgrade` first (non-interactive, keeps config files). Skip it with `--no-os-upgrade`. An over-the-air update (`--upgrade`) never upgrades the OS. A new kernel takes effect at the reboot the installer asks for at the end.
+- `sudo sdr-adsb-fix`: checks for an RTL-SDR-capable decoder and builds readsb (pinned v3.16.18, GPL-3.0) into `/usr/local/bin` if there is none. `sdr-adsb-fix --check` only reports. `adsb_run.sh` prefers `/usr/local/bin` and refuses a readsb without rtlsdr, with a clear log line instead of a restart loop.
+

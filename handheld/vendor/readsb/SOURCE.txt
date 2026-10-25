@@ -1,0 +1,7 @@
+readsb is NOT bundled. bin/sdr-adsb-fix builds it on the box only when no rtlsdr-capable decoder is installed.
+Source: https://github.com/wiedehopf/readsb  tag v3.16.18  commit 9460652952a62fcfd9bf11a2664d737147f266a5
+Build: make RTLSDR=yes (deps: git build-essential pkg-config librtlsdr-dev libncurses-dev zlib1g-dev libzstd-dev)
+Installed: /usr/local/bin/readsb (binary only; readsb.service is never installed and stays masked)
+License: GPL-3.0-or-later (COPYING/LICENSE copied to /usr/local/share/doc/readsb/). Separate program, not linked.
+Why: Raspberry Pi OS readsb 3.14.1630+git20240609 is built without rtlsdr ("Unknown device type: rtlsdr").
+Pin chosen: the commit Searer built and verified on a Pi 5 (map + radio audio together), 2026-10-24.

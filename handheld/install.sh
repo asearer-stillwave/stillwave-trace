@@ -12,6 +12,7 @@ DO_DISPLAY=0
 DISPLAY_ONLY=0
 UPGRADE=0
 RESUME=0
+NO_OS_UPGRADE=0
 DSI_PORT=""
 FORCE_EDITION=0
 [[ "${SDR_UPDATE_RUN:-}" == 1 ]] && UPGRADE=1
@@ -29,7 +30,8 @@ for arg in "$@"; do
     --display-only) DO_DISPLAY=1; DISPLAY_ONLY=1 ;;
     --upgrade) UPGRADE=1 ;;
     --resume) RESUME=1 ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+    --no-os-upgrade) NO_OS_UPGRADE=1 ;;
+    -h|--help) sed -n '2,8p' "$0"; echo '#   --no-os-upgrade                      fresh install without apt full-upgrade (1.2.8)'; exit 0 ;;
     *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -304,6 +306,25 @@ elif [[ $RESUME -eq 1 ]] && step_done packages; then
 else
 echo "icecast2 icecast2/icecast-setup boolean false" | debconf-set-selections || true
 apt-get update -y
+# ---- 1.2.8: bring a FRESH system up to date first (never during --upgrade / OTA; skip with --no-os-upgrade).
+# Non-interactive, keeps existing config files. A new kernel/firmware is NOT rebooted into mid-install: it takes
+# effect at the reboot the installer asks for at the end (no half-finished install after a reboot). ----
+OS_REBOOT_NEEDED=0
+if [[ $NO_OS_UPGRADE -eq 1 ]]; then
+  echo "OS upgrade skipped (--no-os-upgrade)"
+elif step_done osupgrade; then
+  echo "OS upgrade already done for this install"
+else
+  echo "[progress] 10 Updating the operating system (apt full-upgrade; can take 5-15 minutes)"
+  KERNEL_BEFORE="$(ls -1 /lib/modules 2>/dev/null | sort | tr '\n' ' ')"
+  if DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade; then
+    mark_step osupgrade
+  else
+    echo "WARNING: OS upgrade did not finish (the install continues; run 'sudo apt full-upgrade' later)"
+  fi
+  KERNEL_AFTER="$(ls -1 /lib/modules 2>/dev/null | sort | tr '\n' ' ')"
+  if [[ -f /var/run/reboot-required || "$KERNEL_BEFORE" != "$KERNEL_AFTER" ]]; then OS_REBOOT_NEEDED=1; install -d -m 755 /var/lib/sdr-station; touch /var/lib/sdr-station/os-reboot-needed; fi
+fi
 apt-get install -y software-properties-common ca-certificates || true
 add-apt-repository -y universe || true
 apt-get update -y
@@ -339,6 +360,9 @@ for u in readsb dump1090-mutability dump1090-fa; do
   systemctl disable --now "$u.service" >/dev/null 2>&1 || true
 done
 systemctl mask readsb.service >/dev/null 2>&1 || true
+# 1.2.8: the decoder must really drive an RTL-SDR. Raspberry Pi OS's readsb is built without rtlsdr; then build the
+# pinned upstream readsb with RTLSDR=yes into /usr/local/bin (binary only, no readsb service). Non-fatal.
+bash "$SRC/bin/sdr-adsb-fix" || echo "WARNING: ADS-B decoder not ready (map stays off; FM/Scan/Spectrum work). Later: sudo sdr-adsb-fix"
 mark_step packages
 fi   # end of package installs (skipped by --upgrade)
 [[ "${TRACE_POLICY:-0}" == 1 ]] && rm -f /usr/sbin/policy-rc.d
@@ -374,6 +398,7 @@ install -m 644 "$SRC/config/airports.json" /usr/local/lib/sdr-station/config/air
 install -m 755 "$SRC/bin/sdr-level" /usr/local/lib/sdr-station/bin/sdr-level                   # 1.2.5: airband level meter (map listen strip)
 install -m 755 "$SRC/bin/sdr-aircraft-db" /usr/local/sbin/sdr-aircraft-db                      # 1.2.5: offline aircraft models (ODC-By)
 install -d -m 755 /var/lib/sdr/aircraft
+install -m 755 "$SRC/bin/sdr-adsb-fix" /usr/local/sbin/sdr-adsb-fix                            # 1.2.8: rtlsdr-capable ADS-B decoder check/build
 install -m 755 "$SRC/bin/sdr-content" /usr/local/sbin/sdr-content                              # 1.2.6: map packs + station bank from CONTENT_URL
 install -m 644 "$SRC/web/bank.py" /usr/local/lib/sdr-station/web/bank.py                         # 1.2.6: station bank queries
 install -d -m 755 /var/lib/sdr/maps/packs /var/lib/sdr/content /var/lib/sdr/bank
@@ -455,6 +480,7 @@ chmod 644 /etc/sdr/screen.env
 install -m 644 "$SRC/README.md" /usr/local/lib/sdr-station/README.md
 install -m 644 "$SRC/web/radio_control.py" /usr/local/lib/sdr-station/web/radio_control.py
 for f in "$SRC"/web/*.html "$SRC"/web/*.js "$SRC"/web/*.css; do install -m 644 "$f" /usr/local/lib/sdr-station/web/; done   # 1.0.8: every page
+rm -f /usr/local/lib/sdr-station/web/advanced.html   # 1.2.8: Tuner page removed (/advanced redirects to Listen)
 rm -f /usr/local/lib/sdr-station/web/dashboard.html   # 1.0.8: desktop dashboard removed
 install -m 644 "$SRC/web/sdr_scope.py" /usr/local/lib/sdr-station/web/sdr_scope.py
 install -d -m 755 /usr/local/lib/sdr-station/web/fonts   # UI fonts (Anton, JetBrains Mono; SIL OFL 1.1, bundled, offline)
@@ -845,4 +871,7 @@ boot_trim() {
   fi
 }
 boot_trim || true
+if [[ $UPGRADE -eq 0 && -f /var/lib/sdr-station/os-reboot-needed ]]; then
+  echo "NOTE: the OS upgrade installed a new kernel/firmware; it starts with this reboot."; rm -f /var/lib/sdr-station/os-reboot-needed
+fi
 echo "TRACE-INSTALL: OK ($VERSION). Reboot to finish: sudo reboot"

@@ -11,18 +11,31 @@ PPM="${ADSB_PPM:-0}"
 LAT="${ADSB_LAT:-}"
 LON="${ADSB_LON:-}"
 
+# 1.2.8: /usr/local/bin first (a readsb built with RTLSDR=yes by sdr-adsb-fix wins over the distro one), and a readsb
+# without rtlsdr support (Raspberry Pi OS's package) is skipped, never started into a restart loop.
+SEARCH="${SDR_ADSB_SEARCH:-/usr/local/bin:/usr/bin:/usr/sbin:/usr/local/sbin:${PATH:-}}"
+NOCAP=""
+has_rtlsdr() {
+  case "$(basename "$1")" in
+    readsb*) "$1" --help 2>&1 | grep -qi rtlsdr ;;
+    *) return 0 ;;
+  esac
+}
 find_decoder() {
-  local c
+  local c d
   if [[ -n "${ADSB_DECODER:-}" ]] && command -v "$ADSB_DECODER" >/dev/null 2>&1; then
     command -v "$ADSB_DECODER"
     return 0
   fi
+  IFS=: read -ra DIRS <<<"$SEARCH"
   for c in readsb dump1090-fa dump1090-mutability dump1090; do
-    if command -v "$c" >/dev/null 2>&1; then
-      command -v "$c"
-      return 0
-    fi
+    for d in "${DIRS[@]}"; do
+      [[ -x "$d/$c" ]] || continue
+      if has_rtlsdr "$d/$c"; then echo "$d/$c"; return 0; fi
+      NOCAP="${NOCAP:+$NOCAP }$d/$c"
+    done
   done
+  [[ -n "$NOCAP" ]] && echo "ADS-B: $NOCAP was built without RTL-SDR support ('Unknown device type: rtlsdr'). Fix: sudo sdr-adsb-fix (builds readsb with RTLSDR=yes, needs internet once), then sudo sdr-mode adsb" >&2
   return 1
 }
 
@@ -33,7 +46,7 @@ fi
 
 BIN="$(find_decoder || true)"
 if [[ -z "$BIN" ]]; then
-  echo "No ADS-B decoder found (readsb, dump1090-fa, dump1090-mutability). Re-run install.sh." >&2
+  echo "No rtlsdr-capable ADS-B decoder found (readsb, dump1090-fa, dump1090-mutability). Fix: sudo sdr-adsb-fix, then sudo sdr-mode adsb" >&2
   exit 3
 fi
 
