@@ -53,6 +53,7 @@
       const cls = 'kk' + (fn ? ' fn k-' + k.slice(1) : '') + (k === '@shift' && shift ? (shift === 2 ? ' on lock' : ' on') : '') + (k === '@done' ? ' done' : '');
       return '<button type="button" tabindex="-1" class="' + cls + '" data-k="' + esc(k) + '">' + esc(lab) + '</button>';
     }).join('') + '</div>').join('');
+    if (field) rerev();
   }
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
@@ -104,19 +105,57 @@
     if (layout === 'abc' && shift === 1) { shift = 0; render(); }
   }
 
-  function reveal() {                                   // keep the focused field above the keyboard
-    if (!field || !kb) return;
-    const kh = kb.getBoundingClientRect().height || padH;
-    const top = parseFloat(getComputedStyle(H).getPropertyValue('--chrome-top')) || 63;
-    const r = field.getBoundingClientRect();
-    const room = innerHeight - kh;
-    const want = top + Math.max(12, (room - top - r.height) / 3);
-    if (r.top < top + 8 || r.bottom > room - 12) {
-      try { field.scrollIntoView({block: 'nearest'}); } catch (e) {}
-      const r2 = field.getBoundingClientRect();
-      window.scrollBy({top: r2.top - want, behavior: 'auto'});
+  // 1.2.10: keep the focused field (and its label) above the keyboard. Pages run inside the shell's iframe
+  // (html.embed), where `html.embed body { padding-bottom: ... !important }` beat the old inline padding, so the page
+  // could not scroll far enough and the keyboard covered the Update source field. Padding now goes on the scroll
+  // container(s) with priority "important", and the field is scrolled into the room left above the keyboard.
+  const padded = new Map();                             // element -> previous inline padding-bottom
+  const scrollable = el => { const o = getComputedStyle(el).overflowY; return o === 'auto' || o === 'scroll'; };
+  function scrollers(el) {                              // inner scroll boxes (e.g. the new-preset sheet) + the page
+    const L = [];
+    for (let p = el.parentElement; p && p !== D.body && p !== H; p = p.parentElement) if (scrollable(p)) L.push(p);
+    L.push(D.scrollingElement || H);
+    return L;
+  }
+  function setPad(list, h) {
+    const want = new Set(list.map(e => (e === H || e === D.scrollingElement) ? D.body : e));
+    for (const [e, old] of padded) if (!want.has(e)) { unpadOne(e, old); padded.delete(e); }
+    for (const e of want) {
+      if (!padded.has(e)) padded.set(e, [e.style.getPropertyValue('padding-bottom'), e.style.getPropertyPriority('padding-bottom')]);
+      e.style.setProperty('padding-bottom', h + 'px', 'important');
     }
   }
+  function unpadOne(e, old) { if (old[0]) e.style.setProperty('padding-bottom', old[0], old[1]); else e.style.removeProperty('padding-bottom'); }
+  function unpadAll() { for (const [e, old] of padded) unpadOne(e, old); padded.clear(); }
+  function target(el) {                                 // the field plus its label text, so you can see what you type into
+    let r = el.getBoundingClientRect(), top = r.top, bot = r.bottom;
+    const lab = el.closest('label') || (el.id && D.querySelector('label[for="' + el.id + '"]'));
+    if (lab) { const lr = lab.getBoundingClientRect(); if (lr.height) { top = Math.min(top, lr.top); bot = Math.max(bot, lr.bottom); } }
+    return {top, bot, ftop: r.top, fbot: r.bottom};
+  }
+  const M = 16;                                         // margin between the field and the keyboard / top edge
+  function reveal() {
+    if (!field || !kb) return;
+    const kh = kb.getBoundingClientRect().height || padH;
+    const list = scrollers(field);
+    setPad(list, kh + M);
+    const topEdge = H.classList.contains('embed') ? 0 : (parseFloat(getComputedStyle(H).getPropertyValue('--chrome-top')) || 63);
+    for (const sc of list) {                            // innermost first
+      const page = sc === D.scrollingElement || sc === H;
+      const cr = page ? {top: 0, bottom: innerHeight} : sc.getBoundingClientRect();
+      const lo = Math.max(cr.top, page ? topEdge : cr.top) + M, hi = Math.min(cr.bottom, innerHeight - kh) - M;
+      const t = target(field);
+      let top = t.top, bot = t.bot;
+      if (bot - top > hi - lo) { top = t.ftop; bot = t.fbot; }   // no room for the label: the field itself wins
+      let d = 0;
+      if (bot > hi) d = bot - hi; else if (top < lo) d = top - lo;
+      if (!d) continue;
+      if (page) window.scrollBy({top: d, behavior: 'auto'}); else sc.scrollTop += d;
+    }
+  }
+  let rvT = 0;
+  const rerev = () => { clearTimeout(rvT); rvT = setTimeout(() => { if (field) reveal(); }, 30); };
+  window.addEventListener('resize', rerev);
   function open(el) {
     if (!kb) build();
     if (field && field !== el) restoreMode(field);
@@ -128,7 +167,7 @@
     kb.classList.add('open'); kb.setAttribute('aria-hidden', 'false');
     H.classList.add('kbd-open');
     padH = kb.getBoundingClientRect().height;
-    D.body.style.paddingBottom = padH + 'px';
+    reveal();                                           // pad + scroll now, and again once layout settles
     requestAnimationFrame(() => setTimeout(reveal, 30));
   }
   function restoreMode(el) {
@@ -145,7 +184,7 @@
       if (done) { f.dispatchEvent(new Event('change', {bubbles: true})); f.blur(); }
     }
     if (kb) { kb.classList.remove('open'); kb.setAttribute('aria-hidden', 'true'); }
-    H.classList.remove('kbd-open'); D.body.style.paddingBottom = '';
+    H.classList.remove('kbd-open'); unpadAll();
   }
 
   D.addEventListener('focusin', e => {

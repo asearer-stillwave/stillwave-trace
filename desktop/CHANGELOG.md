@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.2.10] and [1.2.10-desktop] - 2026-10-25 (PT) - On-screen keyboard no longer covers the field; both editions
+### Fixed
+- **The on-screen keyboard no longer hides the field you are typing in** (found by Searer on the Pi 5: More › Updates › Update source). Pages run inside the app frame, where a frame style overrode the keyboard's bottom space, so the page could not scroll up far enough. Now, when the keyboard opens, the page (and any scrolling sheet, such as New preset) gets bottom space equal to the keyboard height, and the field and its label scroll into view above the keyboard with a 16 px margin. Moving to another field while the keyboard is open, or switching to the number pad, does the same. The space is removed when the keyboard closes. Applies to every text field: Update source, Content source, Wi‑Fi password, hotspot, new preset, station search.
+### Changed
+- **Install from file** now asks for the `.tar.gz` plus its `.sig` (the update zips no longer include an `.ota`). An older `.ota` file is still accepted.
+
 ## [1.2.9] and [1.2.9-desktop] - 2026-10-24 (PT) - Brand text pass, mono ALL CAPS body, short station names; both editions
 ### Changed
 - **Body text is now mono and ALL CAPS** everywhere (Searer's pick). Anton headlines are unchanged. Text you type (inputs, the on-screen keyboard), logs and the hotspot password keep their real case. Wi‑Fi names in lists show in caps, but tapping one fills in the exact name.

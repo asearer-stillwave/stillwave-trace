@@ -2023,7 +2023,7 @@ def _upload_slot(token):
 def update_upload():
     files = [f for f in request.files.getlist("file") if f and f.filename]
     if not files:
-        return jsonify(ok=False, message="Pick the update file first (.ota, or the .tar.gz and its .sig)."), 400
+        return jsonify(ok=False, message="Pick the update files first (the .tar.gz plus its .sig, or an .ota file)."), 400
     try:
         UPLOAD_DIR.mkdir(mode=0o700, exist_ok=True)
         for old in UPLOAD_DIR.iterdir():          # one upload at a time; drop earlier ones
@@ -2046,10 +2046,10 @@ def update_upload():
         x.chmod(0o644)
     if not main:
         _shutil.rmtree(slot, ignore_errors=True)
-        return jsonify(ok=False, message="That isn't a Trace update. Pick the .ota file (or the .tar.gz plus its .sig)."), 400
+        return jsonify(ok=False, message="That isn't a Trace update. Pick the .tar.gz plus its .sig (or an .ota file)."), 400
     if main.suffix != ".ota" and not sig:
         _shutil.rmtree(slot, ignore_errors=True)
-        return jsonify(ok=False, message="The .sig file is missing. Pick both files together, or the single .ota file."), 400
+        return jsonify(ok=False, message="The .sig file is missing. Pick the .tar.gz and its .sig together."), 400
     d = _update_call(["verify-file", str(main)], 240)
     d["token"] = token if d.get("ok") else None
     if not d.get("ok"):
