@@ -1295,3 +1295,27 @@ html[data-ts="xl"] .fm-links a.fm-edit { padding:0 .75rem; letter-spacing:.04em;
 .v-freq { min-width: 0; }
 html[data-ts="xl"] .v-tune .v-freq { font-size: min(64px, 11vw); }
 html[data-ts="xl"] .v-tune .v-freq small { display: block; margin: 6px 0 0; white-space: nowrap; }
+
+/* ===== 1.2.9 text audit (brand) ===== */
+/* H1 single-word titles: Paper (accent only on the second word, as in the brand deck) */
+/* H1: single-word titles in Paper (markup change in more.html / shots.html) */
+/* T1 tags like "saved for FM": Static outline, not amber (amber/red are for warnings only) */
+.v-tag{color:var(--static,#A3B5A9);border-color:rgba(163,181,169,.45)}
+/* T2 tuner unit under the frequency as HUD label */
+.v-freq small{text-transform:uppercase;letter-spacing:.16em}
+/* M1 More > Reset SDR USB pill: mono uppercase (stays orange: it is a caution action) */
+.mrow .mpill{font-family:var(--mono);text-transform:uppercase;letter-spacing:.12em}
+/* S1 Screen > text size options: uppercase HUD like every other option button */
+.tsopt span{ text-transform:uppercase; letter-spacing:.1em }
+
+/* 1.2.9 short names: preset chip names are one line, never wrap */
+.v-pre span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.v-pre{min-width:0}
+
+/* ===== 1.2.9 body text: mono, ALL CAPS (Searer). Anton headlines unchanged. Typed and case-sensitive text keeps its case. ===== */
+:root { --font: var(--mono); }
+body, body * { text-transform: uppercase !important; }
+input, select, textarea, option, code, pre, .ulog, #log, .kbd, .kbd *, #appw, .keep-case, .keep-case * { text-transform: none !important; }
+input::placeholder, textarea::placeholder { text-transform: uppercase; }
+/* 1.2.9: wider mono caps — single-word option buttons never break mid-word */
+.bs-gain button, .seg button { white-space: nowrap; overflow-wrap: normal; letter-spacing: .04em; padding-left: .2em; padding-right: .2em; min-width: 0; }

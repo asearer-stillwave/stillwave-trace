@@ -401,6 +401,7 @@ install -d -m 755 /var/lib/sdr/aircraft
 install -m 755 "$SRC/bin/sdr-adsb-fix" /usr/local/sbin/sdr-adsb-fix                            # 1.2.8: rtlsdr-capable ADS-B decoder check/build
 install -m 755 "$SRC/bin/sdr-content" /usr/local/sbin/sdr-content                              # 1.2.6: map packs + station bank from CONTENT_URL
 install -m 644 "$SRC/web/bank.py" /usr/local/lib/sdr-station/web/bank.py                         # 1.2.6: station bank queries
+install -m 644 "$SRC/web/stationnames.py" /usr/local/lib/sdr-station/web/stationnames.py         # 1.2.9: short station names (bank.py imports it)
 install -d -m 755 /var/lib/sdr/maps/packs /var/lib/sdr/content /var/lib/sdr/bank
 if [[ -s "$SRC/vendor/station-bank/stations.sqlite.gz" ]]; then
   install -d -m 755 /usr/local/lib/sdr-station/vendor/station-bank

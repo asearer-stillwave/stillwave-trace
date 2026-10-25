@@ -72,3 +72,22 @@ html.hdmi .np-h,html.hdmi .np-band,html.hdmi .np-row,html.hdmi .np-src,html.hdmi
 .pre-back-h { display:flex; flex-wrap:wrap; gap:.5rem; justify-content:space-between; }
 html[data-ts="xl"] .sb-tabs{grid-template-columns:1fr 1fr}
 html.kiosk:not(.hdmi) .np-sheet{padding-top:1.2rem}
+
+/* ===== 1.2.9 text audit (brand) ===== */
+/* B1 group labels = HUD labels: mono, Static, +0.16em, // prefix */
+.sb-g{font-family:var(--mono);letter-spacing:.16em;color:var(--static)}
+.sb-g::before{content:"// "}
+/* B2 row titles: mono (call sign / ICAO / facility) like presets and the Listen buttons */
+.sb-t{font-family:var(--mono);font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.sb-tag{font-family:var(--mono);letter-spacing:.14em;text-transform:uppercase}
+/* B3 breadcrumb as a HUD line */
+.sb-crumb:has(> a){text-transform:uppercase;letter-spacing:.12em}
+/* B5 Near me "Home" label */
+.sb-home > span:first-child{font-family:var(--mono);color:var(--static);letter-spacing:.16em;text-transform:uppercase;font-size:var(--t-label)}
+.sb-home > span:first-child::before{content:"// "}
+
+/* ===== 1.2.9 short names: one line, ellipsis, never wrap ===== */
+.sb-t,.sb-s{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-t{white-space:pre}  /* keeps the two-space gap between code and name; still one line */
+.sb-t{overflow:hidden;text-overflow:ellipsis}
+.sb-s{color:var(--static)}

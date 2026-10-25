@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.2.9] and [1.2.9-desktop] - 2026-10-24 (PT) - Brand text pass, mono ALL CAPS body, short station names; both editions
+### Changed
+- **Body text is now mono and ALL CAPS** everywhere (Searer's pick). Anton headlines are unchanged. Text you type (inputs, the on-screen keyboard), logs and the hotspot password keep their real case. Wi‑Fi names in lists show in caps, but tapping one fills in the exact name.
+- **Short station names** so nothing wraps on the 5" screen. All names are one line, and long ones end in "…":
+  - FM rows: `KXLU  88.9`, with the city on line 2 (kW dropped).
+  - Airports: `KSDM  BROWN`. The ICAO code plus a short name of at most 14 characters, without Intl/Airport/Regional/Municipal/Field and similar words.
+  - Airband rows: `TWR 119.200`, using TWR, GND, CLR, APP, ATIS, CTAF and UNIC, always with 3 decimals.
+  - Presets, the dial label and the map's airport frequencies: `KLAX TWR N`, `SOCAL APP`, `KBUR ATIS` (at most 14 characters).
+  - The airport page note is now `City · Center ZLA`.
+- The short names are computed when the bank is built (`airport.short` and `afreq.short`, bank format 2, `stationnames.py`). Station banks built before 1.2.9 still work, because the box computes the same names on the fly.
+- **Station bank text matches the brand.** Group labels are mono HUD labels with a `// ` prefix. Row titles and tags are mono uppercase, and the breadcrumb is a HUD line. The Near me "Home" label is `// HOME`.
+- **Name tidy:** "Lee'S Summit" is now "Lee's Summit", "Mcallen" is "McAllen", "Field Of Dreams" is "Field of Dreams" and "M C R" is "MCR". FAA shorthand is spelled out: Intl→International, Muni→Municipal, Rgnl→Regional, Fld→Field, Cmplx→Complex, Arr/Dep→Arrival/Departure, Socal→SoCal.
+- More and Screenshots titles are in Paper. The "saved for FM" tag uses a Static outline instead of amber (amber is for warnings). "MHZ AM", the Reset pill and the text-size options are uppercase HUD style. One-word option buttons (gain STATION, segment buttons) never break mid-word.
+
 ## [1.2.8] and [1.2.8-desktop] - 2026-10-24 (PT) - ADS-B decoder check (Raspberry Pi OS), OS updates on fresh install, Tuner removed; both editions
 ### Fixed
 - **ADS-B on Raspberry Pi OS:** its `readsb` package (3.14.1630+git20240609) is built without RTL-SDR support ("Unknown device type: rtlsdr"). sdr-adsb restart-looped and Start map flipped back to FM. The installer now checks that the decoder really supports rtlsdr. If not, the new **`sdr-adsb-fix`** builds upstream readsb **v3.16.18** (commit 9460652, GPL-3.0, binary only, readsb.service stays masked) with `RTLSDR=yes` into `/usr/local/bin`. Needs internet once.

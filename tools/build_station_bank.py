@@ -122,8 +122,12 @@ CREATE INDEX fm_st ON fm(state, city); CREATE INDEX fm_call ON fm(call); CREATE 
 CREATE INDEX ap_st ON airport(state); CREATE INDEX ap_icao ON airport(icao); CREATE INDEX af_apt ON afreq(apt); CREATE INDEX rw_apt ON runway(apt); CREATE INDEX af_mhz ON afreq(mhz);
 """)
 db.executemany("INSERT INTO meta VALUES(?,?)", [("nasr_cycle", d.isoformat()), ("nasr_next", (d + datetime.timedelta(days=28)).isoformat()),
-    ("fcc_pulled", datetime.date.today().isoformat()), ("format", "1"), ("source", "FCC FM Query (public domain); FAA NASR 28-day subscription (public domain); US Census ZCTA gazetteer (public domain). Not for navigation.")])
-db.commit(); db.execute("VACUUM"); db.close()
+    ("fcc_pulled", datetime.date.today().isoformat()), ("format", "2"), ("source", "FCC FM Query (public domain); FAA NASR 28-day subscription (public domain); US Census ZCTA gazetteer (public domain). Not for navigation.")])
+db.commit()
+# 1.2.9: tidy names (Lee's Summit, McAllen, International...) + short on-screen names (airport.short, afreq.short)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "handheld", "web"))
+import stationnames; stationnames.upgrade_db(db)
+db.execute("VACUUM"); db.close()
 c = sqlite3.connect(db_path); q = lambda s: c.execute(s).fetchone()[0]
 stats = {k: q(f"select count(*) from {k}") for k in ("fm", "airport", "afreq", "runway", "center", "zip")}
 stats["towered"] = q("select count(*) from airport where towered=1")

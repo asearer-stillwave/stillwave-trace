@@ -26,7 +26,7 @@
 (function(){
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
-const f3 = m => { m = +m; return m >= 118 ? m.toFixed(3).replace(/0$/, '') : m.toFixed(1); };
+const f3 = m => { m = +m; return m >= 118 ? m.toFixed(3) : m.toFixed(1); };   // airband always 3 decimals, like the Listen tuner
 const GL = {tower:'Tower', ground:'Ground', clearance:'Clearance', atis:'ATIS', approach:'Approach', ctaf:'CTAF', unicom:'UNICOM'};
 const SN = {AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',CO:'Colorado',CT:'Connecticut',DE:'Delaware',DC:'District of Columbia',FL:'Florida',GA:'Georgia',HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',IA:'Iowa',KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',MT:'Montana',NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',NJ:'New Jersey',NM:'New Mexico',NY:'New York',NC:'North Carolina',ND:'North Dakota',OH:'Ohio',OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',RI:'Rhode Island',SC:'South Carolina',SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',VT:'Vermont',VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',PR:'Puerto Rico',VI:'Virgin Islands',GU:'Guam',AS:'American Samoa',MP:'N. Mariana Islands'};
 const Q = new URLSearchParams(location.search);
@@ -34,6 +34,22 @@ let S = {tab: Q.get('v') === 'apt' ? 'air' : (Q.get('v') || localStorage.getItem
          q: Q.get('q') || '', band: Q.get('band') || 'air', zip: Q.get('zip') || localStorage.getItem('traceHomeZip') || '', mi: 30, off: 0};
 async function J(u){ const r = await fetch(u, {cache:'no-store'}); const d = await r.json().catch(() => ({})); if (!r.ok || d.ok === false) throw new Error(d.error || ('HTTP ' + r.status)); return d; }
 function msg(t, k){ const m = $('msg'); m.className = 'status ' + (k || ''); m.innerHTML = t || ''; }
+
+// 1.2.9 short names: the bank sends them (x.short, f.short, x.pname; stationnames.py). These are fallbacks only.
+const CAP = 14;
+const cap = (s, n = CAP) => (s = String(s || '').trim()).length > n ? s.slice(0, n - 1).trimEnd() + '…' : s;
+const DROP = /\b(INTERNATIONAL|INTL|AIRPORT|ARPT|REGIONAL|RGNL|MUNICIPAL|MUNI|FIELD|FLD|COUNTY|CO|PUB|PUBLIC|MEMORIAL|MEM|METRO|METROPOLITAN|EXECUTIVE|EXEC|AIR PARK|AIRPARK|ARPK|JETPORT|STATION|SKID STRIP|JRB|NAS|AAF|AFB|ANGB)\b/g;
+function aptShort(name, city, short){
+  if (short) return short;
+  let s = String(name || '').toUpperCase().split(/[\/(]/)[0].replace(DROP, ' ').replace(/\s+/g, ' ').replace(/[-\s]+$/, '').trim();
+  if (s.length < 3) s = String(city || '').toUpperCase();
+  return cap(s, 14);
+}
+const FAC = {tower:'TWR', ground:'GND', clearance:'CLR', atis:'ATIS', approach:'APP', ctaf:'CTAF', unicom:'UNIC'};
+function side(label){ const l = String(label || '').toUpperCase();
+  if (/HELI/.test(l)) return 'HELO'; if (/^ARR\b|\bARR$/.test(l)) return 'ARR'; if (/^DEP\b|\bDEP$/.test(l)) return 'DEP';
+  const m = l.match(/^(NORTH|SOUTH|EAST|WEST)\b/); return m ? m[1][0] : ''; }
+const presetName = (code, g, label) => cap(g === 'approach' && label ? String(label).toUpperCase().replace(/\s*APPROACH.*|\s*ARTCC.*/,'') + ' APP' : [code, FAC[g] || g.toUpperCase(), side(label)].filter(Boolean).join(' '), 14);
 const act = (kind, mhz, name) => `<div class="sb-act"><button type="button" class="primary" data-a="tune" data-k="${kind}" data-mhz="${mhz}" data-name="${esc(name)}">▶ Tune</button><button type="button" data-a="pre" data-k="${kind}" data-mhz="${mhz}" data-name="${esc(name)}">＋ Preset</button></div>`;
 const openBtn = id => `<div class="sb-act"><button type="button" data-a="apt" data-id="${esc(id)}">Open ›</button></div>`;
 const row = (t, s, a) => `<div class="sb-row"><div class="sb-main"><div class="sb-t">${t}</div><div class="sb-s">${s}</div></div>${a}</div>`;
@@ -53,17 +69,17 @@ async function view(){
         const c = (await J('/api/bank/cities?limit=60&state=' + S.state)).cities;
         if (!S.city) S.city = c.length ? c[0].city : null;
         const s = S.city ? (await J(`/api/bank/fm?state=${S.state}&city=${encodeURIComponent(S.city)}`)).stations : [];
-        h = crumb([['FM', 'top'], [SN[S.state] || S.state, null], [S.city || '', null]]) +
+        h = crumb([['FM', 'top'], [SN[S.state] || S.state, null], [cap(S.city || '', 14), null]]) +
           `<div class="sb-cols"><div><div class="sb-g">Cities in ${esc(SN[S.state] || S.state)} · most stations first</div><div class="sb-grid">${c.slice(0, document.documentElement.classList.contains('hdmi') ? 12 : 8).map(x => `<button type="button" class="${x.city === S.city ? 'on' : ''}" data-a="city" data-c="${esc(x.city)}">${esc(x.city)}<small>${x.n} FM</small></button>`).join('')}</div>
           ${c.length > 8 ? `<div class="sb-more"><select id="cityAll" aria-label="All cities">${c.map(x => `<option ${x.city === S.city ? 'selected' : ''}>${esc(x.city)}</option>`).join('')}</select></div>` : ''}</div>
-          <div><div class="sb-g">${esc(S.city || '')} · ${s.length} stations</div><div class="sb-list">${s.map(x => row(`<span class="sb-f">${f3(x.mhz)}</span> ${esc(x.call)}`, `${esc(x.city)}, ${x.state} · ${x.erp_kw} kW`, act('fm', x.mhz, x.call))).join('')}</div></div></div>`;
+          <div><div class="sb-g">${esc(S.city || '')} · ${s.length} stations</div><div class="sb-list">${s.map(x => row(`${esc(x.call)}  <span class="sb-f">${f3(x.mhz)}</span>`, `${esc(x.city)}, ${x.state}`, act('fm', x.mhz, x.call))).join('')}</div></div></div>`;
       }
     } else if (S.tab === 'air' && S.apt) {
       const a = await J('/api/bank/airport?id=' + encodeURIComponent(S.apt));
       const code = a.icao || a.id, gs = [...new Set(a.freqs.map(f => f.grp))];
-      const grp = g => `<div class="sb-g">${GL[g]}</div><div class="sb-list">${a.freqs.filter(f => f.grp === g).map(f => row(`<span class="sb-f">${f3(f.mhz)}</span> ${GL[g]}`, esc(f.label || code), act('air', f.mhz, (g === 'approach' && f.label ? f.label : code + ' ' + GL[g] + (f.label ? ' ' + f.label : '')).slice(0, 40)))).join('')}</div>`;
+      const grp = g => `<div class="sb-g">${GL[g]}</div><div class="sb-list">${a.freqs.filter(f => f.grp === g).map(f => row(`${FAC[g] || GL[g]} <span class="sb-f">${f3(f.mhz)}</span>`, esc(f.label || code), act('air', f.mhz, f.short || presetName(code, g, f.label)))).join('')}</div>`;
       const half = Math.ceil(gs.length / 2);
-      h = crumb([['Airband', 'top'], [SN[a.state] || a.state, 'st'], [code, null]]) + `<p class="note" style="margin:.1rem 0 .5rem">${esc(a.name)} · ${esc(a.city)}${a.artcc ? ' · Center ' + esc(a.artcc) : ''}${a.towered ? '' : ' · no tower (CTAF)'}</p>
+      h = crumb([['Airband', 'top'], [SN[a.state] || a.state, 'st'], [code, null]]) + `<p class="note" style="margin:.1rem 0 .5rem">${esc(cap(a.city, 14))}${a.artcc ? ' · Center ' + esc(a.artcc) : ''}${a.towered ? '' : ' · no tower (CTAF)'}</p>
         <div class="row"><button type="button" class="primary" data-a="focus" data-id="${esc(code)}">Focus on map</button><button type="button" data-a="addall">＋ Add all to presets</button></div>
         <div class="sb-cols"><div>${gs.slice(0, half).map(grp).join('')}</div><div>${gs.slice(half).map(grp).join('')}</div></div>`;
       S._apt = a; S.state = a.state;
@@ -71,15 +87,15 @@ async function view(){
       if (!S.state) h = crumb([['Airband']]) + await stateGrid('air');
       else {
         const a = (await J(`/api/bank/airports?limit=40&offset=${S.off}&state=${S.state}`)).airports;
-        h = crumb([['Airband', 'top'], [SN[S.state] || S.state, null]]) + `<div class="sb-g">Towered airports first</div><div class="sb-list">${a.map(x => row(`${esc(x.icao || x.id)} <span class="sb-tag">${x.towered ? 'TOWER' : 'CTAF'}</span>`, `${esc(x.name)} · ${esc(x.city)} · ${x.nf} freqs`, openBtn(x.icao || x.id))).join('')}</div>` +
+        h = crumb([['Airband', 'top'], [SN[S.state] || S.state, null]]) + `<div class="sb-g">Towered airports first</div><div class="sb-list">${a.map(x => row(`${esc(x.icao || x.id)}  ${esc(aptShort(x.name, x.city, x.short))}`, `${x.towered ? 'TWR' : 'CTAF'} · ${esc(x.city)} · ${x.nf} freqs`, openBtn(x.icao || x.id))).join('')}</div>` +
           `<div class="row sb-more">${S.off ? '<button type="button" data-a="prev">‹ Previous</button>' : ''}${a.length === 40 ? '<button type="button" data-a="next">More airports ›</button>' : ''}</div>`;
       }
     } else if (S.tab === 'search') {
       h = `<form class="sb-search" id="sF"><input id="sQ" value="${esc(S.q)}" placeholder="KBUR, Burbank, KROQ or 118.7" aria-label="Search" autocomplete="off" spellcheck="false"><button type="submit" class="primary">Search</button></form>`;
       if (S.q) {
         const r = (await J('/api/bank/search?q=' + encodeURIComponent(S.q))).results;
-        h += `<div class="sb-crumb">${r.length} results</div><div class="sb-list">${r.map(x => x.kind === 'fm' ? row(`<span class="sb-f">${f3(x.mhz)}</span> ${esc(x.call)} <span class="sb-tag">FM</span>`, `${esc(x.city)}, ${x.state}`, act('fm', x.mhz, x.call)) :
-          row(`${x.mhz ? `<span class="sb-f">${f3(x.mhz)}</span> ` : ''}${esc(x.icao || x.id)} <span class="sb-tag">AIR</span>`, `${esc(x.name)} · ${esc(x.city)}, ${x.state}${x.grp ? ' · ' + GL[x.grp] : ''}`, x.mhz ? act('air', x.mhz, (x.icao || x.id) + ' ' + GL[x.grp]) : openBtn(x.icao || x.id))).join('') || '<p class="note">Nothing found. Try a call sign (KROQ), an airport code (BUR or KBUR), a city or a frequency.</p>'}</div>`;
+        h += `<div class="sb-crumb">${r.length} results</div><div class="sb-list">${r.map(x => x.kind === 'fm' ? row(`${esc(x.call)}  <span class="sb-f">${f3(x.mhz)}</span>`, `FM · ${esc(x.city)}, ${x.state}`, act('fm', x.mhz, x.call)) :
+          row(`${esc(x.icao || x.id)}  ${x.mhz ? (FAC[x.grp] || '') + ' <span class="sb-f">' + f3(x.mhz) + '</span>' : esc(aptShort(x.name, x.city, x.short))}`, `${esc(aptShort(x.name, x.city, x.short))} · ${x.state}`, x.mhz ? act('air', x.mhz, (x.pname || presetName(x.icao || x.id, x.grp, ''))) : openBtn(x.icao || x.id))).join('') || '<p class="note">Nothing found. Try a call sign (KROQ), an airport code (BUR or KBUR), a city or a frequency.</p>'}</div>`;
       } else h += '<p class="note">Search by call sign, airport code, city or frequency.</p>';
     } else if (S.tab === 'near') {
       h = `<form class="sb-home" id="zF"><span>Home</span><input id="zIn" value="${esc(S.zip)}" inputmode="numeric" maxlength="5" placeholder="ZIP" aria-label="Home ZIP code"><button type="submit">Set</button><button type="button" data-a="rcv">Use map home</button><span class="sb-tag">${S.mi} mi</span></form>
@@ -87,8 +103,8 @@ async function view(){
       const where = S.zip ? 'zip=' + encodeURIComponent(S.zip) : (S.ll ? `lat=${S.ll[0]}&lon=${S.ll[1]}` : '');
       if (where) {
         const n = await J(`/api/bank/near?${where}&band=${S.band}&mi=${S.mi}&limit=40`);
-        h += `<div class="sb-crumb">${n.n} ${S.band === 'fm' ? 'FM stations' : 'airports'} within ${n.mi} mi of ${S.zip ? 'ZIP <b>' + esc(S.zip) + '</b>' : 'the map home position'}</div><div class="sb-list">${n.items.map(x => S.band === 'fm' ? row(`<span class="sb-f">${f3(x.mhz)}</span> ${esc(x.call)}`, `${esc(x.city)} · ${x.mi} mi · ${x.erp_kw} kW`, act('fm', x.mhz, x.call)) :
-          row(`${esc(x.icao || x.id)} <span class="sb-tag">${x.towered ? 'TOWER' : 'CTAF'}</span>`, `${esc(x.name)} · ${x.mi} mi${x.tw ? ' · ' + f3(x.tw) : ''}`, x.tw ? `<div class="sb-act"><button type="button" class="primary" data-a="tune" data-k="air" data-mhz="${x.tw}" data-name="${esc((x.icao || x.id) + (x.towered ? ' Tower' : ' CTAF'))}">▶ Tune</button><button type="button" data-a="apt" data-id="${esc(x.icao || x.id)}">Open ›</button></div>` : openBtn(x.icao || x.id))).join('')}</div>`;
+        h += `<div class="sb-crumb">${n.n} ${S.band === 'fm' ? 'FM stations' : 'airports'} within ${n.mi} mi of ${S.zip ? 'ZIP <b>' + esc(S.zip) + '</b>' : 'the map home position'}</div><div class="sb-list">${n.items.map(x => S.band === 'fm' ? row(`${esc(x.call)}  <span class="sb-f">${f3(x.mhz)}</span>`, `${esc(x.city)} · ${x.mi} mi`, act('fm', x.mhz, x.call)) :
+          row(`${esc(x.icao || x.id)}  ${esc(aptShort(x.name, x.city, x.short))}`, `${x.mi} mi${x.tw ? ' · ' + (x.towered ? 'TWR ' : 'CTAF ') + f3(x.tw) : ''}`, x.tw ? `<div class="sb-act"><button type="button" class="primary" data-a="tune" data-k="air" data-mhz="${x.tw}" data-name="${esc((x.icao || x.id) + (x.towered ? ' TWR' : ' CTAF'))}">▶ Tune</button><button type="button" data-a="apt" data-id="${esc(x.icao || x.id)}">Open ›</button></div>` : openBtn(x.icao || x.id))).join('')}</div>`;
       } else h += '<p class="note">No GPS yet: enter your home ZIP code, or use the home position set on the map (Map › settings).</p>';
     }
   } catch (e) {
