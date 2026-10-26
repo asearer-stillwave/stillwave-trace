@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trace">
+<title>Stillwave Trace · System</title>
+<link rel="stylesheet" href="/fieldnote.css">
+</head>
+<body>
+<script src="/nav.js"></script>
+<div class="wrap">
+  <div class="pre-back-h nav-back"><a class="btn sm fm-edit" href="/settings" aria-label="Back to Settings"><span aria-hidden="true">‹</span> Settings</a></div>
+  <div class="brand">
+    <h1>Sys<span class="acc">tem</span></h1>
+  </div>
+  <p class="lead">Services and logs (moved here from Network in 1.3.1).</p>
+  <div class="card">
+    <h2>Logs</h2>
+    <p class="note">Network log: if a Wi‑Fi or hotspot switch fails, show and copy it.</p>
+    <p><button type="button" id="showlog">Show network log</button></p>
+    <pre id="netlog" style="display:none;white-space:pre-wrap;max-height:22rem;overflow:auto;background:var(--night);border:1px solid var(--line);font-family:var(--mono);padding:.7rem;border-radius:8px;line-height:1.35;"></pre>
+  </div>
+
+  <div class="card">
+    <h2>Services</h2>
+    <p class="note" id="svcnow">…</p>
+    <div class="row">
+      <button data-svc="radio">Restart radio stream</button>
+      <button data-svc="sdr-fm">Restart sdr-fm</button>
+      <button data-svc="icecast2">Restart Icecast</button>
+      <button data-svc="nginx">Restart nginx</button>
+      <button data-svc="sdr-web" class="danger">Restart web UI</button>
+      <button data-svc="all" class="danger">Restart all</button>
+    </div>
+    <p class="note">Web UI and All briefly disconnect this page.</p>
+  </div>
+  <p class="status" id="msg"></p>
+</div>
+<script src="/mode.js"></script>
+<script src="/power.js"></script>
+<script src="/screen.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+function setMsg(t,k){ const el=$('msg'); el.className='status '+(k||''); el.textContent=t||''; }
+async function jfetch(url, opt){
+  const r = await fetch(url, Object.assign({cache:'no-store'}, opt||{}));
+  const t = await r.text();
+  let j={}; try{ j=JSON.parse(t);}catch(e){ j={error:t||r.statusText}; }
+  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+async function refresh(){
+  try {
+    const s = await jfetch('/api/services');
+    const units = s.units || {};
+    $('svcnow').textContent = Object.keys(units).map(k=>k+': '+units[k]).join('  ·  ') || 'no status';
+  } catch(e) {}
+}
+document.querySelectorAll('button[data-svc]').forEach(btn => {
+  btn.onclick = async () => {
+    const which = btn.getAttribute('data-svc');
+    setMsg('Restarting '+which+'…','ok');
+    try {
+      const j = await jfetch('/api/services/restart',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({which})});
+      setMsg(j.message||('restarted '+which),'ok');
+      setTimeout(refresh, 1500);
+    } catch(e){ setMsg(e.message,'err'); }
+  };
+});
+$('showlog').onclick = async () => {
+  const pre = $('netlog');
+  pre.style.display = 'block';
+  pre.textContent = 'Loading…';
+  try {
+    const j = await jfetch('/api/net/log');
+    pre.textContent = j.log || JSON.stringify(j, null, 2);
+  } catch(e) { pre.textContent = e.message; }
+};
+refresh();
+</script>
+</body>
+</html>

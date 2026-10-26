@@ -93,6 +93,17 @@ html.kiosk .rseg button, html.kiosk .rshead button { min-height:var(--tap-touch)
       </div>
       <div id="map" aria-label="Live aircraft map"></div>
       <div class="mapnote hide" id="mapnote"></div>
+      <div class="acard bcard hide" id="bcard" aria-live="polite">
+        <div class="ahead"><b id="bTitle">—</b><button id="bClose" aria-label="Close boat details">✕</button></div>
+        <dl class="agrid">
+          <div><dt>Type</dt><dd id="bKind">—</dd></div>
+          <div><dt>Speed</dt><dd id="bSog">—</dd></div>
+          <div><dt>Course</dt><dd id="bCog">—</dd></div>
+          <div><dt>MMSI</dt><dd id="bMmsi">—</dd></div>
+          <div><dt>Bound for</dt><dd id="bDest">—</dd></div>
+          <div><dt>Seen</dt><dd id="bSeen">—</dd></div>
+        </dl>
+      </div>
       <div class="acard hide" id="acard" aria-live="polite">
         <div class="ahead">
           <b id="aTitle">—</b>
@@ -117,6 +128,7 @@ html.kiosk .rseg button, html.kiosk .rshead button { min-height:var(--tap-touch)
       <button id="cMe">Center<br>me</button>
       <button id="tRings" class="on" aria-expanded="false" aria-controls="ringset">Rings <span id="tRingsV">3</span></button>
       <button id="tLabels" class="on" aria-pressed="true">Labels</button>
+      <button id="tShow" class="hide" aria-label="Show on map">All</button>
     </div>
     <div class="legend altbar" aria-label="Altitude colors: ground, under 1k, 1-3k, 3-6k, 6-10k, 10-20k, 20-30k, 30k+ ft"><span class="lk">// ALT FT</span><span class="ab"><span class="abar"><i style="background:#5f7a68"></i><i style="background:#1c6b3c"></i><i style="background:#26904f"></i><i style="background:#33b866"></i><i style="background:#4ade80"></i><i style="background:#97f0b8"></i><i style="background:#c8f8d9"></i><i style="background:#f4fff7"></i></span><span class="alabs"><b>GND</b><b>&lt;1K</b><b>1–3K</b><b>3–6K</b><b>6–10K</b><b>10–20K</b><b>20–30K</b><b>30K+</b></span></span><span class="unk"><i></i>?</span></div>
   </section>
@@ -249,6 +261,30 @@ function showCard(p){
   const age = a.seen_pos != null ? a.seen_pos : a.seen;
   $('aSeen').textContent = typeof age === 'number' ? Math.round(age) + ' s ago' : '—';
 }
+// 1.3.1 AIS boats: polled every 5 s; the ALL / AIRCRAFT / BOATS toggle appears once a boat has been heard
+const SHOWS = ['all', 'aircraft', 'boats'], SHOW_TXT = { all: 'All', aircraft: 'Aircraft', boats: 'Boats' };
+let show = SHOWS.includes(localStorage.getItem('sdr-map-show')) ? localStorage.getItem('sdr-map-show') : 'all', boatTimer = null, boatsSeen = false;
+function showBoat(b){
+  const c = $('bcard'); if (!c) return;
+  if (!b) { c.classList.add('hide'); if ($('acard').classList.contains('hide')) document.documentElement.classList.remove('cardopen'); return; }
+  c.classList.remove('hide'); document.documentElement.classList.add('cardopen');
+  $('bTitle').textContent = b.name.length > 22 ? b.name.slice(0, 21) + '…' : b.name;
+  $('bKind').textContent = b.kind.charAt(0).toUpperCase() + b.kind.slice(1);
+  $('bSog').textContent = typeof b.sog === 'number' && b.sog < 102 ? b.sog.toFixed(1) + ' kt' : '—';
+  $('bCog').textContent = typeof b.cog === 'number' && b.cog < 360 ? Math.round(b.cog) + '°' : '—';
+  $('bMmsi').textContent = b.mmsi || '—';
+  $('bDest').textContent = b.dest || '—';
+  $('bSeen').textContent = Math.round(b.seen) + ' s ago';
+}
+async function pollBoats(){
+  if (document.hidden || !map) return;
+  try { const j = await (await fetch('/api/boats', { cache: 'no-store' })).json();
+    if (j.live || (j.boats || []).length) boatsSeen = true;
+    $('tShow').classList.toggle('hide', !boatsSeen);
+    map.updateBoats(j.boats || []);
+  } catch (e) {}
+}
+function setShow(v){ show = map ? map.setShow(v) : v; localStorage.setItem('sdr-map-show', show); $('tShow').textContent = SHOW_TXT[show]; $('tShow').classList.toggle('on', show !== 'all'); }
 function setFollowBtn(f){ $('aFollow').classList.toggle('on', f); $('aFollow').setAttribute('aria-pressed', f); }
 
 async function poll(){
@@ -274,7 +310,7 @@ function stopPolling(){
 
 document.addEventListener('sdr-mode', e => {
   const s = e.detail; on = !!(s && (s.mode === 'adsb' || (s.dual && s.adsb_live)));   // 1.2.5: two radios: the map runs on SDR 1 while SDR 2 plays
-  $('off').classList.toggle('hide', on);
+  $('off').classList.toggle('hide', on || boatsLive);
   if (s && !s.adsb_available) {
     $('offtxt').textContent = 'No ADS-B decoder is installed. Re-run install.sh with internet, or: sudo apt-get install --no-install-recommends dump1090-mutability';
     $('start').disabled = true;
@@ -287,6 +323,8 @@ document.addEventListener('sdr-mode', e => {
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && on) poll(); });
 $('start').onclick = () => window.sdrMode.set('adsb').catch(() => {});
+$('tShow').onclick = () => setShow(SHOWS[(SHOWS.indexOf(show) + 1) % 3]);
+$('bClose').onclick = () => map && map.selectBoat(null);
 $('vMap').onclick = () => setView('map');
 $('vList').onclick = () => setView('list');
 window.addEventListener('resize', () => requestAnimationFrame(fitMap));
@@ -357,10 +395,11 @@ async function boot(){
     $('mapnote').classList.remove('hide');
   }
   try {
-    map = await new AircraftMap($('map'), { receiver: receiver, rings: ringPrefs(), onSelect: p => { showCard(p); }, onFollow: setFollowBtn }).start(info);
+    map = await new AircraftMap($('map'), { receiver: receiver, rings: ringPrefs(), onSelect: p => { if (p) showBoat(null); showCard(p); }, onBoat: b => { if (b) showCard(null); showBoat(b); }, onFollow: setFollowBtn }).start(info);
     paintRings(); map.map.on('zoomend', () => { if (!$('ringset').classList.contains('hide')) paintRings(); });
     window._fieldnoteMap = map;
     fitMap();
+    setShow(show); pollBoats(); if (!boatTimer) boatTimer = setInterval(pollBoats, 5000);
     if (last) { map.update(last.ok ? last.aircraft : []); render(last); }
   } catch (e) {
     $('mapnote').textContent = 'Map failed to start: ' + e.message + '. The List view still works.';
@@ -369,7 +408,9 @@ async function boot(){
 }
 // 1.2.0: the map (MapLibre + tiles) only loads once ADS-B is started (START button); nothing loads while idle
 let booted = false;
-function maybeBoot(){ if (!booted && on) { booted = true; boot(); } }
+let boatsLive = false;   // 1.3.1: an AIS dongle alone also opens the map (boats only, ADS-B may be off)
+function maybeBoot(){ if (!booted && (on || boatsLive)) { booted = true; boot(); } }
+fetch('/api/boats', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j && j.live) { boatsLive = true; $('off').classList.add('hide'); maybeBoot(); } }).catch(() => {});
 document.addEventListener('sdr-mode', maybeBoot);
 setView(view);
 try { const s0 = window.sdrMode && window.sdrMode.get(); if (s0) document.dispatchEvent(new CustomEvent('sdr-mode', { detail: s0 })); } catch (e) {}

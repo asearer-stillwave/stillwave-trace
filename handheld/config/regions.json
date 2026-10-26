@@ -1,0 +1,553 @@
+{
+ "product": "stillwave-trace-content",
+ "format": 1,
+ "builtin": true,
+ "source": "protomaps",
+ "attribution": "Map data © OpenStreetMap contributors (ODbL 1.0) · Protomaps basemap",
+ "note": "Built on this box from the public Protomaps daily build (needs Wi-Fi). Sizes are estimates from a dry run of the 2026-10-24 build.",
+ "regions": [
+  {
+   "id": "na",
+   "name": "North America",
+   "parent": null
+  },
+  {
+   "id": "us",
+   "name": "United States",
+   "parent": "na"
+  },
+  {
+   "id": "us-ca",
+   "name": "California",
+   "parent": "us"
+  },
+  {
+   "id": "us-wa",
+   "name": "Washington",
+   "parent": "us"
+  },
+  {
+   "id": "us-ny",
+   "name": "New York",
+   "parent": "us"
+  },
+  {
+   "id": "us-ma",
+   "name": "Massachusetts",
+   "parent": "us"
+  },
+  {
+   "id": "us-fl",
+   "name": "Florida",
+   "parent": "us"
+  },
+  {
+   "id": "us-tx",
+   "name": "Texas",
+   "parent": "us"
+  },
+  {
+   "id": "us-nv",
+   "name": "Nevada",
+   "parent": "us"
+  }
+ ],
+ "packs": [
+  {
+   "id": "r-socal-wide",
+   "name": "Southern California",
+   "parent": "us-ca",
+   "detail": "towns",
+   "sub": "LAX, SAN, LGB · coast to Catalina",
+   "bbox": [
+    -121.0,
+    32.4,
+    -116.0,
+    35.0
+   ],
+   "center": [
+    -118.5,
+    33.7
+   ],
+   "minzoom": 0,
+   "maxzoom": 11,
+   "bytes": 9000000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -121.0,
+     32.4,
+     -116.0,
+     35.0
+    ],
+    "minzoom": 0,
+    "maxzoom": 11
+   }
+  },
+  {
+   "id": "r-sd",
+   "name": "San Diego metro",
+   "parent": "us-ca",
+   "detail": "street",
+   "sub": "SAN, MYF, NKX",
+   "bbox": [
+    -117.35,
+    32.53,
+    -116.85,
+    33.1
+   ],
+   "center": [
+    -117.1,
+    32.815
+   ],
+   "minzoom": 0,
+   "maxzoom": 14,
+   "bytes": 17000000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -117.35,
+     32.53,
+     -116.85,
+     33.1
+    ],
+    "minzoom": 0,
+    "maxzoom": 14
+   }
+  },
+  {
+   "id": "r-sd-wide",
+   "name": "San Diego metro overview",
+   "parent": "us-ca",
+   "detail": "overview",
+   "sub": "About 30 NM offshore (boats)",
+   "bbox": [
+    -118.0,
+    32.3,
+    -116.6,
+    33.5
+   ],
+   "center": [
+    -117.3,
+    32.9
+   ],
+   "minzoom": 0,
+   "maxzoom": 11,
+   "bytes": 2800000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -118.0,
+     32.3,
+     -116.6,
+     33.5
+    ],
+    "minzoom": 0,
+    "maxzoom": 11
+   }
+  },
+  {
+   "id": "r-sf",
+   "name": "San Francisco Bay Area",
+   "parent": "us-ca",
+   "detail": "street",
+   "sub": "SFO, OAK, SJC",
+   "bbox": [
+    -122.6,
+    37.25,
+    -121.75,
+    38.0
+   ],
+   "center": [
+    -122.175,
+    37.625
+   ],
+   "minzoom": 0,
+   "maxzoom": 14,
+   "bytes": 51000000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -122.6,
+     37.25,
+     -121.75,
+     38.0
+    ],
+    "minzoom": 0,
+    "maxzoom": 14
+   }
+  },
+  {
+   "id": "r-sf-wide",
+   "name": "San Francisco Bay Area overview",
+   "parent": "us-ca",
+   "detail": "overview",
+   "sub": "About 30 NM offshore (boats)",
+   "bbox": [
+    -123.6,
+    36.8,
+    -121.5,
+    38.5
+   ],
+   "center": [
+    -122.55,
+    37.65
+   ],
+   "minzoom": 0,
+   "maxzoom": 11,
+   "bytes": 6600000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -123.6,
+     36.8,
+     -121.5,
+     38.5
+    ],
+    "minzoom": 0,
+    "maxzoom": 11
+   }
+  },
+  {
+   "id": "r-sea",
+   "name": "Seattle + Puget Sound",
+   "parent": "us-wa",
+   "detail": "street",
+   "sub": "SEA, BFI, PAE",
+   "bbox": [
+    -122.5,
+    47.35,
+    -122.0,
+    47.85
+   ],
+   "center": [
+    -122.25,
+    47.6
+   ],
+   "minzoom": 0,
+   "maxzoom": 14,
+   "bytes": 26000000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -122.5,
+     47.35,
+     -122.0,
+     47.85
+    ],
+    "minzoom": 0,
+    "maxzoom": 14
+   }
+  },
+  {
+   "id": "r-sea-wide",
+   "name": "Seattle + Puget Sound overview",
+   "parent": "us-wa",
+   "detail": "overview",
+   "sub": "About 30 NM offshore (boats)",
+   "bbox": [
+    -125.0,
+    46.8,
+    -121.8,
+    48.6
+   ],
+   "center": [
+    -123.4,
+    47.7
+   ],
+   "minzoom": 0,
+   "maxzoom": 11,
+   "bytes": 8199999,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -125.0,
+     46.8,
+     -121.8,
+     48.6
+    ],
+    "minzoom": 0,
+    "maxzoom": 11
+   }
+  },
+  {
+   "id": "r-nyc",
+   "name": "New York + NJ harbor",
+   "parent": "us-ny",
+   "detail": "street",
+   "sub": "JFK, LGA, EWR",
+   "bbox": [
+    -74.15,
+    40.55,
+    -73.7,
+    40.9
+   ],
+   "center": [
+    -73.925,
+    40.725
+   ],
+   "minzoom": 0,
+   "maxzoom": 14,
+   "bytes": 23000000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -74.15,
+     40.55,
+     -73.7,
+     40.9
+    ],
+    "minzoom": 0,
+    "maxzoom": 14
+   }
+  },
+  {
+   "id": "r-nyc-wide",
+   "name": "New York + NJ harbor overview",
+   "parent": "us-ny",
+   "detail": "overview",
+   "sub": "About 30 NM offshore (boats)",
+   "bbox": [
+    -74.8,
+    39.9,
+    -72.6,
+    41.3
+   ],
+   "center": [
+    -73.7,
+    40.6
+   ],
+   "minzoom": 0,
+   "maxzoom": 11,
+   "bytes": 14000000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -74.8,
+     39.9,
+     -72.6,
+     41.3
+    ],
+    "minzoom": 0,
+    "maxzoom": 11
+   }
+  },
+  {
+   "id": "r-bos",
+   "name": "Boston + Cape Cod",
+   "parent": "us-ma",
+   "detail": "street",
+   "sub": "BOS, BED, ACK",
+   "bbox": [
+    -71.2,
+    42.25,
+    -70.95,
+    42.45
+   ],
+   "center": [
+    -71.075,
+    42.35
+   ],
+   "minzoom": 0,
+   "maxzoom": 14,
+   "bytes": 10000000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -71.2,
+     42.25,
+     -70.95,
+     42.45
+    ],
+    "minzoom": 0,
+    "maxzoom": 14
+   }
+  },
+  {
+   "id": "r-bos-wide",
+   "name": "Boston + Cape Cod overview",
+   "parent": "us-ma",
+   "detail": "overview",
+   "sub": "About 30 NM offshore (boats)",
+   "bbox": [
+    -71.6,
+    41.2,
+    -69.4,
+    42.9
+   ],
+   "center": [
+    -70.5,
+    42.05
+   ],
+   "minzoom": 0,
+   "maxzoom": 11,
+   "bytes": 9400000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -71.6,
+     41.2,
+     -69.4,
+     42.9
+    ],
+    "minzoom": 0,
+    "maxzoom": 11
+   }
+  },
+  {
+   "id": "r-mia",
+   "name": "Miami + the Keys",
+   "parent": "us-fl",
+   "detail": "street",
+   "sub": "MIA, FLL, EYW",
+   "bbox": [
+    -80.45,
+    25.6,
+    -80.1,
+    26.0
+   ],
+   "center": [
+    -80.275,
+    25.8
+   ],
+   "minzoom": 0,
+   "maxzoom": 14,
+   "bytes": 14000000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -80.45,
+     25.6,
+     -80.1,
+     26.0
+    ],
+    "minzoom": 0,
+    "maxzoom": 14
+   }
+  },
+  {
+   "id": "r-mia-wide",
+   "name": "Miami + the Keys overview",
+   "parent": "us-fl",
+   "detail": "overview",
+   "sub": "About 30 NM offshore (boats)",
+   "bbox": [
+    -82.2,
+    24.3,
+    -79.4,
+    26.6
+   ],
+   "center": [
+    -80.8,
+    25.45
+   ],
+   "minzoom": 0,
+   "maxzoom": 11,
+   "bytes": 7000000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -82.2,
+     24.3,
+     -79.4,
+     26.6
+    ],
+    "minzoom": 0,
+    "maxzoom": 11
+   }
+  },
+  {
+   "id": "r-hou",
+   "name": "Houston + Galveston",
+   "parent": "us-tx",
+   "detail": "street",
+   "sub": "IAH, HOU, GLS",
+   "bbox": [
+    -95.6,
+    29.6,
+    -95.1,
+    29.95
+   ],
+   "center": [
+    -95.35,
+    29.775
+   ],
+   "minzoom": 0,
+   "maxzoom": 14,
+   "bytes": 16000000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -95.6,
+     29.6,
+     -95.1,
+     29.95
+    ],
+    "minzoom": 0,
+    "maxzoom": 14
+   }
+  },
+  {
+   "id": "r-hou-wide",
+   "name": "Houston + Galveston overview",
+   "parent": "us-tx",
+   "detail": "overview",
+   "sub": "About 30 NM offshore (boats)",
+   "bbox": [
+    -96.0,
+    28.5,
+    -94.0,
+    30.3
+   ],
+   "center": [
+    -95.0,
+    29.4
+   ],
+   "minzoom": 0,
+   "maxzoom": 11,
+   "bytes": 5100000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -96.0,
+     28.5,
+     -94.0,
+     30.3
+    ],
+    "minzoom": 0,
+    "maxzoom": 11
+   }
+  },
+  {
+   "id": "r-lv",
+   "name": "Las Vegas metro",
+   "parent": "us-nv",
+   "detail": "street",
+   "sub": "LAS, HND, VGT",
+   "bbox": [
+    -115.45,
+    35.95,
+    -114.85,
+    36.4
+   ],
+   "center": [
+    -115.15,
+    36.175
+   ],
+   "minzoom": 0,
+   "maxzoom": 14,
+   "bytes": 15000000,
+   "estimate": true,
+   "extract": {
+    "bbox": [
+     -115.45,
+     35.95,
+     -114.85,
+     36.4
+    ],
+    "minzoom": 0,
+    "maxzoom": 14
+   }
+  }
+ ]
+}

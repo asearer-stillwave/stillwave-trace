@@ -43,11 +43,11 @@
 <script>
 (function(){
   const $ = id => document.getElementById(id);
-  const JOBS = [['adsb', 'Map · 1090'], ['radio', 'Airband'], ['spare', 'Spare']];
+  const JOBS = [['adsb', 'Map · 1090'], ['radio', 'Airband'], ['ais', 'Boats · AIS'], ['spare', 'Spare']];
   let D = null, pick = {}, known = {}, ident = null, dirty = false, timer = null;
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
   function msg(t, k){ const m = $('dMsg'); m.textContent = t; m.className = 'umsg ' + (k || ''); }
-  function sdrNo(role, i){ return role === 'adsb' ? 'SDR 1' : role === 'radio' ? 'SDR 2' : 'Dongle ' + (i + 1); }
+  function sdrNo(role, i){ return role === 'adsb' ? 'SDR 1' : role === 'radio' ? 'SDR 2' : role === 'ais' ? 'AIS' : 'Dongle ' + (i + 1); }
   function draw(){
     const ds = D ? D.dongles : [];
     ds.forEach(d => { if (d.serial) known[d.serial] = d; });
@@ -72,6 +72,7 @@
     try{
       const r = await fetch('/api/radios', {cache:'no-store'}); const j = await r.json();
       if(!r.ok) throw new Error(j.error || 'failed');
+      if (j.ais && !j.ais_decoder) j.message = (j.message || '') + ' The AIS decoder is being built (about 5–10 min, needs internet once).';
       D = j; msg(j.message, j.count === 0 || (j.duplicates || []).length ? 'err' : j.degraded ? 'warn' : j.dual ? 'ok' : '');
       draw();
     }catch(e){ msg('Could not read the radios: ' + e.message, 'err'); }

@@ -54,6 +54,8 @@ const presetName = (code, g, label) => cap(g === 'approach' && label ? String(la
 const act = (kind, mhz, name) => `<div class="sb-act"><button type="button" class="primary" data-a="tune" data-k="${kind}" data-mhz="${mhz}" data-name="${esc(name)}">▶ Tune</button><button type="button" data-a="pre" data-k="${kind}" data-mhz="${mhz}" data-name="${esc(name)}">＋ Preset</button></div>`;
 const openBtn = id => `<div class="sb-act"><button type="button" data-a="apt" data-id="${esc(id)}">Open ›</button></div>`;
 const row = (t, s, a) => `<div class="sb-row"><div class="sb-main"><div class="sb-t">${t}</div><div class="sb-s">${s}</div></div>${a}</div>`;
+// 1.3.1: one compact row per station; the city only when it is not the picked city
+const rowc = (t, a) => `<div class="sb-row sb-c"><div class="sb-main"><div class="sb-t">${t}</div></div>${a}</div>`;
 const crumb = parts => `<div class="sb-crumb">${parts.map(([t, a]) => a ? `<a data-a="${a}">${esc(t)}</a>` : `<b>${esc(t)}</b>`).join(' › ')}</div>`;
 // 1.3: STATE ▾ / CITY ▾ pickers (a short list that opens under the button) replace the state grid and city buttons
 function picker(kind, label, cur, opts){
@@ -76,7 +78,7 @@ async function view(){
         if (!S.city) S.city = c.length ? c[0].city : null;
         const s = S.city ? (await J(`/api/bank/fm?state=${S.state}&city=${encodeURIComponent(S.city)}`)).stations : [];
         h = `<div class="sb-pick">${await statePick('fm')}${picker('city', 'City', S.city || '', c.map(x => [x.city, x.city, x.n + ' FM']))}</div>` +
-          `<div class="sb-g">${esc(S.city || '')} · ${s.length} stations</div><div class="sb-list">${s.map(x => row(`${esc(x.call)}  <span class="sb-f">${f3(x.mhz)}</span>`, `${esc(x.city)}, ${x.state}`, act('fm', x.mhz, x.call))).join('')}</div>`;
+          `<div class="sb-g">${esc(S.city || '')} · ${s.length} stations</div><div class="sb-list">${s.map(x => rowc(`${esc(x.call)}  <span class="sb-f">${f3(x.mhz)}</span>${String(x.city || '').toUpperCase() !== String(S.city || '').toUpperCase() ? '  <span class="sb-cy">· ' + esc(x.city) + '</span>' : ''}`, act('fm', x.mhz, x.call))).join('')}</div>`;
       }
     } else if (S.tab === 'air' && S.apt) {
       const a = await J('/api/bank/airport?id=' + encodeURIComponent(S.apt));

@@ -30,6 +30,12 @@ SQUELCH="${SQUELCH:-0}"
 case "$DEMOD" in wfm|am|nfm) ;; *) DEMOD=wfm ;; esac
 [[ "$SQUELCH" =~ ^[0-9]+$ ]] || SQUELCH=0
 
+# 1.3.1: FM band filters from the Listen gear (FM_AUDIO_RATE / FM_HIGHPASS / FM_LOWPASS) win over the preset's own
+if [[ "${DEMOD:-wfm}" == wfm ]]; then
+  [[ "${FM_AUDIO_RATE:-}" =~ ^[0-9]+$ ]] && AUDIO_RATE="$FM_AUDIO_RATE"
+  [[ "${FM_HIGHPASS:-}" =~ ^[0-9]+$ ]] && HIGHPASS_HZ="$FM_HIGHPASS"
+  [[ "${FM_LOWPASS:-}" =~ ^[0-9]+$ ]] && LOWPASS_HZ="$FM_LOWPASS"
+fi
 case "$AUDIO_RATE" in
   16000) RTL_AUDIO_RATE="16k" ;;
   24000) RTL_AUDIO_RATE="24k" ;;
@@ -48,7 +54,13 @@ esac
 AUDIO_OUT="${AUDIO_OUT:-phone}"
 case "$AUDIO_OUT" in phone|speaker|both) ;; *) AUDIO_OUT=phone ;; esac
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-if [[ "$DEMOD" != wfm ]]; then HIGHPASS_HZ=200; LOWPASS_HZ=3400; fi   # voice band for AM / narrow FM
+# voice band: NOAA (narrow FM) fixed 200-3400 Hz; 1.3.1 airband (AM) from the Listen gear, default 200-3400 Hz
+if [[ "$DEMOD" == am ]]; then
+  HIGHPASS_HZ=200; LOWPASS_HZ=3400
+  [[ "${AIRBAND_HIGHPASS:-}" =~ ^[0-9]+$ ]] && HIGHPASS_HZ="$AIRBAND_HIGHPASS"
+  [[ "${AIRBAND_LOWPASS:-}" =~ ^[0-9]+$ ]] && LOWPASS_HZ="$AIRBAND_LOWPASS"
+  (( LOWPASS_HZ > 11000 )) && LOWPASS_HZ=11000   # AM audio is 24 kHz
+elif [[ "$DEMOD" != wfm ]]; then HIGHPASS_HZ=200; LOWPASS_HZ=3400; fi
 FILTER="highpass=f=${HIGHPASS_HZ},lowpass=f=${LOWPASS_HZ},acompressor=threshold=-18dB:ratio=1.5:attack=20:release=250"
 
 if [[ "$AUDIO_OUT" != phone ]]; then

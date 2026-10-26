@@ -8,14 +8,14 @@
 Roles: 1.2.5 roles saved by serial (Radio roles page) win; otherwise the 1.0.9 serial labels STILLWAVE-ADSB / STILLWAVE-RADIO.
 adsb = SDR 1, the aircraft map full time (1090 MHz). radio = SDR 2, Listen (airband) / Scan / Spectrum. spare = not used.
 With one dongle (or roles missing / duplicate serials) everything shares one dongle, exactly like before (single-dongle fallback)."""
-import glob, json, os, re, subprocess, sys
+import glob, json, os, re, subprocess, sys, time
 SYS = os.environ.get("SDR_USB_SYSFS", "/sys/bus/usb/devices")
 ENVF = os.environ.get("SDR_DONGLES_ENV", "/etc/sdr/dongles.env")
 ROLESF = os.environ.get("SDR_ROLES_FILE", "/etc/sdr/sdr-roles.json")
 IDS = {("0bda", "2838"), ("0bda", "2832")}
 LABEL = {"adsb": "STILLWAVE-ADSB", "radio": "STILLWAVE-RADIO"}
 ROLE = {v: k for k, v in LABEL.items()}
-ROLES = ("adsb", "radio", "spare")
+ROLES = ("adsb", "radio", "ais", "spare")   # 1.3.1: ais = boats (AIS-catcher) on its own dongle
 SERIAL_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
 JSON_OUT = "--json" in sys.argv
 def rd(d, f):
@@ -70,16 +70,33 @@ def summary(resolve=True):
     elif degraded: msg = "Map radio (SDR 1) missing. Everything shares SDR 2 until it is back."
     elif len(ds) >= 2: msg = "%d dongles found. Pick a job for each one below." % len(ds)
     else: msg = "One dongle: Listen, Map, Scan and Spectrum take turns."
+    # 1.3.1 AIS: needs a dongle of its own (never the only one). With ADS-B + AIS, Listen / Scan / Spectrum share the map dongle.
+    ais = by["ais"][0] if len(by["ais"]) == 1 and len(ds) >= 2 and not dups else None
+    if len(by["ais"]) == 1 and len(ds) == 1: msg = "AIS needs its own dongle: plug in a second SDR. With one dongle the boats layer stays off."
+    elif ais and not dual:
+        others = [d for d in ds if d is not ais]
+        msg = "Two radios: one runs AIS (boats) full time; the other does the map, Listen, Scan and Spectrum (taking turns)." if len(others) == 1 else msg
+    elif ais and dual: msg = "Three radios: map, airband and AIS (boats) all run at once."
     out = {"ok": True, "count": len(ds), "dual": dual, "dongles": ds, "message": msg, "duplicates": dups,
-           "assigned": assigned, "degraded": degraded, "missing": missing}
+           "assigned": assigned, "degraded": degraded, "missing": missing, "ais": bool(ais), "ais_decoder": ais_decoder()}
     if dual and resolve:
         out["devices"] = {"adsb": device_arg(by["adsb"][0]["serial"]), "radio": device_arg(by["radio"][0]["serial"])}
+    if ais and resolve:
+        out.setdefault("devices", {})["ais"] = device_arg(ais["serial"])
+        others = [d for d in ds if d is not ais]
+        if not dual and len(others) == 1:   # the one non-AIS dongle does everything else, never the AIS dongle
+            a = device_arg(others[0]["serial"]); out["devices"].update(adsb=a, radio=a); out["shared"] = True
     return out
+def ais_decoder():
+    b = os.environ.get("SDR_AIS_BIN", "/usr/local/bin/AIS-catcher")
+    return os.path.isfile(b) and os.access(b, os.X_OK)
 def write_env(s):
     dv = s.get("devices") or {}
     ok = s["dual"] and dv.get("adsb") and dv.get("radio")
-    lines = ["# written by sdr-dongles (1.2.5); do not edit", "DUAL=%d" % (1 if ok else 0),
-             "RADIO_DEVICE=%s" % (dv["radio"] if ok else ""), "ADSB_DEVICE=%s" % (dv["adsb"] if ok else "")]
+    sh = bool(s.get("shared") and dv.get("adsb"))   # 1.3.1: ADS-B + AIS: the non-AIS dongle is named so nothing grabs the AIS one
+    lines = ["# written by sdr-dongles (1.2.5 / 1.3.1); do not edit", "DUAL=%d" % (1 if ok else 0),
+             "RADIO_DEVICE=%s" % (dv["radio"] if ok or sh else ""), "ADSB_DEVICE=%s" % (dv["adsb"] if ok or sh else ""),
+             ] + (["AIS_DEVICE=%s" % dv["ais"]] if dv.get("ais") else [])   # only when a dongle has the AIS role
     txt = "\n".join(lines) + "\n"
     try:
         if open(ENVF).read() == txt: return
@@ -96,7 +113,12 @@ def restart_radio():
         st = json.loads(subprocess.run([mode_bin, "status"], capture_output=True, text=True, timeout=30).stdout.strip().splitlines()[-1])
     except Exception: st = {}
     subprocess.run([mode_bin, "stop-all"], capture_output=True, timeout=90)
-    write_env(summary())
+    s = summary(); write_env(s)
+    # 1.3.1: AIS runs on its own dongle whenever one has the AIS role (sdr-ais.service exits at once without one)
+    if (s.get("devices") or {}).get("ais"):
+        if s.get("ais_decoder"): subprocess.run(["systemctl", "restart", "sdr-ais.service"], capture_output=True, timeout=30)
+        else: subprocess.run(["systemd-run", "--quiet", "--collect", "--unit", "sdr-ais-build-%d" % int(time.time()), "/usr/local/sbin/sdr-ais-fix"], capture_output=True, timeout=30)
+    else: subprocess.run(["systemctl", "stop", "sdr-ais.service"], capture_output=True, timeout=30)
     if st.get("off"): return
     m = st.get("mode") if st.get("mode") not in (None, "none") else ""
     if m: subprocess.run([mode_bin, "set", m], capture_output=True, timeout=90)
@@ -112,11 +134,11 @@ def main():
     if cmd == "assign":
         r = load_roles(); new = {}
         for x in a[1:]:
-            m = re.fullmatch(r"(.+)=(adsb|radio|spare)", x)
+            m = re.fullmatch(r"(.+)=(adsb|radio|ais|spare)", x)
             if not m or not SERIAL_RE.match(m.group(1)):
-                say({"ok": False, "message": "use SERIAL=adsb|radio|spare"}, "use SERIAL=adsb|radio|spare"); return 2
+                say({"ok": False, "message": "use SERIAL=adsb|radio|ais|spare"}, "use SERIAL=adsb|radio|ais|spare"); return 2
             new[m.group(1)] = m.group(2)
-        for role in ("adsb", "radio"):
+        for role in ("adsb", "radio", "ais"):
             if list(new.values()).count(role) > 1:
                 say({"ok": False, "message": "Only one dongle can do " + role}, "Only one dongle can do " + role); return 2
             if role in new.values():      # one map dongle and one radio dongle: the old holder of that role becomes spare

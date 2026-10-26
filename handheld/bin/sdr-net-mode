@@ -46,6 +46,9 @@ AP_SSID_DEFAULT="${SDR_AP_SSID_DEFAULT:-TRACE-$(unit_suffix)}"
 AP_SSID_ENV="${SDR_AP_SSID:-}"
 AP_SSID="$AP_SSID_ENV"     # provisional until resolve_ap (set below once get_kv exists)
 AP_PASS="${SDR_AP_PASS:-}"
+# 1.3.1: every unit ships with the hotspot password "stillwave" (Searer's call; shared-password risk accepted).
+# A password set on the Network page (AP_CUSTOM=1) is always kept. Never logged.
+AP_PASS_DEFAULT="${SDR_AP_PASS_DEFAULT:-stillwave}"
 WIFI_IF="${SDR_WIFI_IF:-}"
 CONFIRM_SECS="${SDR_NET_CONFIRM_SECS:-40}"
 DETACH_DELAY="${SDR_NET_DETACH_DELAY:-2}"
@@ -413,8 +416,13 @@ ensure_pass() {
   if [[ -z "$AP_PASS" ]]; then
     AP_PASS="$(get_kv AP_PASS)"
   fi
+  # 1.3.1: not set by the user -> the shipping default, once (an older auto-generated random password moves to it)
+  if [[ "$(get_kv AP_CUSTOM)" != 1 && -z "${SDR_AP_PASS:-}" && "$(get_kv AP_PASS_DEFAULTED)" != 1 ]]; then
+    AP_PASS="$AP_PASS_DEFAULT"; set_kv AP_PASS "$AP_PASS"; set_kv AP_PASS_DEFAULTED 1
+    log "hotspot password: set to the shipping default (not changed on the Network page)"
+  fi
   if [[ -z "$AP_PASS" || ${#AP_PASS} -lt 8 ]]; then
-    AP_PASS="$(python3 -c 'import secrets,string; a=string.ascii_letters+string.digits; print("".join(secrets.choice(a) for _ in range(12)))')"
+    AP_PASS="$AP_PASS_DEFAULT"
     set_kv AP_PASS "$AP_PASS"
   fi
   set_kv AP_SSID "$AP_SSID"
@@ -443,8 +451,8 @@ ap_config() {   # ap_config SSID BAND(bg|a) BOOT(1|0|keep) ; password on stdin (
   if [[ ${#pass} -lt 8 ]]; then json_err "set a hotspot password (8-63 characters)"; return 2; fi
   set_kv AP_SSID "$ssid"; set_kv AP_PASS "$pass"; set_kv AP_BAND "$band"; set_kv AP_CUSTOM 1
   case "$boot" in
-    1) set_kv MODE ap ;;
-    0) [[ "$(get_kv MODE)" == ap ]] && set_kv MODE wifi ;;
+    1) set_kv MODE ap; set_kv BOOT_AP 1 ;;
+    0) [[ "$(get_kv MODE)" == ap ]] && set_kv MODE wifi; set_kv BOOT_AP 0 ;;
   esac
   AP_SSID="$ssid"; AP_PASS="$pass"
   log "hotspot settings saved: ssid=$ssid band=$band boot=$boot"
@@ -981,7 +989,7 @@ print(json.dumps({
     "ap_ssid": kv.get("AP_SSID", "") or os.environ.get("AP_SSID_DEFAULT", "Trace"),
     "ap_password_set": bool(kv.get("AP_PASS")),
     "ap_band": "a" if kv.get("AP_BAND") == "a" else "bg",
-    "ap_boot": kv.get("MODE", "") == "ap",
+    "ap_boot": kv.get("BOOT_AP", "1") != "0",   # 1.3.1: always-hotspot boot unless switched off
     "ap_ip": "10.42.0.1",
     "hostname": host,
     "addresses": addrs,
@@ -1141,8 +1149,11 @@ retry_home() {
 
 boot_restore() {
   log "boot restore begin saved_mode=$(get_kv MODE)"
+  # 1.3.1: Trace ALWAYS boots into its hotspot (TRACE-XXXX), so the radio has to be on. BOOT_AP=0 in net.env opts out.
+  local always=1; [[ "$(get_kv BOOT_AP)" == 0 ]] && always=0
   if [[ "$(get_kv WIFI)" == off ]]; then
-    nmcli radio wifi off >/dev/null 2>&1; log "boot: Wi-Fi is turned off by the user; leaving it off"; return 0
+    if [[ $always -eq 1 ]]; then nmcli radio wifi on >/dev/null 2>&1; set_kv WIFI on; log "boot: Wi-Fi radio was off; turned on for the boot hotspot"
+    else nmcli radio wifi off >/dev/null 2>&1; log "boot: Wi-Fi is turned off by the user; leaving it off"; return 0; fi
   fi
   if ! wait_for_iface; then
     json_err "no wifi interface at boot"
@@ -1155,6 +1166,7 @@ boot_restore() {
     seed_mode_from_live
     saved="$(get_kv MODE)"
   fi
+  if [[ $always -eq 1 && "$saved" != ap ]]; then log "boot: always-hotspot (saved mode $saved is used when you switch to Wi-Fi)"; saved=ap; fi
   if [[ "$saved" == "ap" ]]; then
     if start_ap_now "$IFACE"; then
       result boot true "$AP_SSID" "boot: hotspot $AP_SSID up" "10.42.0.1"

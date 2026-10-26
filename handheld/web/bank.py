@@ -73,9 +73,12 @@ def focus_shape(a):
         fr = []
         for f in a["freqs"]:
             if f["grp"] != g: continue
-            fr.append({"mhz": f["mhz"], "name": f["short"], "heli": "Heli" in (f["label"] or "")})
+            fr.append({"mhz": f["mhz"], "name": f["short"], "heli": "Heli" in (f["label"] or ""), "lab": f["label"] or ""})
         fr.sort(key=lambda x: (x.pop("heli"), x["mhz"]))
-        if fr: gs.append({"id": g, "label": G[g], "freqs": fr[:6]})
+        fr = fr[:6]
+        for x, t in zip(fr, SN.quick_tags(g, [x.pop("lab") for x in fr])):   # 1.3.1 Quick Tune buttons: only what differs
+            x["tag"] = t; x["name"] = code + " " + t
+        if fr: gs.append({"id": g, "label": G[g], "freqs": fr})
     if not any(g["id"] == "tower" for g in gs) and gs:
         gs[0] = dict(gs[0], id="tower") if gs[0]["id"] in ("ctaf", "unicom") else gs[0]
     return {"icao": code, "name": a["name"], "lat": a["lat"], "lon": a["lon"], "zoom": 11.5 if a.get("towered") else 12.5,

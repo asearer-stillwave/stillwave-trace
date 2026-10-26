@@ -50,10 +50,10 @@ MODES = ("fm", "spectrum", "detect", "adsb")
 
 DEFAULTS = {
     "gain": "4",
-    "audio_rate": "32000",
+    "audio_rate": "48000",  # 1.3.1 new-preset defaults: 48000 / 50 / 8500 Hz
     "mp3_bitrate": "128k",
-    "highpass": "30",
-    "lowpass": "15000",
+    "highpass": "50",
+    "lowpass": "8500",
     "ppm": "0",
 }
 WEBDIR = Path(__file__).resolve().parent
@@ -197,6 +197,12 @@ def presets_page():
 @app.get("/network.html")
 def network_page():
     return _html("network.html")
+
+
+@app.get("/system")
+@app.get("/system.html")
+def system_page():
+    return _html("system.html")   # 1.3.1: Services + Logs (moved off Network)
 
 
 @app.get("/audio")
@@ -612,6 +618,9 @@ def listen_band():
         args.append("gain=" + str(d.get("gain"))[:8])
     if d.get("squelch") is not None:
         args.append("squelch=" + str(d.get("squelch"))[:4])
+    for k in ("rate", "hp", "lp"):   # 1.3.1 audio filters (FM: rate/hp/lp, airband: hp/lp); "" = back to default
+        if k in d and d.get(k) is not None:
+            args.append(k + "=" + re.sub(r"[^0-9a-z]", "", str(d.get(k)))[:8])
     try:
         r = _sudo(args, timeout=30)
     except subprocess.TimeoutExpired:
@@ -719,10 +728,10 @@ def radios_list():
 def radios_roles():
     roles = (request.get_json(silent=True) or {}).get("roles")
     if not isinstance(roles, dict) or not roles:
-        return jsonify(ok=False, error="roles must be {serial: adsb|radio|spare}"), 400
+        return jsonify(ok=False, error="roles must be {serial: adsb|radio|ais|spare}"), 400
     args = []
     for ser, role in roles.items():
-        if not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", str(ser)) or role not in ("adsb", "radio", "spare"):
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", str(ser)) or role not in ("adsb", "radio", "ais", "spare"):
             return jsonify(ok=False, error="bad serial or role"), 400
         args.append("%s=%s" % (ser, role))
     return _json_call([DONGLES_BIN, "assign", *args, "--json"], 150, "saving roles")
@@ -1384,6 +1393,47 @@ def _map_packs():
             out.append({"id": j.stem, "name": m.get("name", j.stem), "url": "/maps/packs/" + t.name, "bbox": m["bbox"],
                         "minzoom": int(m.get("minzoom", 0)), "maxzoom": int(m.get("maxzoom", 14)), "center": m.get("center")})
     return out
+
+
+# ---- 1.3.1 AIS boats: AIS-catcher's own web server (localhost only, never exposed) -> /api/boats for the map
+AIS_URL = os.environ.get("SDR_AIS_URL", "http://127.0.0.1:8100/api/ships.json")
+AIS_TYPES = ((20, 29, "other"), (30, 30, "fishing"), (31, 32, "tug"), (36, 37, "sail"), (52, 52, "tug"), (60, 69, "passenger"), (70, 79, "cargo"), (80, 89, "tanker"))
+
+
+def ais_kind(t):
+    try: t = int(t or 0)
+    except (TypeError, ValueError): t = 0
+    for lo, hi, k in AIS_TYPES:
+        if lo <= t <= hi: return k
+    return "other"
+
+
+def ais_boats(raw, now_s=None):
+    """AIS-catcher ships.json -> [{mmsi,name,kind,lat,lon,sog,cog,hdg,dest,seen,op}]. Fades after 3 min, dropped after 10."""
+    out = []
+    for s in (raw or {}).get("ships", []):
+        try: lat, lon = float(s.get("lat")), float(s.get("lon"))
+        except (TypeError, ValueError): continue
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180) or (lat == 0 and lon == 0): continue
+        seen = s.get("last_signal")
+        try: seen = int(seen)
+        except (TypeError, ValueError): seen = 0
+        if seen > 600: continue
+        name = re.sub(r"\s+", " ", str(s.get("shipname") or "")).strip()
+        out.append({"mmsi": int(s.get("mmsi") or 0), "name": name or str(s.get("mmsi") or ""), "named": bool(name), "kind": ais_kind(s.get("shiptype")),
+                    "lat": lat, "lon": lon, "sog": s.get("speed"), "cog": s.get("cog"), "hdg": s.get("heading"),
+                    "dest": re.sub(r"\s+", " ", str(s.get("destination") or "")).strip(), "seen": seen, "op": 1.0 if seen <= 180 else 0.45})
+    return out
+
+
+@app.get("/api/boats")
+def boats():
+    try:
+        with urllib.request.urlopen(AIS_URL, timeout=2) as r:
+            raw = json.loads(r.read(4 * 1024 * 1024))
+    except Exception:
+        return jsonify(ok=True, live=False, boats=[])
+    return jsonify(ok=True, live=True, boats=ais_boats(raw))
 
 
 @app.get("/api/maps")

@@ -92,7 +92,7 @@
   ];
   ICON.scan = ICON.detect;
   const PAGE_TAB = { 'listen': 'listen', 'radio': 'listen', 'adsb': 'map', 'spectrum': 'spectrum', 'scan': 'scan', 'detect': 'scan',
-                     'more': 'settings', 'settings': 'settings', 'presets': 'settings', 'network': 'settings', 'audio': 'settings', 'updates': 'settings', 'screen': 'settings', 'dongles': 'settings', 'shots': 'settings', 'maps': 'settings', 'stations': 'settings', 'about': 'settings', 'roles': 'settings' };
+                     'more': 'settings', 'settings': 'settings', 'presets': 'settings', 'network': 'settings', 'system': 'settings', 'audio': 'settings', 'updates': 'settings', 'screen': 'settings', 'dongles': 'settings', 'shots': 'settings', 'maps': 'settings', 'stations': 'settings', 'about': 'settings', 'roles': 'settings' };
   const MODE_TAB = { fm: 'listen', adsb: 'map', spectrum: 'spectrum', detect: 'scan' };
   const MODE_NAME = { fm: 'FM radio', adsb: 'ADS-B', spectrum: 'Spectrum', detect: 'Scan' };
   const MODE_PAGE = { fm: '/listen', adsb: '/adsb', spectrum: '/spectrum', detect: '/scan' };
@@ -237,10 +237,11 @@
     const au = S && S.audio, ic = $('qsAudI'), a = $('qsAud');
     let k = 'Audio', v = ['—'], cls = 'dash', icon = ICON.speaker, on = false;
     if (au) {
-      // 1.3: no brand names in the chip (the speaker's full name is on the Bluetooth / Audio page)
+      // 1.3: Off/none shows SPEAKER; full name on the Bluetooth / Audio page
       const wants = au.output === 'speaker' || au.output === 'both';
       if (au.output === 'phone' || !au.output) { v = ['Phone', 'Phone']; cls = ''; icon = ICON.phone; on = true; }
-      else if (wants && au.connected) { k = 'Speaker'; v = ['✓', au.output === 'both' ? '✓ + phone' : '✓']; cls = ''; on = true; }
+      // 1.3.1: the connected speaker's own name, trimmed to fit one line (SPEAKER when it has none)
+      else if (wants && au.connected) { const nm = String(au.speaker || '').trim(); k = nm ? (nm.length > 12 ? nm.slice(0, 11).trimEnd() + '…' : nm) : 'Speaker'; v = ['✓', au.output === 'both' ? '✓ + phone' : '✓']; cls = ''; on = true; }
       else if (wants) { k = 'Speaker'; v = ['Off', 'Off']; cls = 'warn'; }
     }
     $('qsAudK').textContent = k;

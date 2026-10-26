@@ -69,7 +69,7 @@
   <div class="card" id="apcard">
     <h2>Hotspot</h2>
         <div class="ctl apform">
-      <label class="grow">Name <input id="apSsid" maxlength="32" placeholder="Trace" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label class="grow">Name <input id="apSsid" maxlength="32" placeholder="TRACE-XXXX" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <label class="grow">Password
         <span class="pwrow"><input id="apPsk" type="password" maxlength="63" placeholder="Saved – leave empty to keep" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="button" id="apPskShow" class="sm">Show</button></span></label>
     </div>
@@ -78,31 +78,11 @@
     <div class="aprow"><span>Start hotspot at boot</span><button type="button" class="v-sw" id="apBoot" role="switch" aria-checked="false" aria-label="Start hotspot at boot"></button></div>
     <div class="row"><button type="button" class="primary" id="apSave">Save hotspot</button>
       <button type="button" id="appwshow" class="sm">Show hotspot password</button></div>
-    <p class="note">2.4 GHz works with every phone. Password: 8+ characters.</p>
+    <p class="note">Trace always starts as its hotspot (on by default). Switch to Wi‑Fi for updates and map downloads. 2.4 GHz works with every phone. Password: 8+ characters.</p>
     <p class="now hide" id="appw"></p>
     <p class="status" id="apMsg"></p>
   </div>
 
-  <div class="card">
-    <h2>Logs</h2>
-    <p class="note">If a switch fails, show and copy the logs.</p>
-    <p><button type="button" id="showlog">Show logs</button></p>
-    <pre id="netlog" style="display:none;white-space:pre-wrap;max-height:22rem;overflow:auto;background:var(--night);border:1px solid var(--line);font-family:var(--mono);padding:.7rem;border-radius:8px;line-height:1.35;"></pre>
-  </div>
-
-  <div class="card">
-    <h2>Services</h2>
-    <p class="note" id="svcnow">…</p>
-    <div class="row">
-      <button data-svc="radio">Restart radio stream</button>
-      <button data-svc="sdr-fm">Restart sdr-fm</button>
-      <button data-svc="icecast2">Restart Icecast</button>
-      <button data-svc="nginx">Restart nginx</button>
-      <button data-svc="sdr-web" class="danger">Restart web UI</button>
-      <button data-svc="all" class="danger">Restart all</button>
-    </div>
-    <p class="note">Web UI and All briefly disconnect this page.</p>
-  </div>
   <p class="status" id="msg"></p>
 </div>
 <script src="/mode.js"></script>
@@ -326,32 +306,7 @@ $('appwshow').onclick = async () => {
 
 async function refresh(){
   try { renderNet(await jfetch('/api/net')); } catch(e) { setMsg(e.message,'err'); }
-  try {
-    const s = await jfetch('/api/services');
-    const units = s.units || {};
-    $('svcnow').textContent = Object.keys(units).map(k=>k+': '+units[k]).join('  ·  ') || 'no status';
-  } catch(e) {}
 }
-document.querySelectorAll('button[data-svc]').forEach(btn => {
-  btn.onclick = async () => {
-    const which = btn.getAttribute('data-svc');
-    setMsg('Restarting '+which+'…','ok');
-    try {
-      const j = await jfetch('/api/services/restart',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({which})});
-      setMsg(j.message||('restarted '+which),'ok');
-      setTimeout(refresh, 1500);
-    } catch(e){ setMsg(e.message,'err'); }
-  };
-});
-$('showlog').onclick = async () => {
-  const pre = $('netlog');
-  pre.style.display = 'block';
-  pre.textContent = 'Loading…';
-  try {
-    const j = await jfetch('/api/net/log');
-    pre.textContent = j.log || JSON.stringify(j, null, 2);
-  } catch(e) { pre.textContent = e.message; }
-};
 refresh();
 loadSaved();
 </script>

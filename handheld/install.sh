@@ -394,6 +394,7 @@ install -m 755 "$SRC/bin/sdr-shot" /usr/local/sbin/sdr-shot            # 1.0.9: 
 install -d -m 755 /var/lib/sdr/screenshots
 install -d -m 755 /usr/local/lib/sdr-station/config
 install -m 644 "$SRC/config/listen-presets.json" /usr/local/lib/sdr-station/config/listen-presets.json
+install -m 644 "$SRC/config/regions.json" /usr/local/lib/sdr-station/config/regions.json          # 1.3.1: Settings > Maps region list (Protomaps direct)
 install -m 644 "$SRC/config/airports.json" /usr/local/lib/sdr-station/config/airports.json        # 1.2.5: airport focus frequencies (KLAX)
 install -m 755 "$SRC/bin/sdr-level" /usr/local/lib/sdr-station/bin/sdr-level                   # 1.2.5: airband level meter (map listen strip)
 install -m 755 "$SRC/bin/sdr-aircraft-db" /usr/local/sbin/sdr-aircraft-db                      # 1.2.5: offline aircraft models (ODC-By)
@@ -419,6 +420,10 @@ for u in sdr-net-retry.service sdr-net-retry.timer sdr-firstboot-done.service sd
 install -m 755 "$SRC/bin/fieldnote-display-setup" /usr/local/sbin/fieldnote-display-setup
 ln -sfn fieldnote-display-setup /usr/local/sbin/trace-display-setup   # alias (same script; internal names stay fieldnote-*)
 install -m 755 "$SRC/bin/adsb_run.sh" /usr/local/lib/sdr-station/bin/adsb_run.sh
+# 1.3.1 AIS boats: decoder runner + unit (inactive until a dongle has the AIS role) + on-demand pinned source build
+install -m 755 "$SRC/bin/ais_run.sh" /usr/local/lib/sdr-station/bin/ais_run.sh
+install -m 755 "$SRC/bin/sdr-ais-fix" /usr/local/sbin/sdr-ais-fix
+install -m 644 "$SRC/systemd/sdr-ais.service" /etc/systemd/system/sdr-ais.service
 install -m 644 "$SRC/systemd/sdr-net.service" /etc/systemd/system/sdr-net.service
 
 install -d -m 755 /etc/sdr /var/log /var/lib/sdr-station
@@ -499,6 +504,11 @@ for f in stillwave-trace.plymouth stillwave-trace.script bg.png bg-shutdown.png 
   install -m 644 "$SRC/plymouth/stillwave-trace/$f" "/usr/local/lib/sdr-station/plymouth/stillwave-trace/$f"
 done
 install -m 755 "$SRC/bin/sdr-splash" /usr/local/lib/sdr-station/bin/sdr-splash
+# 1.3.1: offline plymouth packages for Raspberry Pi OS trixie (sdr-splash installs them only if plymouth is missing)
+if compgen -G "$SRC/vendor/plymouth/*.deb" >/dev/null; then
+  install -d -m 755 /usr/local/lib/sdr-station/vendor/plymouth
+  install -m 644 "$SRC"/vendor/plymouth/*.deb "$SRC/vendor/plymouth/SHA256SUMS" "$SRC/vendor/plymouth/README.txt" /usr/local/lib/sdr-station/vendor/plymouth/
+fi
 ln -sfn /usr/local/lib/sdr-station/bin/sdr-boot-setup /usr/local/sbin/sdr-boot-setup
 # ---- over-the-air updates (sdr-update): the only part that goes online, and only when asked ----
 install -m 644 "$SRC/VERSION" /usr/local/lib/sdr-station/VERSION
@@ -661,6 +671,7 @@ systemctl disable sdr-fm >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/multi-user.target.wants/sdr-fm.service
 systemctl daemon-reload
 systemctl enable icecast2 sdr-web sdr-net sdr-mode nginx
+systemctl enable sdr-ais.service >/dev/null 2>&1 || true   # 1.3.1: exits at once without an AIS dongle
 # 1.2.0: the first-boot grace is a timer now (the old service slept 10 min inside multi-user.target)
 systemctl disable sdr-firstboot-done.service >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/multi-user.target.wants/sdr-firstboot-done.service
@@ -837,7 +848,7 @@ if [[ -f /etc/systemd/system/fieldnote-kiosk.service || -f /etc/sdr/display.env 
   echo
   echo "[progress] 92 Boot splash + initramfs (a rebuild can take a few minutes on a Pi)"
   t0=$SECONDS
-  bash /usr/local/lib/sdr-station/bin/sdr-splash auto || echo "WARNING: boot splash not turned on (see above); the Pi keeps its normal text boot."
+  bash /usr/local/lib/sdr-station/bin/sdr-splash auto || echo "BOOT SPLASH FAILED: not turned on (see above); the Pi keeps its normal text boot. Details: sdr-splash status"
   echo "boot splash step took $((SECONDS - t0))s"
 fi
 [[ $UPGRADE -eq 0 ]] && mark_step install

@@ -7,6 +7,9 @@
 #   sdr-maps fetch [--build YYYYMMDD] [--force]
 #                                   needs internet once: cut the LA extract from the public Protomaps
 #                                   build with the pmtiles CLI (downloaded + checksum-pinned) and install it
+#   sdr-maps region BBOX MINZ MAXZ OUT [--build YYYYMMDD]
+#                                   1.3.1: cut ANY region (W,S,E,N) from the public Protomaps build into OUT (a .pmtiles
+#                                   path); used by sdr-content for the Settings > Maps region list. Prints JSON.
 #   sdr-maps receiver LAT LON       save the receiver position (ADSB_LAT/ADSB_LON in /etc/sdr/adsb.env)
 #   sdr-maps receiver --clear       back to the default (LAX) for map centering and distances
 #   sdr-maps gain DB|auto           ADS-B decoder gain (ADSB_GAIN), restarts the decoder if running (1.2.0)
@@ -239,6 +242,25 @@ cmd_gain() {   # 1.2.0: ADS-B decoder gain from the Map page (- / + / Auto); res
   printf '{"ok": true, "gain": "%s", "decoder_restarted": %s}\n' "$g" "$restarted"
 }
 
+cmd_region() {   # 1.3.1
+  local bbox="${1:-}" minz="${2:-}" maxz="${3:-}" out="${4:-}" build=""
+  shift 4 2>/dev/null || true
+  [[ "${1:-}" == --build ]] && build="${2:-}"
+  [[ "$bbox" =~ ^-?[0-9.]+,-?[0-9.]+,-?[0-9.]+,-?[0-9.]+$ ]] || die "region: BBOX must be W,S,E,N"
+  [[ "$minz" =~ ^[0-9]+$ && "$maxz" =~ ^[0-9]+$ && $minz -le $maxz && $maxz -le 15 ]] || die "region: zoom must be 0..15"
+  [[ "$out" == *.pmtiles && -d "$(dirname "$out")" ]] || die "region: OUT must be a .pmtiles path in an existing folder"
+  command -v curl >/dev/null || die "curl missing"
+  local bin; bin="$(pmtiles_bin)" || exit 1
+  [[ -n "$build" ]] || build="$(latest_build)"
+  [[ "$build" =~ ^[0-9]{8}$ ]] || die "could not find the current Protomaps build (is the Pi online?)"
+  local url="$BUILD_BASE/$build.pmtiles"
+  rm -f "$out"
+  "$bin" extract "$url" "$out" --bbox="$bbox" --minzoom="$minz" --maxzoom="$maxz" --download-threads=4 -q >/dev/null 2>&1 || { rm -f "$out"; die "extract failed (network?)"; }
+  "$bin" verify "$out" >/dev/null 2>&1 || { rm -f "$out"; die "verify failed"; }
+  chmod 644 "$out"
+  printf '{"ok": true, "build": "%s", "bytes": %s, "sha256": "%s", "source": "%s"}\n' "$build" "$(stat -c %s "$out")" "$(sha_of "$out")" "$url"
+}
+
 ACTION="${1:-status}"; shift || true
 case "$ACTION" in
   status) cmd_status "$@"; exit $? ;;
@@ -249,6 +271,7 @@ case "$ACTION" in
   verify) cmd_verify ;;
   install-local) cmd_install_local "${1:-}" ;;
   fetch) cmd_fetch "$@" ;;
+  region) cmd_region "$@" ;;
   receiver) cmd_receiver "$@" ;;
   rings) cmd_rings "$@" ;;
   gain) cmd_gain "$@" ;;

@@ -136,7 +136,7 @@
       const cur = air ? mhz : null, gg = grp();
       sheet.innerHTML = '<div class="lsp-h"><span><b>// Quick tune</b> · map stays live</span><span>' + esc(a.icao) + '</span></div>' +
         '<div class="m-seg lsp-tabs">' + a.groups.map(x => '<button type="button" class="m-pill' + (x.id === gg.id ? ' on' : '') + '" data-g="' + esc(x.id) + '">' + esc(x.label) + '</button>').join('') + '</div>' +
-        '<div class="lsp-g">' + gg.freqs.map(f => '<button type="button" data-mhz="' + f.mhz + '" data-name="' + esc(f.name) + '" class="' + (cur && Math.abs(cur - f.mhz) < 0.002 ? 'on' : '') + '"><b>' + f3(f.mhz) + '</b><span>' + esc(f.name.replace(new RegExp('^(' + a.icao + '|' + a.icao.replace(/^K/, '') + ') '), '')) + '</span></button>').join('') + '</div>' +
+        '<div class="lsp-g">' + gg.freqs.map(f => '<button type="button" data-mhz="' + f.mhz + '" data-name="' + esc(f.name) + '" class="' + (cur && Math.abs(cur - f.mhz) < 0.002 ? 'on' : '') + '"><b>' + f3(f.mhz) + '</b><span>' + esc(f.tag || f.name.replace(new RegExp('^(' + a.icao + '|' + a.icao.replace(/^K/, '') + ') '), '')) + '</span></button>').join('') + '</div>' +
         '<div class="lsp-sq"><span>Squelch</span><span class="m-seg">' + SQ.map(([v, t]) => '<button type="button" class="m-pill' + (v === sqAir ? ' on' : '') + '" data-sq="' + v + '">' + t + '</button>').join('') + '</span></div>' +
         '<p class="lsp-n">Squelch Low or High shows Quiet / Talking. Off plays the hiss between calls.</p>';
     }

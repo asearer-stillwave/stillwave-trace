@@ -57,10 +57,10 @@ function renderJob(){
   if (q.length) {
     const id = q[0], have = j.id === id ? (j.have || 0) : (ST.partial[id] || 0), tot = j.id === id && j.total ? j.total : (((CAT && CAT.packs.find(p => p.id === id)) || {}).bytes || 1);
     const pct = Math.min(100, Math.floor(have / tot * 100)), paused = j.state === 'paused' || !ST.worker;
-    const st = j.state === 'checking' ? 'Checking signature and checksum…' : j.state === 'retrying' ? 'Connection lost, retrying…' : paused ? 'Paused · resumes where it stopped' :
+    const st = j.state === 'checking' ? (j.estimate || ((CAT && CAT.packs.find(p => p.id === id)) || {}).estimate ? 'Finishing…' : 'Checking signature and checksum…') : j.state === 'retrying' ? 'Connection lost, retrying…' : paused ? 'Paused · resumes where it stopped' :
       (j.eta != null ? 'about ' + (j.eta > 90 ? Math.round(j.eta/60) + ' min' : j.eta + ' s') + ' left' : 'starting…');
     h += `<div class="card mp-prog"><div class="pp-h"><span>${esc(name(id))}</span><span class="mp-sz">${pct}%</span></div><div class="mp-bar"><i style="width:${pct}%"></i></div>
-      <div class="pp-s"><span>${MB(have)} of ${MB(tot)}</span><span>${esc(st)}</span></div>
+      <div class="pp-s"><span>${MB(have)} of ${j.estimate ? '~' : ''}${MB(tot)}</span><span>${esc(st)}</span></div>
       <div class="mp-act"><button type="button" data-a="${paused ? 'resume' : 'pause'}">${paused ? 'Resume' : 'Pause'}</button><button type="button" class="v-warn" data-a="cancel" data-id="${esc(id)}">Cancel</button></div>
       <p class="note">The map and radio keep working. The new area appears on the map when it is checked and done.</p></div>`;
     if (q.length > 1) h += `<h2 class="mgrp">Waiting</h2><div class="mp-list">${q.slice(1).map(id => row(esc(name(id)), 'Starts after ' + esc(name(q[0])), MB(((CAT && CAT.packs.find(p => p.id === id)) || {}).bytes || 0), `<button type="button" class="sm" data-a="cancel" data-id="${esc(id)}">Remove</button>`)).join('')}</div>`;
@@ -92,10 +92,15 @@ function renderBrowse(){
   const names = [['World', null], ...path.map(id => [((CAT.regions.find(r => r.id === id)) || {}).name || id, id])];
   $('crumb').innerHTML = path.length ? `<div class="mp-crumb">${names.map(([n, id], i) => i < names.length - 1 ? `<a href="#" data-a="up" data-i="${i}">${esc(n)}</a><span>›</span>` : `<span>${esc(n)}</span>`).join('')}</div>` : '';
   const have = new Set(ST.packs.map(p => p.id)), q = new Set(ST.queue);
-  let h = CAT.online === false ? `<div class="mp-warn"><b>Offline.</b> Showing the last map list. ${esc(CAT.message || '')}</div>` : '';
+  // 1.3.1: built-in region list (cut on this box from the public Protomaps build) needs Wi-Fi with internet
+  const net = (ST && ST.net) || CAT.net, canGet = net === 'online' || (CAT.source !== 'protomaps' && CAT.online !== false);
+  let h = net === 'hotspot' ? `<div class="mp-warn"><b>On the hotspot.</b> Connect to Wi‑Fi to download maps. Maps already on the box keep working.</div><div class="mp-act" style="margin-bottom:.9rem"><a class="btn primary" href="/network">Open Network</a></div>`
+    : net === 'offline' ? `<div class="mp-warn"><b>No internet.</b> Connect to Wi‑Fi to download maps.</div>`
+    : CAT.online === false ? `<div class="mp-warn"><b>Offline.</b> Showing the last map list. ${esc(CAT.message || '')}</div>` : '';
+  if (CAT.source === 'protomaps' && CAT.note) h += `<p class="note">${esc(CAT.note)}</p>`;
   const ps = packsIn(cur);
-  if (ps.length) h += `<div class="mp-list">${ps.map(p => row(esc(p.name), esc((p.sub ? p.sub + ' · ' : '') + (DETAIL[p.detail] || '') + (p.build ? ' · ' + p.build.slice(0,4) + '-' + p.build.slice(4,6) : '')), MB(p.bytes),
-      have.has(p.id) ? '<span class="mp-tag">On box</span>' : q.has(p.id) ? '<span class="mp-tag">Queued</span>' : `<button type="button" class="sm primary" data-a="get" data-id="${esc(p.id)}">Get</button>`)).join('')}</div>`;
+  if (ps.length) h += `<div class="mp-list">${ps.map(p => row(esc(p.name), esc((p.sub ? p.sub + ' · ' : '') + (DETAIL[p.detail] || '') + (p.build ? ' · ' + p.build.slice(0,4) + '-' + p.build.slice(4,6) : '')), (p.estimate ? '~' : '') + MB(p.bytes),
+      have.has(p.id) ? '<span class="mp-tag">On box</span>' : q.has(p.id) ? '<span class="mp-tag">Queued</span>' : `<button type="button" class="sm primary" data-a="get" data-id="${esc(p.id)}"${canGet ? '' : ' disabled'}>Get</button>`)).join('')}</div>`;
   const ks = kids(cur);
   if (ks.length) h += (ps.length ? '<h2 class="mgrp">Areas inside</h2>' : '') + `<div class="mp-list">${ks.map(r => { const n = countPacks(r.id); return row(esc(r.name), esc(r.sub || (n + (n === 1 ? ' map' : ' maps'))), '', null, `data-a="open" data-id="${esc(r.id)}" role="button" tabindex="0"`); }).join('')}</div>`;
   if (!ps.length && !ks.length) h += '<p class="note">Nothing to download here yet.</p>';

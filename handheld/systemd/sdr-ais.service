@@ -1,0 +1,18 @@
+[Unit]
+Description=AIS boats decoder (AIS-catcher) on its own dongle -> 127.0.0.1:8100 (Stillwave Trace 1.3.1)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/sdr/dongles.env
+EnvironmentFile=-/etc/sdr/ais.env
+ExecStart=/usr/local/lib/sdr-station/bin/ais_run.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=8
+SupplementaryGroups=plugdev
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

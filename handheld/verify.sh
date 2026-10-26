@@ -18,7 +18,10 @@ if [[ "${1:-}" == "--health" ]]; then
     t=$SECONDS
     if out="$(SDR_SPLASH_LS_TIMEOUT=40 timeout 75 bash "$SPL" gate 2>&1)"; then
       hl "boot splash OK in $((SECONDS - t))s: $(echo "$out" | tail -n1)"
-    elif [[ $? -eq 124 ]]; then
+    elif rc=$?; [[ $rc -eq 3 ]]; then
+      # 1.3.1: splash wanted but skipped (no plymouth / initramfs). Reported as FAILED, but not worth a rollback.
+      SPLASH_FAIL="$(echo "$out" | tail -n1)"; hl "boot splash FAILED (skipped): $SPLASH_FAIL"; echo "HEALTH WARN: boot splash FAILED: $SPLASH_FAIL"
+    elif [[ $rc -eq 124 ]]; then
       hl "boot splash check took over 75s; not checked this time (splash left as is)"
     else
       echo "$out"; hl "boot splash check failed in $((SECONDS - t))s"
@@ -59,6 +62,8 @@ if [[ "${1:-}" == "--health" ]]; then
 fi
 echo "==== Stillwave Trace verify ($(hostname), $(date '+%Y-%m-%d %H:%M %Z')) ===="
 echo "version: $(cat /usr/local/lib/sdr-station/VERSION 2>/dev/null || echo 'unknown (installed before versioning)')"
+echo "==== boot splash ===="
+if sp="$(bash /usr/local/lib/sdr-station/bin/sdr-splash check 2>&1)"; then echo "$sp"; else echo "FAIL: $sp"; fi
 echo "==== services ===="
 systemctl is-active icecast2 sdr-web sdr-net sdr-mode nginx
 echo "==== dongle mode ===="

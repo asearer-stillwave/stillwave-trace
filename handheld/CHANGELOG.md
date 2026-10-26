@@ -5,6 +5,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.3.1] and [1.3.1-desktop] - 2026-10-25 (PT) - Splash on Pi OS, AIS boats, map regions, audio filters (12 items); both editions
+### Added
+- **AIS boats on the map.** Give a dongle the new **Boats · AIS** job (Settings › Radios). The unit then builds the AIS-catcher decoder (v0.70, pinned commit 8833c64, GPL-3.0) from source, which needs internet once (`sudo sdr-ais-fix`). After that `sdr-ais.service` decodes both AIS channels on that dongle and serves them on 127.0.0.1:8100 only. The map shows boats as dots colored by type (cargo, tanker, passenger, fishing, tug, sail, other), with a 6‑minute course line and names cut to 14 characters with "…". Tap a boat for its details card. An **All / Aircraft / Boats** button appears once a boat has been heard. Boats fade after 3 min and drop off after 10 min (`GET /api/boats`). AIS needs its own dongle. With map + AIS, Listen shares the map dongle.
+- **Map regions from a list** (Settings › Maps). There is a built-in region catalog (SoCal overview, San Diego, SF Bay, Seattle, NYC, Boston, Miami, Houston, Las Vegas) in street and overview packs. On Wi‑Fi a region downloads straight from the latest Protomaps build (`sdr-maps region`). Sizes come from a dry run, so they are shown as estimates (~). On the hotspot or with no internet, Get is disabled and a banner explains why.
+- **FM gear**: audio rate, high-pass and low-pass. New FM presets default to 48000 / 50 / 8500 Hz.
+- **Airband gear**: high-pass and low-pass, default 200 / 3400 Hz. NOAA keeps its fixed 200–3400 Hz filter.
+- **NOAA**: a big frequency readout with −/+ that steps WX1…WX7.
+- **Settings › System**: Services and Logs moved here from Network.
+### Changed
+- **Quick Tune labels come from the FAA remarks.** Approach and departure buttons read, for example, `APP NE`, `DEP SE`, `APP RWY 11`, `CLASS B`, or `APP 1` / `APP 2` when nothing else tells them apart.
+- **Station Bank**: compact rows. The city line is hidden when it is the city you picked.
+- **Aircraft icons** stay Normal size at Large/XL text size. Only the labels scale.
+- **SPEAKER chip** shows the connected speaker's name, cut to 12 characters with "…".
+- **The unit always boots into its TRACE-XXXX hotspot** (WPA2). Units that still have the old auto-generated hotspot password move once to the default password (see the manual). A hotspot name or password you set yourself is kept. Boot also turns the Wi‑Fi radio on.
+### Fixed
+- **Boot splash on Raspberry Pi OS.** `sdr-splash` now finds the initramfs the firmware really loads (`initramfs_2712` on Pi 5, `initramfs8` on Pi 4, or an explicit `initramfs` line) and sets `auto_initramfs=1`. It installs plymouth offline from bundled trixie arm64 packages (SHA256-checked), with apt as a fallback. A skipped splash is no longer silent: `verify.sh` prints `HEALTH WARN: boot splash FAILED`, and the update result says `Boot splash FAILED: …`. It does not roll back the update. Backups are kept.
+- `sdr-scan` stops only the radio service when two dongles are really dual (not with map + AIS).
+
 ## [1.3.0] and [1.3.0-desktop] - 2026-10-25 (PT) - Listen, Scan, Settings and Network redesign (22 items); both editions
 ### Changed
 - **Listen** rebuilt to the 1.3 mockups. A sticky "now playing" strip always shows what is actually tuned (it still says `AIRBAND · 128.500` while you look at the FM tab), with a LIVE light, a talking/quiet indicator, signal bars and Stop/Play. The audio player is hidden but playback continues.

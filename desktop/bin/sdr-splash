@@ -16,10 +16,29 @@
 # Anything that fails leaves the Pi on its normal text boot; it never makes the Pi unbootable.
 set -u
 R="${SDR_SPLASH_ROOT:-}"
+LIB="${SDR_SPLASH_LIB:-/usr/local/lib/sdr-station}"
 BOOT="${SDR_SPLASH_BOOT:-$R/boot/firmware}"
 [[ -f "$BOOT/cmdline.txt" || ! -f "$R/boot/cmdline.txt" ]] || BOOT="$R/boot"
-CMDLINE="$BOOT/cmdline.txt"; CONFIG="$BOOT/config.txt"; INITRD="$BOOT/initrd.img"
-LIB="${SDR_SPLASH_LIB:-/usr/local/lib/sdr-station}"
+CMDLINE="$BOOT/cmdline.txt"; CONFIG="$BOOT/config.txt"
+# 1.3.1: the initramfs file name depends on the OS and board. Ubuntu: initrd.img. Raspberry Pi OS (auto_initramfs=1):
+# initramfs_2712 on a Pi 5 / CM5 (kernel_2712.img), initramfs8 on a Pi 4 / CM4 (64-bit). An explicit
+# "initramfs NAME" line in config.txt wins. SDR_SPLASH_INITRD / SDR_SPLASH_MODEL override (tests).
+pick_initrd() {
+  [[ -n "${SDR_SPLASH_INITRD:-}" ]] && { echo "$SDR_SPLASH_INITRD"; return; }
+  local n; n="$(awk '/^[[:space:]]*initramfs[[:space:]]/{print $2}' "$CONFIG" 2>/dev/null | tail -1)"
+  [[ -n "$n" ]] && { echo "$BOOT/$n"; return; }
+  local model; model="${SDR_SPLASH_MODEL:-$(tr -d '\0' <"$R/proc/device-tree/model" 2>/dev/null)}"
+  case "$model" in
+    *"Raspberry Pi 5"*|*"Compute Module 5"*|*"Raspberry Pi 500"*) n=initramfs_2712 ;;
+    *"Raspberry Pi 4"*|*"Compute Module 4"*|*"Raspberry Pi 400"*) n=initramfs8 ;;
+  esac
+  if [[ -n "$n" && ( -e "$BOOT/$n" || ! -e "$BOOT/initrd.img" ) ]]; then echo "$BOOT/$n"; return; fi
+  for n in initrd.img initramfs_2712 initramfs8; do [[ -e "$BOOT/$n" ]] && { echo "$BOOT/$n"; return; }; done
+  echo "$BOOT/initrd.img"
+}
+INITRD="$(pick_initrd)"
+PIOS=0; case "$(basename "$INITRD")" in initramfs*) PIOS=1 ;; esac
+DEBS="${SDR_SPLASH_DEBS:-$LIB/vendor/plymouth}"
 SRC="${SDR_SPLASH_SRC:-$LIB/plymouth/stillwave-trace}"
 THEMES="${SDR_SPLASH_THEMES:-$R/usr/share/plymouth/themes}"
 THEME=stillwave-trace; TDIR="$THEMES/$THEME"; TFILE="$TDIR/$THEME.plymouth"
@@ -93,9 +112,9 @@ PY
 
 # config.txt: add/remove our marked [all] block at the end
 config_edit() {  # add|remove IN OUT
-  python3 - "$@" "$BEGIN" "$END" <<'PY'
+  python3 - "$@" "$BEGIN" "$END" "$PIOS" <<'PY'
 import sys
-mode, src, dst, BEGIN, END = sys.argv[1:6]
+mode, src, dst, BEGIN, END, PIOS = sys.argv[1:7]
 text = open(src, newline="").read()
 lines = text.split("\n")
 out, i, found = [], 0, 0
@@ -117,7 +136,7 @@ if mode == "add":
     else:
         if res and not res.endswith("\n"):
             res += "\n"
-        res += "\n" + BEGIN + "\n[all]\ndisable_splash=1\n" + END + "\n"
+        res += "\n" + BEGIN + "\n[all]\ndisable_splash=1\n" + ("auto_initramfs=1\n" if PIOS == "1" else "") + END + "\n"
 open(dst, "w", newline="").write(res)
 PY
 }
@@ -161,7 +180,8 @@ rebuild_initrd() {  # keep the current initrd.img until the new one is built
   mkdir -p "$STATE_DIR"
   [[ -s "$INITRD" ]] && cp -a "$INITRD" "$STATE_DIR/initrd.img.pre"
   say "rebuilding the initramfs (update-initramfs -u, about a minute on a Pi 4) ..."
-  if ! timeout 900 update-initramfs -u >"$STATE_DIR/update-initramfs.log" 2>&1 || [[ ! -s "$INITRD" ]]; then
+  local ua=-u; [[ $PIOS -eq 1 && ! -s "$INITRD" ]] && ua="-c -k $(uname -r)"
+  if ! timeout 900 update-initramfs $ua >"$STATE_DIR/update-initramfs.log" 2>&1 || [[ ! -s "$INITRD" ]]; then
     warn "update-initramfs failed (see $STATE_DIR/update-initramfs.log)"
     [[ -s "$STATE_DIR/initrd.img.pre" ]] && cp -a "$STATE_DIR/initrd.img.pre" "$INITRD" && say "put the previous initrd.img back"
     return 1
@@ -258,16 +278,26 @@ do_on() {
   local why=""
   if [[ ! -f "$CMDLINE" || ! -f "$CONFIG" ]]; then why="no cmdline.txt/config.txt in $BOOT (not a Raspberry Pi boot partition?)"
   elif ! cmdline_edit add "$CMDLINE" /dev/null >/dev/null 2>&1; then why="cmdline.txt is not a single line with root= (left alone)"
-  elif ! command -v update-initramfs >/dev/null || [[ ! -s "$INITRD" ]]; then why="this Pi does not boot with an initramfs ($INITRD); Ubuntu for Raspberry Pi does"
+  elif ! command -v update-initramfs >/dev/null; then why="update-initramfs is missing (initramfs-tools not installed)"
+  elif [[ ! -s "$INITRD" && $PIOS -eq 0 ]]; then why="no initramfs at $INITRD"
   fi
   if [[ -z "$why" ]] && ! have_plymouth; then
-    if [[ -z "${SDR_SPLASH_NO_APT:-}" ]] && timeout 5 getent hosts ports.ubuntu.com >/dev/null 2>&1; then
+    # 1.3.1: Raspberry Pi OS Lite has no plymouth. Install the bundled trixie arm64 .debs first (works offline).
+    if [[ -z "${SDR_SPLASH_NO_APT:-}" ]] && compgen -G "$DEBS/*.deb" >/dev/null && grep -q 'VERSION_CODENAME=trixie' "$R/etc/os-release" 2>/dev/null \
+       && [[ "$(dpkg --print-architecture 2>/dev/null)" == arm64 ]] && (cd "$DEBS" && sha256sum -c --quiet SHA256SUMS >/dev/null 2>&1); then
+      mkdir -p "$STATE_DIR"; say "installing plymouth from the bundled packages (offline) ..."
+      DEBIAN_FRONTEND=noninteractive timeout 600 apt-get install -y --no-install-recommends "$DEBS"/*.deb >"$STATE_DIR/apt.log" 2>&1 \
+        || DEBIAN_FRONTEND=noninteractive timeout 600 dpkg -i "$DEBS"/*.deb >>"$STATE_DIR/apt.log" 2>&1 || true
+    fi
+    if ! have_plymouth && [[ -z "${SDR_SPLASH_NO_APT:-}" ]] && timeout 5 getent hosts deb.debian.org ports.ubuntu.com >/dev/null 2>&1; then
       say "installing plymouth (apt) ..."
       DEBIAN_FRONTEND=noninteractive timeout 600 apt-get install -y --no-install-recommends plymouth >/dev/null 2>&1 || true
     fi
     have_plymouth || why="plymouth (with its script plugin) is not installed and could not be installed now"
   fi
-  [[ -z "$why" ]] || { say "skipped: $why. The Pi keeps its normal text boot."; return 0; }
+  # 1.3.1: a skipped splash is a FAILURE (1.3.0 reported OK). Remembered so check/gate/verify.sh report it too.
+  if [[ -n "$why" ]]; then set_state SKIPPED "$why"; warn "NOT turned on: $why. The Pi keeps its normal text boot."; return 1; fi
+  set_state SKIPPED ""
   for f in "${FILES[@]}"; do [[ -s "$SRC/$f" ]] || { warn "theme file missing: $SRC/$f"; return 1; }; done
   mkdir -p "$TDIR" && for f in "${FILES[@]}"; do install -m 644 "$SRC/$f" "$TDIR/$f"; done
   if ! set_default_theme; then warn "could not make $THEME the default Plymouth theme"; do_off quiet; return 1; fi
@@ -326,7 +356,11 @@ do_on() {
 # --- check: 0 = fine (or splash off), 1 = something is wrong ---
 do_check() {
   local bad=()
-  if [[ "$(get_state ENABLED)" != 1 ]]; then echo "splash off: nothing to check"; return 0; fi
+  if [[ "$(get_state ENABLED)" != 1 ]]; then
+    local sk; sk="$(get_state SKIPPED)"
+    if [[ -n "$sk" && "$(pref)" != off ]]; then echo "splash check FAILED: splash wanted but skipped: $sk"; return 3; fi
+    echo "splash off: nothing to check"; return 0
+  fi
   if [[ ! -s "$CMDLINE" ]]; then bad+=("cmdline.txt missing or empty")
   else
     [[ $(grep -c . "$CMDLINE") -eq 1 ]] || bad+=("cmdline.txt is not one line")
@@ -357,7 +391,8 @@ do_status() {
   echo "splash: $([[ "$(get_state ENABLED)" == 1 ]] && echo on || echo off)  (preference: $(pref || true); empty = default on)"
   echo "plymouth: $(have_plymouth && echo installed || echo 'not installed / no script plugin')"
   echo "default theme: $(readlink -f "$THEMES/default.plymouth" 2>/dev/null || echo none)"
-  echo "boot dir: $BOOT"
+  echo "boot dir: $BOOT  initramfs: $(basename "$INITRD")$([[ -s "$INITRD" ]] || echo ' (missing)')"
+  [[ -n "$(get_state SKIPPED)" ]] && echo "last attempt SKIPPED: $(get_state SKIPPED)"
   [[ -f "$CMDLINE" ]] && echo "cmdline.txt: $(cat "$CMDLINE")"
   [[ -f "$CONFIG" ]] && grep -qxF "$BEGIN" "$CONFIG" && echo "config.txt: disable_splash=1 block present"
   [[ -f "$DROPIN" ]] && echo "kiosk handoff: plymouth quit --retain-splash"
@@ -368,9 +403,9 @@ case "${1:-}" in
   on)     need_root; set_pref on; do_on ;;
   off)    need_root; set_pref off; do_off ;;
   auto)   need_root; if [[ "$(pref)" == off ]]; then say "left off (you turned it off; sudo sdr-boot-setup --splash on)"; else do_on; fi ;;
-  check)  do_check ;;
+  check)  do_check; exit $? ;;
   # health gate: on failure put the text boot back, remember "off", then fail
-  gate)   need_root; export SDR_SPLASH_LS_TIMEOUT="${SDR_SPLASH_LS_TIMEOUT:-40}"; if do_check; then exit 0; fi; set_pref off; do_off; echo "splash turned off (normal text boot)"; exit 1 ;;
+  gate)   need_root; export SDR_SPLASH_LS_TIMEOUT="${SDR_SPLASH_LS_TIMEOUT:-40}"; rc=0; do_check || rc=$?; [[ $rc -eq 0 ]] && exit 0; [[ $rc -eq 3 ]] && exit 3; set_pref off; do_off; echo "splash turned off (normal text boot)"; exit 1 ;;
   status) do_status ;;
   *) sed -n '2,8p' "$0"; exit 2 ;;
 esac

@@ -89,3 +89,41 @@ def upgrade_db(db):
     db.executemany("update center set site=? where rowid=?", [(tidy(s), r) for r, s in db.execute("select rowid,site from center").fetchall()])
     db.execute("insert or replace into meta values('format','2')")
     db.commit()
+
+
+# ---- 1.3.1 Quick Tune button tags: only the part that tells a frequency apart from the others in its group.
+# Built from the FAA NASR frequency-use remark (afreq.label), never invented: a bearing sector "045-089" becomes the
+# compass point of its middle (APP NE), "RWY 11L" -> APP RWY 11, North/South/West/East/Helicopters/Arrival/Departure
+# words are kept. Nothing to tell them apart -> APP 1, APP 2 ...; a lone frequency -> APP.
+_QK = {"approach": "APP", "tower": "TWR", "ground": "GND", "atis": "ATIS", "clearance": "CLR", "ctaf": "CTAF", "unicom": "UNIC"}
+_OCT = ["NORTH", "NE", "EAST", "SE", "SOUTH", "SW", "WEST", "NW"]
+_QW = [("heli", "HELI"), ("north", "NORTH"), ("south", "SOUTH"), ("east", "EAST"), ("west", "WEST"), ("arrival", "ARR"), ("departure", "DEP")]
+
+
+def quick_tag(grp, label):
+    lab = label or ""; low = lab.lower(); k = _QK.get(grp, (grp or "").upper()[:5])
+    if grp == "approach":
+        if "departure" in low and "app" not in low: k = "DEP"
+        m = re.search(r"class ([bc])\b", low)
+        if m: k = "CLASS " + m.group(1).upper()
+        m = re.search(r"\b(\d{3})[- ](\d{3})\b", lab)
+        if m:
+            a, b = int(m.group(1)) % 360, int(m.group(2)) % 360
+            return k + " " + _OCT[int((((a + ((b - a) % 360) / 2) % 360) + 22.5) // 45) % 8]
+        m = re.search(r"\brwy (\d{1,2})", low)
+        return k + " RWY " + m.group(1) if m else k
+    m = re.search(r"\brwy (\d{1,2}[lrc]?)", low)
+    if m: return k + " RWY " + m.group(1).upper()
+    for w, v in _QW:
+        if w in low: return k + " " + v
+    return k
+
+
+def quick_tags(grp, labels):
+    """Tags for one group's labels (same order); duplicates get 1, 2, 3."""
+    t = [quick_tag(grp, l) for l in labels]
+    for x in set(t):
+        idx = [i for i, y in enumerate(t) if y == x]
+        if len(idx) > 1:
+            for n, i in enumerate(idx, 1): t[i] = f"{x} {n}"
+    return t

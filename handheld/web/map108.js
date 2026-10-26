@@ -19,6 +19,11 @@
   for (const [id, t] of Object.entries(map)) {
     const p = pill(t, 'm' + id, $(id).classList.contains('on') ? 'on' : ''); p.onclick = () => { $(id).click(); sync(); }; r.appendChild(p);
   }
+  // 1.3.1 AIS: All / Aircraft / Boats pill, shown once a boat has been heard (mirrors #tShow)
+  const ps = pill('All', 'mtShow', ''); ps.onclick = () => { $('tShow').click(); syncShow(); }; r.appendChild(ps);
+  function syncShow() { const t = $('tShow'); if (!t) { ps.hidden = true; return; } ps.hidden = t.classList.contains('hide'); ps.textContent = t.textContent; ps.classList.toggle('on', t.classList.contains('on')); }
+  if ($('tShow')) new MutationObserver(syncShow).observe($('tShow'), { attributes: true, childList: true, characterData: true, subtree: true });
+  syncShow();
   const leg = document.createElement('div'); leg.className = 'm-leg';
   const cols = ['#5f7a68','#1c6b3c','#26904f','#33b866','#4ade80','#97f0b8','#c8f8d9','#f4fff7'], labs = ['GND','<1K','1–3K','3–6K','6–10K','10–20K','20–30K','30K+'];
   leg.innerHTML = '<span class="lk">// ALT FT</span><span class="bars">' + cols.map((c, i) => '<span><i style="background:' + c + '"></i><b>' + labs[i] + '</b></span>').join('') + '</span>';

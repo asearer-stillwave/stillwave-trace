@@ -28,6 +28,8 @@ const FIELDNOTE = { // Protomaps "dark" flavor, Night Ops v2: near-black, neutra
 const DROP = new Set(['buildings', 'address_label', 'roads_oneway', 'roads_shields', 'landuse_hospital', 'landuse_school', 'landuse_zoo']);
 
 // 1.3: canvas pixels per CSS pixel = device pixels x the UI zoom on <body> (Text size), so the map is never upscaled
+// 1.3.1: aircraft icons stay at their Normal size at every Text size (only the labels grow): sizes are divided by the zoom
+function uiZoom() { let z = 1; try { z = parseFloat(getComputedStyle(document.body).zoom) || 1; } catch (e) {} return Math.max(1, z); }
 function mapPixelRatio() {
   let z = 1;
   try { z = parseFloat(getComputedStyle(document.body).zoom) || 1; } catch (e) {}
@@ -166,12 +168,16 @@ function ringsGeo(lon, lat, step, n) {
 }
 const fc = features => ({ type: 'FeatureCollection', features });
 
+// 1.3.1 AIS hull colors by ship type (blue-ish so boats never read as an altitude band)
+export const BOAT_COLORS = { cargo: '#60a5fa', tanker: '#f87171', passenger: '#c084fc', fishing: '#fbbf24', tug: '#fb923c', sail: '#e6efe8', other: '#7dd3fc' };
+export function trimName(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
 // ---------- the map ----------
 export class AircraftMap {
   constructor(el, opts) {
     this.el = el; this.opts = opts || {};
     this.planes = new Map();      // hex -> {a, trail: [[lon, lat, t]], px}
-    this.selected = null; this.follow = false; this.labels = true; this.rings = true;
+    this.selected = null; this.follow = false; this.labels = true; this.rings = true; this.boats = new Map(); this.boatSel = null; this.show = 'all';
     this.ringOpts = Object.assign({ count: 3, spacing: 'auto' }, opts && opts.rings || {});   // 1.0.4
     this.receiver = opts.receiver || { lat: LAX[1], lon: LAX[0], default: true };
     this.pending = false; this.ready = false;
@@ -209,13 +215,17 @@ export class AircraftMap {
     m.addControl(new maplibregl.ScaleControl({ unit: 'nautical', maxWidth: 90 }), 'bottom-right');
     await new Promise(res => m.once('load', res));
     ALT_COLORS.forEach((col, i) => m.addImage('plane-' + i, planeImage(col, i === 8 ? 0.6 : 1), { pixelRatio: 2 }));
-    const iconSize = touch ? 0.78 : 0.62;
+    const iconBase = touch ? 0.78 : 0.62, selBase = touch ? 24 : 20, offBase = touch ? 1.5 : 1.3;
+    const iconSize = iconBase / uiZoom();
 
     m.addSource('rings', { type: 'geojson', data: fc([]), maxzoom: 12, buffer: 32, tolerance: 0.5 });
     m.addSource('rcv', { type: 'geojson', data: fc([]), maxzoom: 12, buffer: 32, tolerance: 0.5 });
     m.addSource('lax', { type: 'geojson', data: fc([{ type: 'Feature', properties: { label: 'LAX' }, geometry: { type: 'Point', coordinates: LAX } }]) });
     m.addSource('trails', { type: 'geojson', data: fc([]), maxzoom: 12, buffer: 32, tolerance: 0.5 });
     m.addSource('ac', { type: 'geojson', data: fc([]), maxzoom: 12, buffer: 32, tolerance: 0.5 });
+    // 1.3.1 AIS boats (own source; drawn under the aircraft)
+    m.addSource('boats', { type: 'geojson', data: fc([]), maxzoom: 12, buffer: 32, tolerance: 0.5 });
+    m.addSource('boat-cog', { type: 'geojson', data: fc([]), maxzoom: 12, buffer: 32, tolerance: 0.5 });
     m.addLayer({ id: 'rings', type: 'line', source: 'rings', filter: ['has', 'nm'],
       paint: { 'line-color': '#4ade80', 'line-opacity': 0.3, 'line-width': 1.2, 'line-dasharray': [3, 4] } });
     m.addLayer({ id: 'ring-labels', type: 'symbol', source: 'rings', filter: ['has', 'label'],
@@ -229,8 +239,17 @@ export class AircraftMap {
       paint: { 'circle-radius': 6, 'circle-color': '#0b0f0c', 'circle-stroke-color': '#4ade80', 'circle-stroke-width': 3 } });
     m.addLayer({ id: 'trails', type: 'line', source: 'trails', layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': ['get', 'col'], 'line-width': touch ? 2.4 : 2, 'line-opacity': ['*', 0.6, ['get', 'op']] } });
+    m.addLayer({ id: 'boat-cog', type: 'line', source: 'boat-cog', layout: { 'line-cap': 'round' },
+      paint: { 'line-color': ['get', 'col'], 'line-width': 2, 'line-opacity': ['*', 0.8, ['get', 'op']] } });
+    m.addLayer({ id: 'boat', type: 'circle', source: 'boats',
+      paint: { 'circle-radius': ['case', ['==', ['get', 'sel'], 1], 9, 6], 'circle-color': ['get', 'col'], 'circle-opacity': ['get', 'op'],
+        'circle-stroke-color': ['case', ['==', ['get', 'sel'], 1], '#e6efe8', '#0b0f0c'], 'circle-stroke-width': 2, 'circle-stroke-opacity': ['get', 'op'] } });
+    m.addLayer({ id: 'boat-label', type: 'symbol', source: 'boats',
+      layout: { 'text-field': ['get', 'label'], 'text-font': ['Noto Sans Medium'], 'text-size': 13, 'text-anchor': 'top',
+        'text-offset': [0, 0.9], 'text-optional': true },
+      paint: { 'text-color': '#cfe3ff', 'text-halo-color': '#0b0f0c', 'text-halo-width': 1.5, 'text-opacity': ['get', 'op'] } });
     m.addLayer({ id: 'ac-sel', type: 'circle', source: 'ac', filter: ['==', ['get', 'sel'], 1],
-      paint: { 'circle-radius': touch ? 24 : 20, 'circle-color': 'rgba(74,222,128,0.14)', 'circle-stroke-color': '#4ade80', 'circle-stroke-width': 2 } });
+      paint: { 'circle-radius': selBase / uiZoom(), 'circle-color': 'rgba(74,222,128,0.14)', 'circle-stroke-color': '#4ade80', 'circle-stroke-width': 2 } });
     m.addLayer({ id: 'ac', type: 'symbol', source: 'ac',
       layout: { 'icon-image': ['concat', 'plane-', ['get', 'band']], 'icon-size': iconSize, 'icon-rotate': ['get', 'rot'],
         'icon-rotation-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
@@ -238,10 +257,14 @@ export class AircraftMap {
       paint: { 'icon-opacity': ['get', 'op'] } });
     m.addLayer({ id: 'ac-label', type: 'symbol', source: 'ac',
       layout: { 'text-field': ['get', 'label'], 'text-font': ['Noto Sans Medium'], 'text-size': 15,
-        'text-anchor': 'top', 'text-offset': [0, touch ? 1.5 : 1.3], 'text-line-height': 1.15, 'text-optional': true,
+        'text-anchor': 'top', 'text-offset': [0, offBase / uiZoom()], 'text-line-height': 1.15, 'text-optional': true,
         'symbol-sort-key': ['-', 0, ['get', 'sel']] },
       paint: { 'text-color': '#e6efe8', 'text-halo-color': '#0b0f0c', 'text-halo-width': 1.6, 'text-opacity': ['get', 'op'] } });
 
+    // follow Text size changes (nav.js fires resize): icons back to Normal size, label gap to match
+    window.addEventListener('resize', () => { try { const z = uiZoom();
+      m.setLayoutProperty('ac', 'icon-size', iconBase / z); m.setPaintProperty('ac-sel', 'circle-radius', selBase / z);
+      m.setLayoutProperty('ac-label', 'text-offset', [0, offBase / z]); if (this.onZoomUi) this.onZoomUi(z); } catch (e) {} });
     m.on('click', e => this._tap(e));
     m.on('dragstart', () => { if (this.follow) { this.follow = false; this.opts.onFollow && this.opts.onFollow(false); } });
     // 1.0.7 zoom-lag fix: while the map moves (pinch / wheel / ease) aircraft and ring data are NOT re-sent every
@@ -254,6 +277,7 @@ export class AircraftMap {
     this.ready = true;
     m.on('zoomend', () => { if (this.ringRaf) return; this.ringRaf = requestAnimationFrame(() => { this.ringRaf = 0; this.updateRings(); }); });
     this.setRings();
+    this.setShow(this.show);
     this.setReceiver(this.receiver);
     this._schedule();
     return this;
@@ -286,7 +310,7 @@ export class AircraftMap {
   }
   toggleLabels(on) {
     this.labels = on === undefined ? !this.labels : on;
-    this.map.setLayoutProperty('ac-label', 'visibility', this.labels ? 'visible' : 'none');
+    for (const id of ['ac-label', 'boat-label']) this.map.setLayoutProperty(id, 'visibility', this.labels && (id !== 'boat-label' || this.show !== 'aircraft') && (id !== 'ac-label' || this.show !== 'boats') ? 'visible' : 'none');
     return this.labels;
   }
   centerLAX() { this.follow = false; this.map.easeTo({ center: LAX, zoom: Math.max(this.map.getZoom(), 9.5), duration: 600 }); }
@@ -315,7 +339,12 @@ export class AircraftMap {
   _tap(e) {
     const r = touch ? 26 : 16;
     const hits = this.map.queryRenderedFeatures([[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]], { layers: ['ac'] });
-    if (!hits.length) { if (this.selected) this.select(null); return; }
+    if (!hits.length) {
+      const bh = this.show === 'aircraft' ? [] : this.map.queryRenderedFeatures([[e.point.x - r, e.point.y - r], [e.point.x + r, e.point.y + r]], { layers: ['boat'] });
+      if (bh.length) { if (this.selected) this.select(null); this.selectBoat(bh[0].properties.mmsi); return; }
+      if (this.selected) this.select(null); if (this.boatSel) this.selectBoat(null); return;
+    }
+    if (this.boatSel) this.selectBoat(null);
     let best = hits[0], bd = Infinity;
     for (const h of hits) {
       const p = this.map.project(h.geometry.coordinates), d = (p.x - e.point.x) ** 2 + (p.y - e.point.y) ** 2;
@@ -348,6 +377,44 @@ export class AircraftMap {
       if (a.lat != null) this.map.easeTo({ center: [a.lon, a.lat], padding: this._pad(), duration: 800 });
     }
     this._schedule();
+  }
+
+  // 1.3.1 AIS: feed /api/boats; show = 'all' | 'aircraft' | 'boats'
+  updateBoats(list) {
+    this.boats = new Map((list || []).map(b => [b.mmsi, b]));
+    if (this.boatSel && !this.boats.has(this.boatSel)) this.selectBoat(null);
+    else if (this.boatSel) this.opts.onBoat && this.opts.onBoat(this.boats.get(this.boatSel));
+    if (this.ready) this._renderBoats();
+  }
+  selectBoat(mmsi) {
+    this.boatSel = mmsi || null;
+    if (this.ready) this._renderBoats();
+    this.opts.onBoat && this.opts.onBoat(mmsi ? this.boats.get(mmsi) : null);
+  }
+  setShow(v) {
+    this.show = ['all', 'aircraft', 'boats'].includes(v) ? v : 'all';
+    if (!this.ready) return this.show;
+    const air = this.show !== 'boats', sea = this.show !== 'aircraft';
+    for (const id of ['ac', 'ac-sel', 'trails']) this.map.setLayoutProperty(id, 'visibility', air ? 'visible' : 'none');
+    for (const id of ['boat', 'boat-cog']) this.map.setLayoutProperty(id, 'visibility', sea ? 'visible' : 'none');
+    this.toggleLabels(this.labels);
+    if (!air && this.selected) this.select(null);
+    if (!sea && this.boatSel) this.selectBoat(null);
+    return this.show;
+  }
+  _renderBoats() {
+    const pts = [], vec = [];
+    for (const [mmsi, b] of this.boats || []) {
+      const col = BOAT_COLORS[b.kind] || BOAT_COLORS.other, sel = mmsi === this.boatSel ? 1 : 0;
+      pts.push({ type: 'Feature', properties: { mmsi, col, sel, op: b.op, label: trimName(b.name, 14) }, geometry: { type: 'Point', coordinates: [b.lon, b.lat] } });
+      if (typeof b.sog === 'number' && b.sog >= 0.5 && b.sog < 102 && typeof b.cog === 'number' && b.cog < 360) {
+        const nm = b.sog * 0.1, r = b.cog * Math.PI / 180;   // 6-minute course vector
+        const dlat = nm / 60 * Math.cos(r), dlon = nm / 60 * Math.sin(r) / Math.max(0.05, Math.cos(b.lat * Math.PI / 180));
+        vec.push({ type: 'Feature', properties: { col, op: b.op }, geometry: { type: 'LineString', coordinates: [[b.lon, b.lat], [b.lon + dlon, b.lat + dlat]] } });
+      }
+    }
+    this.map.getSource('boats').setData(fc(pts));
+    this.map.getSource('boat-cog').setData(fc(vec));
   }
 
   onMapCount() {

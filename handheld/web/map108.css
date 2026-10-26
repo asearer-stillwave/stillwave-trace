@@ -52,7 +52,7 @@ html.m108 .acard #aClose { width: 36px; padding: 0; }
 html.m108 .acard #aFollow.on, html.m108 .acard #aFollow[aria-pressed="true"] { background: var(--signal); color: #0b0f0c; box-shadow: 0 0 10px rgba(74, 222, 128, .55); }
 html.m108 .acard .agrid { display: grid; grid-template-columns: 1fr 1fr 1fr 1.3fr; gap: 4px 8px; margin: 0; }
 html.m108 .acard .agrid > div { min-width: 0; padding: 0; background: none; border: 0; }
-html.m108 .acard .agrid > div:nth-child(5) { display: none; }   /* hex is already in the title */
+html.m108 .acard:not(.bcard) .agrid > div:nth-child(5) { display: none; }   /* hex is already in the title */
 html.m108 .acard dt { font: 600 9.5px var(--mono, monospace); letter-spacing: .12em; text-transform: uppercase; color: rgba(163, 181, 169, .9); margin: 0; }
 html.m108 .acard dd { font: 700 13.5px var(--mono, monospace); color: #e7f5ec; margin: 0; white-space: nowrap; overflow: visible; text-shadow: 0 1px 2px #000; }
 @media (max-width: 480px) { html.m108 .acard dd { font-size: 12.5px; letter-spacing: -.01em; } html.m108 .acard .agrid { gap: 4px 6px; } }
