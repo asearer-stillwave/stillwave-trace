@@ -6,7 +6,7 @@ ALLOWED='^(sdr-fm|sdr-web|icecast2|nginx)$'
 MODE_BIN=/usr/local/sbin/sdr-mode
 case "$ACTION" in
   status)
-    for u in sdr-fm sdr-spectrum sdr-detect sdr-adsb sdr-web icecast2 nginx; do
+    for u in sdr-fm sdr-spectrum sdr-adsb sdr-ais sdr-web icecast2 nginx; do
       st="$(systemctl is-active "$u" 2>/dev/null || true)"
       echo "$u=${st:-unknown}"
     done
@@ -17,12 +17,17 @@ case "$ACTION" in
     systemctl restart "$UNIT"
     echo "restarted $UNIT"
     ;;
+  stop-radio)
+    # 1.3.2: Listen strip STOP while the Pi plays to the speaker: stop the FM/airband audio (mode stays fm)
+    systemctl stop sdr-fm
+    echo "stopped sdr-fm"
+    ;;
   restart-radio)
     systemctl restart icecast2 sdr-fm
     echo "restarted icecast2 sdr-fm"
     ;;
   restart-all)
-    # Restart whatever owns the dongle (fm / spectrum / detect / adsb) instead of forcing FM.
+    # Restart whatever owns the dongle (fm / spectrum / adsb) instead of forcing FM.
     # sdr-web goes last because it is the caller.
     systemctl restart icecast2 nginx
     "$MODE_BIN" restart || true

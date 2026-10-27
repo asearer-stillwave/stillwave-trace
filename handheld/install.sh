@@ -351,7 +351,7 @@ if ! command -v readsb >/dev/null 2>&1 && ! command -v dump1090-mutability >/dev
   echo "dump1090-mutability dump1090-mutability/use-lighttpd boolean false" | debconf-set-selections || true
   apt-get install -y --no-install-recommends readsb \
     || apt-get install -y --no-install-recommends dump1090-mutability \
-    || echo "WARNING: no ADS-B decoder package available; ADS-B mode will be disabled (FM, spectrum, detect still work)."
+    || echo "WARNING: no ADS-B decoder package available; ADS-B mode will be disabled (FM and spectrum still work)."
 fi
 if [[ -f /etc/default/dump1090-mutability ]]; then
   sed -i 's/^START_DUMP1090=.*/START_DUMP1090=no/' /etc/default/dump1090-mutability || true
@@ -362,7 +362,7 @@ done
 systemctl mask readsb.service >/dev/null 2>&1 || true
 # 1.2.8: the decoder must really drive an RTL-SDR. Raspberry Pi OS's readsb is built without rtlsdr; then build the
 # pinned upstream readsb with RTLSDR=yes into /usr/local/bin (binary only, no readsb service). Non-fatal.
-bash "$SRC/bin/sdr-adsb-fix" || echo "WARNING: ADS-B decoder not ready (map stays off; FM/Scan/Spectrum work). Later: sudo sdr-adsb-fix"
+bash "$SRC/bin/sdr-adsb-fix" || echo "WARNING: ADS-B decoder not ready (map stays off; FM/Spectrum work). Later: sudo sdr-adsb-fix"
 mark_step packages
 fi   # end of package installs (skipped by --upgrade)
 [[ "${TRACE_POLICY:-0}" == 1 ]] && rm -f /usr/sbin/policy-rc.d
@@ -378,7 +378,6 @@ rmmod dvb_usb_rtl28xxu rtl2832 rtl2830 2>/dev/null || true
 install -d -m 755 /usr/local/lib/sdr-station/bin /usr/local/lib/sdr-station/web /etc/sdr
 install -m 755 "$SRC/bin/fm_stream.sh" /usr/local/lib/sdr-station/bin/fm_stream.sh
 install -m 755 "$SRC/bin/sdr-select-station" /usr/local/sbin/sdr-select-station
-install -m 755 "$SRC/bin/sdr-scan" /usr/local/sbin/sdr-scan
 install -m 755 "$SRC/bin/sdr-tune-freq" /usr/local/sbin/sdr-tune-freq
 install -m 755 "$SRC/bin/sdr-fm-env" /usr/local/sbin/sdr-fm-env          # 1.0.8.2: safe fm.env writer + self-heal
 install -m 755 "$SRC/bin/sdr-add-station" /usr/local/sbin/sdr-add-station
@@ -416,7 +415,7 @@ if [[ -s "$SRC/vendor/aircraft-db/aircraft.csv.gz" ]]; then
   /usr/local/sbin/sdr-aircraft-db install-local /usr/local/lib/sdr-station/vendor/aircraft-db/aircraft.csv.gz \
     || echo "WARNING: aircraft model database not built; the map shows no aircraft models (try: sudo sdr-aircraft-db fetch)"
 fi
-for u in sdr-net-retry.service sdr-net-retry.timer sdr-firstboot-done.service sdr-firstboot-done.timer; do install -m 644 "$SRC/systemd/$u" /etc/systemd/system/$u; done
+for u in sdr-net-retry.service sdr-net-retry.timer sdr-net-watch.service sdr-firstboot-done.service sdr-firstboot-done.timer; do install -m 644 "$SRC/systemd/$u" /etc/systemd/system/$u; done
 install -m 755 "$SRC/bin/fieldnote-display-setup" /usr/local/sbin/fieldnote-display-setup
 ln -sfn fieldnote-display-setup /usr/local/sbin/trace-display-setup   # alias (same script; internal names stay fieldnote-*)
 install -m 755 "$SRC/bin/adsb_run.sh" /usr/local/lib/sdr-station/bin/adsb_run.sh
@@ -490,6 +489,15 @@ install -m 644 "$SRC/web/radio_control.py" /usr/local/lib/sdr-station/web/radio_
 for f in "$SRC"/web/*.html "$SRC"/web/*.js "$SRC"/web/*.css; do install -m 644 "$f" /usr/local/lib/sdr-station/web/; done   # 1.0.8: every page
 rm -f /usr/local/lib/sdr-station/web/advanced.html   # 1.2.8: Tuner page removed (/advanced redirects to Listen)
 rm -f /usr/local/lib/sdr-station/web/dashboard.html   # 1.0.8: desktop dashboard removed
+# 1.3.2: Scan tab + hidden one-shot FM scan removed (FCC): stop, disable and delete the detect unit, page and helper
+systemctl stop sdr-detect.service >/dev/null 2>&1 || true
+systemctl disable sdr-detect.service >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/sdr-detect.service /usr/local/sbin/sdr-scan /usr/local/lib/sdr-station/web/detect.html
+systemctl daemon-reload >/dev/null 2>&1 || true
+if grep -q '^MODE=detect$' /etc/sdr/mode.env 2>/dev/null; then sed -i 's/^MODE=detect$/MODE=spectrum/' /etc/sdr/mode.env; fi
+if grep -q '^OFF_RESUME=detect$' /etc/sdr/mode.env 2>/dev/null; then sed -i 's/^OFF_RESUME=detect$/OFF_RESUME=spectrum/' /etc/sdr/mode.env; fi
+if grep -q '^BOOT_MODE=detect$' /etc/sdr/mode.env 2>/dev/null; then sed -i 's/^BOOT_MODE=detect$/BOOT_MODE=spectrum/' /etc/sdr/mode.env; fi
+for f in "$SRC"/web/*.json; do [[ -f "$f" ]] && install -m 644 "$f" /usr/local/lib/sdr-station/web/; done   # 1.3.2: aircraft_types.json, airports
 install -m 644 "$SRC/web/sdr_scope.py" /usr/local/lib/sdr-station/web/sdr_scope.py
 install -d -m 755 /usr/local/lib/sdr-station/web/fonts   # UI fonts (Anton, JetBrains Mono; SIL OFL 1.1, bundled, offline)
 for f in anton-latin.woff2 jetbrainsmono-latin.woff2 OFL-Anton.txt OFL-JetBrainsMono.txt README.txt; do
@@ -563,9 +571,11 @@ chown root:"$RUN_GROUP" /etc/sdr/fm.env /etc/sdr/stations.conf
 chmod 644 /etc/sdr/fm.env /etc/sdr/stations.conf
 # 1.0.8.2: restore any stream key an older Listen save dropped (password from icecast.xml, installer defaults otherwise)
 /usr/local/sbin/sdr-fm-env heal || true
+# 1.3.2: FM filters are now 50/60/70/80 Hz and 6k/7k/8k/9k: snap saved values (8500 -> 8000, others to the nearest)
+/usr/local/sbin/sdr-listen migrate >/dev/null 2>&1 || true
 SOURCE_PW="$(awk -F= '/^ICECAST_SOURCE_PASSWORD=/{print $2; exit}' /etc/sdr/fm.env || true)"
 
-# Dongle mode (fm / spectrum / detect / adsb). Default fm = same behavior as before.
+# Dongle mode (fm / spectrum / adsb). Default fm = same behavior as before.
 if [[ ! -f /etc/sdr/mode.env ]]; then
   install -m 644 "$SRC/config/mode.env.example" /etc/sdr/mode.env
 else
@@ -585,7 +595,7 @@ sed -e "s/^\\[Service\\]/[Service]\\nUser=${RUN_USER}\\nGroup=${RUN_GROUP}/" \
   "$SRC/systemd/sdr-fm.service" > /etc/systemd/system/sdr-fm.service
 sed -e "s/^\\[Service\\]/[Service]\\nUser=${RUN_USER}\\nGroup=${RUN_GROUP}/" \
   "$SRC/systemd/sdr-web.service" > /etc/systemd/system/sdr-web.service
-for u in sdr-spectrum sdr-detect sdr-adsb sdr-adsb-dual; do   # 1.0.9: + dual-dongle map unit
+for u in sdr-spectrum sdr-adsb sdr-adsb-dual; do   # 1.0.9: + dual-dongle map unit
   sed -e "s/^\\[Service\\]/[Service]\\nUser=${RUN_USER}\\nGroup=${RUN_GROUP}/" \
     "$SRC/systemd/$u.service" > "/etc/systemd/system/$u.service"
 done
@@ -625,7 +635,7 @@ sed -e "s/FIELDNOTE_UID/${AUDIO_UID:-0}/g" "$SRC/systemd/sdr-bt-reconnect.servic
 [[ -n "$AUDIO_UID" ]] || sed -i 's/ user@0.service//' /etc/systemd/system/sdr-bt-reconnect.service
 
 cat >/etc/sudoers.d/sdr-station <<EOF
-${RUN_USER} ALL=(root) NOPASSWD: /usr/local/sbin/sdr-select-station, /usr/local/sbin/sdr-scan, /usr/local/sbin/sdr-tune-freq, /usr/local/sbin/sdr-add-station, /usr/local/sbin/sdr-apply-settings, /usr/local/sbin/sdr-save-preset, /usr/local/sbin/sdr-delete-preset, /usr/local/sbin/sdr-net-mode, /usr/local/sbin/sdr-svc, /usr/local/sbin/sdr-mode, /usr/local/sbin/sdr-bt, /usr/local/sbin/sdr-maps, /usr/local/sbin/sdr-update, /usr/local/sbin/sdr-screen, /usr/local/sbin/sdr-listen, /usr/local/sbin/sdr-usb-reset, /usr/local/sbin/sdr-dongles, /usr/local/sbin/sdr-aircraft-db, /usr/local/sbin/sdr-content, /usr/local/sbin/sdr-shot, /usr/local/sbin/sdr-power reboot, /usr/local/sbin/sdr-power poweroff
+${RUN_USER} ALL=(root) NOPASSWD: /usr/local/sbin/sdr-select-station, /usr/local/sbin/sdr-tune-freq, /usr/local/sbin/sdr-add-station, /usr/local/sbin/sdr-apply-settings, /usr/local/sbin/sdr-save-preset, /usr/local/sbin/sdr-delete-preset, /usr/local/sbin/sdr-net-mode, /usr/local/sbin/sdr-svc, /usr/local/sbin/sdr-mode, /usr/local/sbin/sdr-bt, /usr/local/sbin/sdr-maps, /usr/local/sbin/sdr-update, /usr/local/sbin/sdr-screen, /usr/local/sbin/sdr-listen, /usr/local/sbin/sdr-usb-reset, /usr/local/sbin/sdr-dongles, /usr/local/sbin/sdr-aircraft-db, /usr/local/sbin/sdr-content, /usr/local/sbin/sdr-shot, /usr/local/sbin/sdr-power reboot, /usr/local/sbin/sdr-power poweroff
 EOF
 chmod 440 /etc/sudoers.d/sdr-station
 
@@ -672,10 +682,12 @@ rm -f /etc/systemd/system/multi-user.target.wants/sdr-fm.service
 systemctl daemon-reload
 systemctl enable icecast2 sdr-web sdr-net sdr-mode nginx
 systemctl enable sdr-ais.service >/dev/null 2>&1 || true   # 1.3.1: exits at once without an AIS dongle
+systemctl try-restart sdr-ais.service >/dev/null 2>&1 || true   # 1.3.2: pick up "-X off" (no aiscatcher.org community feed)
 # 1.2.0: the first-boot grace is a timer now (the old service slept 10 min inside multi-user.target)
 systemctl disable sdr-firstboot-done.service >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/multi-user.target.wants/sdr-firstboot-done.service
 systemctl enable sdr-net-retry.timer sdr-firstboot-done.timer >/dev/null 2>&1 || true
+systemctl enable sdr-net-watch.service >/dev/null 2>&1 || true; systemctl try-restart sdr-net-watch.service >/dev/null 2>&1 || systemctl start sdr-net-watch.service >/dev/null 2>&1 || true   # 1.3.2 auto-join drop watchdog
 [[ $UPGRADE -eq 0 ]] && { install -d -m 755 /var/lib/sdr-station; touch /var/lib/sdr-station/first-boot; }   # no hotspot fallback during the first boot
 systemctl enable sdr-bt-reconnect >/dev/null 2>&1 || true
 systemctl enable sdr-screen sdr-screen-final >/dev/null 2>&1 || echo "WARNING: could not enable sdr-screen"
@@ -723,7 +735,6 @@ echo "Same page via Icecast:    http://${IP:-HOST}:8000/radio.html"
 echo "Direct Flask:             http://${IP:-HOST}:8080/"
 echo "Stream:                   http://${IP:-HOST}:8000/live.mp3"
 echo "Spectrum / waterfall:     http://${IP:-HOST}/spectrum"
-echo "RF detect:                http://${IP:-HOST}/detect"
 echo "ADS-B aircraft:           http://${IP:-HOST}/adsb   (decoder: $(/usr/local/lib/sdr-station/bin/adsb_run.sh --which 2>/dev/null || echo 'not installed'))"
 [[ $UPGRADE -eq 1 ]] || echo "Icecast admin:            http://${IP:-HOST}:8000/admin/  user=admin pass=${ADMIN_PW}"
 echo "By name (mDNS):           http://$(hostname).local/"
@@ -832,6 +843,17 @@ if [[ "$(systemctl is-enabled dnsmasq 2>/dev/null)" == "enabled" ]] \
    && ! grep -hvE '^[[:space:]]*(#|$)' /etc/dnsmasq.conf /etc/dnsmasq.d/*.conf 2>/dev/null | grep -q .; then
   systemctl disable --now dnsmasq >/dev/null 2>&1 && echo "Disabled the unused system dnsmasq service (hotspot DHCP uses NetworkManager's own)."
 fi
+# 1.3.2: http://trace-xxxx.local/ - a unit still on a stock name (raspberrypi / SDRpi / trace) is renamed to
+# trace-<last 4 of the board serial>, matching its TRACE-XXXX hotspot. A name you chose yourself is kept.
+HN_NOW="$(hostname -s 2>/dev/null || true)"
+case "${HN_NOW,,}" in raspberrypi|sdrpi|trace|"")
+  HN_SFX="$(/usr/local/sbin/sdr-net-mode default-ssid 2>/dev/null | tail -n1 | sed -n 's/^TRACE-\([0-9A-Fa-f]\{4\}\)$/\1/p' | tr 'A-F' 'a-f')"
+  if [[ -n "$HN_SFX" ]]; then
+    hostnamectl set-hostname "trace-$HN_SFX" >/dev/null 2>&1 || echo "trace-$HN_SFX" >/etc/hostname
+    if grep -q '^127\.0\.1\.1' /etc/hosts; then sed -i "s/^127\.0\.1\.1.*/127.0.1.1\ttrace-$HN_SFX/" /etc/hosts; else printf '127.0.1.1\ttrace-%s\n' "$HN_SFX" >>/etc/hosts; fi
+    echo "Hostname: trace-$HN_SFX (http://trace-$HN_SFX.local/)"
+  fi ;;
+esac
 systemctl enable --now avahi-daemon >/dev/null 2>&1 || true   # http://$(hostname).local
 # Record what the Pi is doing right now (on Wi-Fi -> MODE=wifi) so neither this install nor
 # the next reboot flips it into hotspot mode.

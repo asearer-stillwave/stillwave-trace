@@ -5,6 +5,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.3.2] and [1.3.2-desktop] - 2026-10-26 (PT) - Airport follows the map, Wi-Fi auto-join, Scan removed, AIS fixes (13 items); both editions
+### Added
+- **Airport button follows the map.** `ICAO ▾` replaces CENTER LAX (and the KLAX pill). It shows the airport nearest the map center. Tap the code to center on it (with two radios this opens airport focus). Tap ▾ for nearby airports with distances in nm. CENTER ME stays. US airports come from the FAA station bank, Europe from OurAirports (public domain, bundled `web/airports_eu.json`: 466 scheduled-service airports). Frequencies are never invented. With no published tower, ground, approach or ATIS frequencies, Quick Tune says so and stays off. API: `GET /api/airports?lat=&lon=` (web/airports.py).
+- **Quick Tune** header `ICAO ▾ · follows the map`, with short tabs TWR / GND / APP / ATIS. Bearing sectors are kept only when every frequency of that kind has one (KLAX: APP NW / SE / NE). If some do and some don't (KSBA, KBUR), that kind is numbered (APP 1, APP 2…). A raw range like `APP 151-329` never shows.
+- **Auto-join known Wi‑Fi** (Settings › Network, on by default). At boot Trace scans once and joins a saved network heard at about −67 dBm (3 bars) or better. Otherwise it starts the TRACE-XXXX hotspot, and any failure also ends on the hotspot. While auto-joined, `sdr-net-watch.service` brings the hotspot back after 30 s without Wi‑Fi. Saved networks are listed with bars, dBm and JOINED / TOO WEAK / NOT SEEN, plus FORGET (`/api/net/wifi-auto`). Passwords are never shown. A unit still on a stock hostname becomes `trace-xxxx` (`http://trace-xxxx.local/`, avahi enabled).
+- **One top chip per SDR with live status**: Live, Tuning… (amber), No signal, Reconnecting…, Switching… and No radio (red). "No signal" is for NOAA only: the weather channel is a continuous broadcast, so no decoded audio for 20 s means no signal. Airband silence is normal and FM with no carrier is hiss, so neither is flagged.
+- **Aircraft icons by type**: heavy, airliner, regional, bizjet, turboprop, light, helicopter (lighter rotor) and other. Drawn for Trace. The type comes from an ICAO type table (`web/aircraft_types.json`), with the ADS‑B emitter category as the fallback.
+- **Boat hull icons** (option B). The hull points along the heading (or course), with a wake mark when moving.
+- **Gear panel APPLY / CANCEL** for FM and Airband. Changed options are striped amber, with "● N changes pending · radio not retuned yet". NOAA still saves on tap.
+- **Download maps**: an SD card bar (system / maps / downloading / free), short labels, one Download button per pack, a "Won't fit" warning and a "Too big" tag before you tap, and a disabled `USA street level · z14 · ~8.8 GB · coming soon` row.
+### Changed
+- **FM filters**: high-pass 50 / 60 / 70 / 80 Hz (default 50), low-pass 6K / 7K / 8K / 9K (default 8000). Saved values are migrated on upgrade (`sdr-listen migrate`): 8500 becomes 8000, and anything else snaps to the nearest option.
+- **FM presets** use the Airband / NOAA preset card style.
+- **AIS install** (`sdr-ais-fix`): runs apt-get update, then `apt-get --fix-broken install`, then checks for 600 MB free on / and /tmp with a clear message, then installs.
+### Removed
+- **Scan / detect.** The page, `sdr-scan`, `sdr-detect.service` and `/api/scan` are gone. The upgrade stops, disables and removes sdr-detect. A saved `MODE=detect` falls back to spectrum. `/scan` and `/detect` redirect to Spectrum. Spectrum tap-to-listen and `/api/scope` stay.
+### Fixed
+- **AIS community feed off.** AIS-catcher v0.70 turns on sharing to aiscatcher.org (185.77.96.227:4242) by default when outputs are configured. `ais_run.sh` now passes `-X off`. Tested on the v0.70 binary: without the flag it logs "TCP feed … 185.77.96.227 … connected"; with it, "Community feed sharing disabled." 1.3.1 units sent AIS data to that feed.
+- **Listen strip** now shows what the Pi itself plays. With AUDIO_OUT=speaker, fm_stream.sh plays through PipeWire on the Pi with no browser stream, and the strip only looked at the browser player. Stop also stops the Pi.
+- **Desktop XL**: the boats toggle no longer clips or overlaps the altitude legend, and the Quick Tune panel no longer covers the MAP / LIST pill.
+
 ## [1.3.1] and [1.3.1-desktop] - 2026-10-25 (PT) - Splash on Pi OS, AIS boats, map regions, audio filters (12 items); both editions
 ### Added
 - **AIS boats on the map.** Give a dongle the new **Boats · AIS** job (Settings › Radios). The unit then builds the AIS-catcher decoder (v0.70, pinned commit 8833c64, GPL-3.0) from source, which needs internet once (`sudo sdr-ais-fix`). After that `sdr-ais.service` decodes both AIS channels on that dongle and serves them on 127.0.0.1:8100 only. The map shows boats as dots colored by type (cargo, tanker, passenger, fishing, tug, sail, other), with a 6‑minute course line and names cut to 14 characters with "…". Tap a boat for its details card. An **All / Aircraft / Boats** button appears once a boat has been heard. Boats fade after 3 min and drop off after 10 min (`GET /api/boats`). AIS needs its own dongle. With map + AIS, Listen shares the map dongle.

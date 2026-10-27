@@ -1,7 +1,7 @@
 // Stillwave Trace 1.0.8: single-load app. "/" is the shell (app.html): status strip + nav are built once and each tab
 // lives in its own same-origin frame that stays loaded, so switching tabs is instant (no page reload) and the map keeps
 // its instance. The shell runs the one live-update loop (/api/strip) and forwards it to the frames.
-// Pages opened on their own (/scan, /adsb, ...) jump into the shell (/#/scan) unless ?standalone=1.
+// Pages opened on their own (/listen, /adsb, ...) jump into the shell (/#/listen) unless ?standalone=1.
 // Status strip (top) + tab bar (bottom on phones / 5" kiosk, side rail on iPad / desktop).
 // Load it as the FIRST thing in <body> (<script src="/nav.js"></script>) so both bars exist before
 // the page paints. Tabs only navigate; they never change what the SDR is doing (that stays in the
@@ -40,7 +40,7 @@
     sizes: TS, get: tsGet,
     set(k) { if (!TS[k]) return; try { localStorage.setItem('traceTextSize', k); } catch (e) {} tsApply(); window.dispatchEvent(new Event('resize')); }
   };
-  const TAB_ROOT = { '/listen': 'listen', '/radio': 'listen', '/adsb': 'map', '/scan': 'scan', '/detect': 'scan', '/spectrum': 'spectrum', '/more': 'settings', '/settings': 'settings' };
+  const TAB_ROOT = { '/listen': 'listen', '/radio': 'listen', '/adsb': 'map', '/scan': 'spectrum', '/detect': 'spectrum', '/spectrum': 'spectrum', '/more': 'settings', '/settings': 'settings' };
   let SH = null;
   try { SH = (window.parent !== window && window.parent.fieldnoteShell) || null; } catch (e) { SH = null; }
   if (SH) {                                                  // ---- a page inside the shell: no own chrome, no own polling ----
@@ -73,7 +73,6 @@
     radio: svg('<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M7 8l10-5"/><circle cx="15.5" cy="14" r="2.5"/><path d="M6.5 12h4M6.5 15.5h4"/>'),
     map: svg('<path d="M21 15.5v-1.8l-7.5-4.6V4a1.5 1.5 0 0 0-3 0v5.1L3 13.7v1.8l7.5-2.3v4.6l-2 1.5V21l3.5-1 3.5 1v-1.7l-2-1.5v-4.6z"/>', true),
     spectrum: svg('<path d="M2 20h20M4.5 20v-6M8.5 20V7M12.5 20v-9M16.5 20V4M20.5 20v-7"/>'),
-    detect: svg('<circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2"/>'),
     dash: svg('<rect x="3" y="3" width="11" height="18" rx="1.5"/><rect x="16" y="3" width="5" height="8" rx="1"/><rect x="16" y="13" width="5" height="8" rx="1"/>'),
     settings: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
     wifi: svg('<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.4a9.5 9.5 0 0 1 13 0M8.6 15.7a5 5 0 0 1 6.8 0"/><circle cx="12" cy="19" r="1.2" fill="currentColor"/>'),
@@ -86,16 +85,14 @@
   const TABS = [   // 1.0.8 order
     { id: 'listen', href: '/listen', label: 'Listen' },
     { id: 'map', href: '/adsb', label: 'Map' },
-    { id: 'scan', href: '/scan', label: 'Scan' },
     { id: 'spectrum', href: '/spectrum', label: 'Spectrum' },
     { id: 'settings', href: '/settings', label: 'Settings' }
   ];
-  ICON.scan = ICON.detect;
-  const PAGE_TAB = { 'listen': 'listen', 'radio': 'listen', 'adsb': 'map', 'spectrum': 'spectrum', 'scan': 'scan', 'detect': 'scan',
+  const PAGE_TAB = { 'listen': 'listen', 'radio': 'listen', 'adsb': 'map', 'spectrum': 'spectrum', 'scan': 'spectrum', 'detect': 'spectrum',
                      'more': 'settings', 'settings': 'settings', 'presets': 'settings', 'network': 'settings', 'system': 'settings', 'audio': 'settings', 'updates': 'settings', 'screen': 'settings', 'dongles': 'settings', 'shots': 'settings', 'maps': 'settings', 'stations': 'settings', 'about': 'settings', 'roles': 'settings' };
-  const MODE_TAB = { fm: 'listen', adsb: 'map', spectrum: 'spectrum', detect: 'scan' };
-  const MODE_NAME = { fm: 'FM radio', adsb: 'ADS-B', spectrum: 'Spectrum', detect: 'Scan' };
-  const MODE_PAGE = { fm: '/listen', adsb: '/adsb', spectrum: '/spectrum', detect: '/scan' };
+  const MODE_TAB = { fm: 'listen', adsb: 'map', spectrum: 'spectrum' };   // 1.3.2: Scan removed
+  const MODE_NAME = { fm: 'FM radio', adsb: 'ADS-B', spectrum: 'Spectrum' };
+  const MODE_PAGE = { fm: '/listen', adsb: '/adsb', spectrum: '/spectrum' };
   const page = location.pathname.replace(/^\/+|\.html$|\/+$/g, '');
   let here = IS_SHELL ? 'map' : (PAGE_TAB[page] || 'settings');
 
@@ -103,9 +100,9 @@
   const strip = D.createElement('header');
   strip.className = 'qstrip'; strip.id = 'qstrip'; strip.setAttribute('aria-label', 'Trace status');
   strip.innerHTML =
-    '<a class="qs-chip qs-job" id="qsJob" href="/settings">' +
-      '<span class="qs-dot unk" id="qsDot"></span>' +
-      '<span class="qs-txt"><span class="qs-k" id="qsJobK">SDR</span><span class="qs-v dash" id="qsJobV">—</span></span></a>' +
+    '<span class="qs-jobs" id="qsJobs"><a class="qs-chip qs-job" id="qsJob" href="/settings">' +
+      '<span class="qs-dot unk"></span>' +
+      '<span class="qs-txt"><span class="qs-k">SDR</span><span class="qs-v dash">—</span></span></a></span>' +
     '<a class="qs-chip qs-net" id="qsNet" href="/network">' +
       '<span class="qs-ico off" id="qsNetI">' + ICON.net + '</span>' +
       '<span class="qs-txt"><span class="qs-k" id="qsNetK">Network</span><span class="qs-v dash" id="qsNetV">—</span></span></a>' +
@@ -162,63 +159,80 @@
     }
     if (mode === 'adsb' && typeof m.count === 'number') return [m.count + ' aircraft', m.count + ' aircraft'];
     if (mode === 'spectrum' && mhz(m.center_hz, 2)) return [mhz(m.center_hz, 2) + ' MHz', mhz(m.center_hz, 3) + ' MHz'];
-    if (mode === 'detect' && mhz(m.start_hz, 0) && mhz(m.stop_hz, 0)) {
-      const r = trimMhz(mhz(m.start_hz, 1)) + '–' + trimMhz(mhz(m.stop_hz, 1)) + ' MHz';
-      return [r, r];
-    }
     return null;
   }
-  // 1.2.5: two radios (roles saved by serial): the job chip shows both, "ADS-B ✓ / Airband ✓"; a missing one turns amber
-  function renderDual() {
-    const rd = S && S.radios, md = S && S.mode;
-    if (!rd || !(rd.dual || rd.degraded) || busyTo || (md && md.off)) return false;
-    const dot = $('qsDot'), job = $('qsJob'), miss = rd.missing || [], mode = md && md.mode;
-    const adsbOk = !miss.includes('adsb'), radioOk = !miss.includes('radio');
-    const live = !!(md && md.adsb_live);
-    const rjob = (mode === 'fm' && S.metric && S.metric.band === 'airband') ? 'Airband' : (mode === 'fm' && S.metric && S.metric.band === 'noaa') ? 'NOAA'
-      : (mode && MODE_NAME[mode] && mode !== 'adsb') ? MODE_NAME[mode] : 'Airband';
-    $('qsJobK').textContent = 'ADS-B ' + (adsbOk ? (live ? '✓' : '–') : '✕');
-    text('qsJobV', rjob + ' ' + (radioOk ? (mode && mode !== 'adsb' && mode !== 'none' ? '✓' : '–') : '✕'), null, radioOk ? '' : 'warn');
-    job.classList.add('dual-chip'); job.classList.toggle('warn', !(adsbOk && radioOk));
-    dot.className = 'qs-dot ' + (adsbOk && radioOk ? 'ok' : 'warn');
-    job.href = '/dongles'; job.title = '';
-    job.setAttribute('aria-label', 'Radios: ADS-B ' + (adsbOk ? (live ? 'running' : 'idle') : 'missing') + ', ' + rjob + ' ' + (radioOk ? 'ready' : 'missing') + '. Open Radio roles.');
-    tabs.querySelectorAll('.qlive').forEach(x => x.remove());
-    ['map', MODE_TAB[mode]].forEach(id => { const t = id && (id !== 'map' || live) && tabs.querySelector('[data-tab="' + id + '"]'); if (t && !t.querySelector('.qlive')) { const i = D.createElement('i'); i.className = 'qlive'; t.appendChild(i); } });
-    return true;
+  // 1.3.2: one chip per SDR (USB order): "SDR 1 · ADS-B / 59 AC", "SDR 2 · FM / Tuning…" (amber) -> "Live 98.7" (green);
+  // errors in red use the app's own words (Reconnecting… / No radio / Switching… / No signal). AIS: "SDR 2 · AIS / 4 boats".
+  // One dongle = one chip. Live status comes from /api/strip "live" (radio_control.strip_live).
+  const ROLE_NAME = { adsb: 'ADS-B', ais: 'AIS', radio: 'Radio', spare: 'Spare' };
+  function radioJob(mode) {
+    const m = S && S.metric;
+    if (mode === 'fm') return (m && m.band === 'airband') ? 'Airband' : (m && m.band === 'noaa') ? 'NOAA' : 'FM';
+    return MODE_NAME[mode] || 'Radio';
+  }
+  function radioState(mode) {   // -> [text, class, dot]
+    const lv = S && S.live, m = S && S.metric;
+    if (busyTo) return ['Switching…', 'err', 'err'];
+    if (mode === 'fm') {
+      const st = lv && lv.radio, f = m && typeof m.mhz === 'number' ? (m.band === 'fm' || !m.band ? m.mhz.toFixed(1) : m.mhz.toFixed(3)) : '';
+      if (st === 'tuning') return ['Tuning…', 'warn', 'warn'];
+      if (st === 'live') return ['Live ' + f, 'live', 'ok'];
+      if (st === 'nosignal') return ['No signal', 'err', 'err'];
+      if (st === 'reconnecting') return ['Reconnecting…', 'err', 'err'];
+      if (st === 'off') return ['Off', 'dash', ''];
+      const mt = metricText(mode, m); return mt ? [mt[0], '', 'ok'] : ['—', 'dash', 'unk'];
+    }
+    if (mode === 'adsb') { const n = (lv && lv.adsb_count != null) ? lv.adsb_count : (m && m.count); return n != null ? [n + ' AC', 'live', 'ok'] : ['—', 'dash', 'unk']; }
+    const mt = metricText(mode, m); return mt ? [mt[0], 'live', 'ok'] : ['—', 'dash', 'unk'];
+  }
+  function chipHTML(c, first) {
+    return '<a class="qs-chip qs-job qs-sdr' + (c.cls === 'err' ? ' err' : c.cls === 'warn' ? ' warn' : '') + '"' + (first ? ' id="qsJob"' : '') + ' href="' + c.href + '" aria-label="' + c.aria.replace(/"/g, '') + '">' +
+      '<span class="qs-dot ' + c.dot + '"></span><span class="qs-txt"><span class="qs-k"></span><span class="qs-v ' + c.cls + '"></span></span></a>';
   }
   function renderJob() {
-    const md = S && S.mode, mode = md && md.mode;
-    const dot = $('qsDot'), job = $('qsJob');
-    if (renderDual()) return;
-    job.classList.remove('dual-chip', 'warn');
-    let k = 'SDR', v = ['—'], cls = 'dash', d = 'unk', label;
-    if (busyTo) {
-      k = 'SDR'; v = ['Switching…', 'Switching to ' + (MODE_NAME[busyTo] || busyTo) + '…']; cls = 'warn'; d = 'warn';
-    } else if (md && MODE_NAME[mode]) {
-      k = MODE_NAME[mode]; d = 'ok';
-      if (mode === 'fm' && S.metric && S.metric.band === 'airband') k = 'Airband';
-      else if (mode === 'fm' && S.metric && S.metric.band === 'noaa') k = 'NOAA';
-      const mt = metricText(mode, S.metric);
-      if (mt) { v = mt; cls = ''; } else { v = ['—']; cls = 'dash'; }
-    } else if (md && md.off) {
-      k = 'SDR'; v = ['Off', 'Off']; cls = 'dash'; d = '';
-    } else if (md && md.dongles === 0) {
-      k = 'SDR'; v = ['No radio', 'No radio detected']; cls = 'warn'; d = 'warn';
-    } else if (md && mode === 'none') {
-      k = 'SDR'; v = ['Off', 'Off (nothing running)']; cls = 'dash'; d = '';
+    const md = S && S.mode, mode = md && md.mode, rd = S && S.radios, lv = S && S.live, box = $('qsJobs');
+    const chips = [];
+    const dl = rd && Array.isArray(rd.dongles) ? rd.dongles : null;
+    if (md && md.off) chips.push({ k: 'SDR', v: 'Off', cls: 'dash', dot: '', href: '/dongles' });
+    else if ((md && md.dongles === 0) || (dl && dl.length === 0)) chips.push({ k: 'SDR', v: 'No radio', cls: 'err', dot: 'err', href: '/dongles' });
+    else if (!dl || dl.length <= 1 || !(rd.dual || rd.degraded || dl.some(d => d.role === 'ais'))) {
+      // one dongle (or roles not set up): one chip for whatever the SDR is doing
+      if (!md) chips.push({ k: 'SDR', v: busyTo ? 'Switching…' : '—', cls: busyTo ? 'err' : 'dash', dot: busyTo ? 'err' : 'unk', href: '/settings' });
+      else if (mode === 'none' && !busyTo) chips.push({ k: 'SDR', v: 'Off', cls: 'dash', dot: '', href: '/settings' });
+      else { const [v, cls, dot] = radioState(mode); chips.push({ k: 'SDR · ' + (mode === 'adsb' ? 'ADS-B' : radioJob(mode)), v, cls, dot, href: MODE_PAGE[mode] || '/settings' }); }
+    } else {
+      const miss = rd.missing || [];
+      dl.forEach((d, i) => {
+        const n = 'SDR ' + (i + 1) + ' · ';
+        if (d.role === 'adsb') {
+          const c = lv && lv.adsb_count;
+          chips.push(c != null ? { k: n + 'ADS-B', v: c + ' AC', cls: 'live', dot: 'ok', href: '/adsb' } : { k: n + 'ADS-B', v: md && md.adsb_live ? '—' : 'Off', cls: 'dash', dot: md && md.adsb_live ? 'unk' : '', href: '/adsb' });
+        } else if (d.role === 'ais') {
+          const a = lv && lv.ais;
+          chips.push(a && a.live ? { k: n + 'AIS', v: a.n + (a.n === 1 ? ' boat' : ' boats'), cls: 'live', dot: 'ok', href: '/adsb' } : { k: n + 'AIS', v: 'Reconnecting…', cls: 'err', dot: 'err', href: '/dongles' });
+        } else if (d.role === 'radio') {
+          if (mode === 'adsb' || mode === 'none' || !mode) chips.push({ k: n + 'Radio', v: busyTo ? 'Switching…' : 'Off', cls: busyTo ? 'err' : 'dash', dot: busyTo ? 'err' : '', href: '/listen' });
+          else { const [v, cls, dot] = radioState(mode); chips.push({ k: n + radioJob(mode), v, cls, dot, href: MODE_PAGE[mode] || '/listen' }); }
+        } else chips.push({ k: n + (ROLE_NAME[d.role] || 'Spare'), v: 'Spare', cls: 'dash', dot: '', href: '/dongles' });
+      });
+      miss.forEach(r => chips.push({ k: 'SDR · ' + (ROLE_NAME[r] || r), v: 'No radio', cls: 'err', dot: 'err', href: '/dongles' }));
     }
-    $('qsJobK').textContent = k;
-    text('qsJobV', v[0], v[1], cls);
-    dot.className = 'qs-dot ' + d;
-    job.href = (md && MODE_PAGE[mode]) || '/settings';
-    job.title = (mode === 'fm' && S.metric && S.metric.name) ? 'FM radio: ' + S.metric.name : '';
-    label = 'SDR job: ' + (md ? (MODE_NAME[mode] || (mode === 'none' ? 'off' : 'unknown')) : 'unknown') + (cls ? '' : ', ' + (v[1] || v[0]));
-    job.setAttribute('aria-label', busyTo ? 'SDR job: switching' : label);
-    // live dot on the tab whose job the SDR is doing (status only; tabs never switch modes)
+    chips.forEach(c => { c.aria = c.k + ': ' + c.v; });
+    const sig = JSON.stringify(chips);
+    if (box.dataset.sig !== sig) {
+      box.dataset.sig = sig;
+      box.innerHTML = chips.map((c, i) => chipHTML(c, i === 0)).join('');
+      box.querySelectorAll('.qs-chip').forEach((el, i) => { el.querySelector('.qs-k').textContent = chips[i].k; el.querySelector('.qs-v').textContent = chips[i].v; });
+      box.classList.toggle('multi', chips.length > 1);
+      setTimeout(measure, 0);
+    }
+    // live dot on the tab whose job an SDR is doing (status only; tabs never switch modes)
     tabs.querySelectorAll('.qlive').forEach(x => x.remove());
-    const t = md && MODE_TAB[mode] && tabs.querySelector('[data-tab="' + MODE_TAB[mode] + '"]');
-    if (t && !busyTo) { const i = D.createElement('i'); i.className = 'qlive'; i.title = 'The SDR is doing this now'; t.appendChild(i); }
+    const ids = new Set();
+    if (!busyTo && md && MODE_TAB[mode]) ids.add(MODE_TAB[mode]);
+    if (md && md.adsb_live) ids.add('map');
+    if (lv && lv.ais && lv.ais.live) ids.add('map');
+    ids.forEach(id => { const t = tabs.querySelector('[data-tab="' + id + '"]'); if (t) { const i = D.createElement('i'); i.className = 'qlive'; i.title = 'An SDR is doing this now'; t.appendChild(i); } });
   }
   function renderNet() {
     const n = S && S.net, ic = $('qsNetI'), a = $('qsNet');
@@ -291,7 +305,8 @@
   }
   function go(url, opt) {
     url = url || '/adsb';
-    url = url.replace(/^\/more(\.html)?(?=[?#]|$)/, '/settings');   // 1.3: More was renamed Settings; old links land on Settings
+    url = url.replace(/^\/more(\.html)?(?=[?#]|$)/, '/settings');
+    url = url.replace(/^\/(scan|detect)(\.html)?(?=[?#]|$)[^#]*/, '/spectrum');   // 1.3.2: Scan was removed; old links open Spectrum   // 1.3: More was renamed Settings; old links land on Settings
     if (url === '/' || url === '/app') url = '/adsb';   // 1.2.0: Trace opens on Map/ADS-B (idle START screen)
     const id = tabOf(url), root = (TABS.find(t => t.id === id) || {}).href;
     let f = frames[id];

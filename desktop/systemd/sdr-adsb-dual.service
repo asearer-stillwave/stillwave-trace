@@ -1,5 +1,5 @@
 [Unit]
-Description=ADS-B decoder on the STILLWAVE-ADSB dongle (dual-dongle mode, runs alongside FM / spectrum / scan)
+Description=ADS-B decoder on the STILLWAVE-ADSB dongle (dual-dongle mode, runs alongside FM / spectrum)
 After=network.target
 # 1.0.9 dual dongle: no Conflicts=, it has its own dongle (ADSB_DEVICE from /etc/sdr/dongles.env). Started by sdr-mode.
 

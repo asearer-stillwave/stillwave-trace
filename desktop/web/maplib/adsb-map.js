@@ -112,19 +112,63 @@ function fallbackStyle(url) {
   };
 }
 
-// ---------- plane icons (one per altitude band, drawn once) ----------
-function planeImage(fill, alpha = 1) {
+// ---------- plane icons ----------
+// 1.3.2: 8 type classes x 9 altitude bands. Silhouettes are Stillwave's own drawings (1.3.2 mockup), not tar1090's
+// markers. Nose up (north); MapLibre rotates by track. The class comes from /api/adsb "cls" (aircraft_types.json via the
+// sdr-aircraft-db type code, else the ADS-B emitter category).
+export const PLANE_CLASSES = ['airliner', 'heavy', 'regional', 'bizjet', 'turboprop', 'light', 'heli', 'unknown'];
+const PLANE_PATHS = {
+  unknown: 'M0,-28 C3,-28 4,-22 4,-16 L4,-6 L26,6 L26,11 L4,5 L3,18 L10,23 L10,27 L0,24 L-10,27 L-10,23 L-3,18 L-4,5 L-26,11 L-26,6 L-4,-6 L-4,-16 C-4,-22 -3,-28 0,-28Z',
+  airliner: 'M0,-28 C3,-27 3,-22 3,-14 L3,-4 L25,8 L25,12 L3,6 L2,18 L10,24 L10,27 L0,25 L-10,27 L-10,24 L-2,18 L-3,6 L-25,12 L-25,8 L-3,-4 L-3,-14 C-3,-22 -3,-27 0,-28Z',
+  heavy: 'M0,-30 C5,-29 5,-22 5,-14 L5,-6 L30,8 L30,14 L5,6 L4,19 L13,25 L13,29 L0,26 L-13,29 L-13,25 L-4,19 L-5,6 L-30,14 L-30,8 L-5,-6 L-5,-14 C-5,-22 -5,-29 0,-30Z',
+  regional: 'M0,-24 C2,-24 3,-19 3,-12 L3,-2 L20,4 L20,8 L3,5 L2,14 L3,16 L9,13 L9,17 L0,22 L-9,17 L-9,13 L-3,16 L-2,14 L-3,5 L-20,8 L-20,4 L-3,-2 L-3,-12 C-3,-19 -2,-24 0,-24Z',
+  bizjet: 'M0,-22 C2,-22 2,-17 2,-10 L2,-1 L15,6 L15,9 L2,6 L2,14 L5,14 L5,10 L9,10 L8,20 L0,19 L-8,20 L-9,10 L-5,10 L-5,14 L-2,14 L-2,6 L-15,9 L-15,6 L-2,-1 L-2,-10 C-2,-17 -2,-22 0,-22Z',
+  turboprop: 'M0,-24 C2,-24 3,-20 3,-14 L3,-6 L24,-5 L24,-1 L3,0 L2,15 L9,17 L9,21 L0,21 L-9,21 L-9,17 L-2,15 L-3,0 L-24,-1 L-24,-5 L-3,-6 L-3,-14 C-3,-20 -2,-24 0,-24Z',
+  light: 'M0,-20 C2,-20 2,-16 2,-12 L20,-11 L20,-6 L2,-5 L1,12 L7,13 L7,16 L0,16 L-7,16 L-7,13 L-1,12 L-2,-5 L-20,-6 L-20,-11 L-2,-12 C-2,-16 -2,-20 0,-20Z',
+  heli: 'M0,-14 C6,-14 7,-8 7,-2 C7,5 3,8 1,9 L1,24 L6,24 L6,27 L-6,27 L-6,24 L-1,24 L-1,9 C-3,8 -7,5 -7,-2 C-7,-8 -6,-14 0,-14Z',
+};
+const PLANE_LINES = { airliner: 'M9,4 l0,5 M-9,4 l0,5', turboprop: 'M10,-12 l0,8 M-10,-12 l0,8 M7,-12 l6,0 M-7,-12 l-6,0', light: 'M-6,-21 l12,0' };
+const ROTOR = 'M-22,-17 L22,17 M22,-17 L-22,17';
+function planeImage(fill, alpha = 1, cls = 'unknown') {
   const s = 96, c = document.createElement('canvas'); c.width = c.height = s;
   const g = c.getContext('2d');
   g.translate(s / 2, s / 2); g.scale(s / 64, s / 64);
-  g.beginPath();  // nose up (north); MapLibre rotates by track
-  g.moveTo(0, -28); g.bezierCurveTo(3, -28, 4, -22, 4, -16); g.lineTo(4, -6); g.lineTo(26, 6); g.lineTo(26, 11);
-  g.lineTo(4, 5); g.lineTo(3, 18); g.lineTo(10, 23); g.lineTo(10, 27); g.lineTo(0, 24); g.lineTo(-10, 27); g.lineTo(-10, 23);
-  g.lineTo(-3, 18); g.lineTo(-4, 5); g.lineTo(-26, 11); g.lineTo(-26, 6); g.lineTo(-4, -6); g.lineTo(-4, -16);
-  g.bezierCurveTo(-4, -22, -3, -28, 0, -28); g.closePath();
-  g.lineJoin = 'round'; g.lineWidth = 5; g.strokeStyle = '#060908'; g.stroke();
-  g.globalAlpha = alpha; g.fillStyle = fill; g.fill();
+  const body = new Path2D(PLANE_PATHS[cls] || PLANE_PATHS.unknown);
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  if (cls === 'heli') {   // rotor first (under the body), LIGHT so it reads on the dark map (mockup rotor was too dark)
+    const r = new Path2D(ROTOR);
+    g.lineWidth = 6; g.strokeStyle = '#060908'; g.stroke(r);
+    g.globalAlpha = alpha; g.lineWidth = 2.6; g.strokeStyle = '#d7e3dc'; g.stroke(r); g.globalAlpha = 1;
+  }
+  g.lineWidth = 5; g.strokeStyle = '#060908'; g.stroke(body);
+  g.globalAlpha = alpha; g.fillStyle = fill; g.fill(body);
+  if (PLANE_LINES[cls]) { const l = new Path2D(PLANE_LINES[cls]); g.lineWidth = 1.6; g.strokeStyle = '#060908'; g.stroke(l); }
   return g.getImageData(0, 0, s, s);
+}
+
+// 1.3.2 AIS boat icons (option B): top-down hull rotated by heading (else course), colored by type; moving boats
+// (sog > 0.5 kt) get a short wake behind and a dashed heading tick; stopped boats are the hull only.
+const HULL = 'M0,-13 C4,-8 5,-3 5,4 L4,11 L-4,11 L-5,4 C-5,-3 -4,-8 0,-13Z';
+function boatImage(fill, moving) {
+  const s = 96, c = document.createElement('canvas'); c.width = c.height = s;
+  const g = c.getContext('2d');
+  g.translate(s / 2, s / 2); g.scale(s / 68 * 1.45, s / 68 * 1.45);
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  if (moving) {
+    g.globalAlpha = 0.55; g.strokeStyle = '#e6efe8'; g.lineWidth = 1.6 / 1.45; g.stroke(new Path2D('M-3,12 L-7,22 M3,12 L7,22')); g.globalAlpha = 1;
+    g.setLineDash([2, 2]); g.strokeStyle = fill; g.lineWidth = 2 / 1.45; g.stroke(new Path2D('M0,-14 L0,-21')); g.setLineDash([]);
+  }
+  const h = new Path2D(HULL);
+  g.lineWidth = 2 / 1.45 * 1.4; g.strokeStyle = '#0b0f0c'; g.stroke(h);
+  g.fillStyle = fill; g.fill(h);
+  g.globalAlpha = 0.5; g.lineWidth = 1; g.stroke(new Path2D('M0,-6 L0,6'));
+  return g.getImageData(0, 0, s, s);
+}
+export function boatRot(b) {   // AIS: heading 511 = not available; cog 360 = not available
+  const h = Number(b.hdg), c = Number(b.cog);
+  if (b.hdg != null && isFinite(h) && h >= 0 && h < 360) return h;
+  if (b.cog != null && isFinite(c) && c >= 0 && c < 360) return c;
+  return 0;
 }
 
 function altBand(a) {   // 8 bands, ground first; 8 = unknown
@@ -214,7 +258,8 @@ export class AircraftMap {
     m.addControl(new maplibregl.AttributionControl({ compact: false }), 'bottom-left');
     m.addControl(new maplibregl.ScaleControl({ unit: 'nautical', maxWidth: 90 }), 'bottom-right');
     await new Promise(res => m.once('load', res));
-    ALT_COLORS.forEach((col, i) => m.addImage('plane-' + i, planeImage(col, i === 8 ? 0.6 : 1), { pixelRatio: 2 }));
+    for (const cls of PLANE_CLASSES) ALT_COLORS.forEach((col, i) => m.addImage('plane-' + cls + '-' + i, planeImage(col, i === 8 ? 0.6 : 1, cls), { pixelRatio: 2 }));
+    for (const [k, col] of Object.entries(BOAT_COLORS)) { m.addImage('boat-' + k + '-0', boatImage(col, false), { pixelRatio: 2 }); m.addImage('boat-' + k + '-1', boatImage(col, true), { pixelRatio: 2 }); }
     const iconBase = touch ? 0.78 : 0.62, selBase = touch ? 24 : 20, offBase = touch ? 1.5 : 1.3;
     const iconSize = iconBase / uiZoom();
 
@@ -225,7 +270,6 @@ export class AircraftMap {
     m.addSource('ac', { type: 'geojson', data: fc([]), maxzoom: 12, buffer: 32, tolerance: 0.5 });
     // 1.3.1 AIS boats (own source; drawn under the aircraft)
     m.addSource('boats', { type: 'geojson', data: fc([]), maxzoom: 12, buffer: 32, tolerance: 0.5 });
-    m.addSource('boat-cog', { type: 'geojson', data: fc([]), maxzoom: 12, buffer: 32, tolerance: 0.5 });
     m.addLayer({ id: 'rings', type: 'line', source: 'rings', filter: ['has', 'nm'],
       paint: { 'line-color': '#4ade80', 'line-opacity': 0.3, 'line-width': 1.2, 'line-dasharray': [3, 4] } });
     m.addLayer({ id: 'ring-labels', type: 'symbol', source: 'rings', filter: ['has', 'label'],
@@ -239,19 +283,21 @@ export class AircraftMap {
       paint: { 'circle-radius': 6, 'circle-color': '#0b0f0c', 'circle-stroke-color': '#4ade80', 'circle-stroke-width': 3 } });
     m.addLayer({ id: 'trails', type: 'line', source: 'trails', layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': ['get', 'col'], 'line-width': touch ? 2.4 : 2, 'line-opacity': ['*', 0.6, ['get', 'op']] } });
-    m.addLayer({ id: 'boat-cog', type: 'line', source: 'boat-cog', layout: { 'line-cap': 'round' },
-      paint: { 'line-color': ['get', 'col'], 'line-width': 2, 'line-opacity': ['*', 0.8, ['get', 'op']] } });
-    m.addLayer({ id: 'boat', type: 'circle', source: 'boats',
-      paint: { 'circle-radius': ['case', ['==', ['get', 'sel'], 1], 9, 6], 'circle-color': ['get', 'col'], 'circle-opacity': ['get', 'op'],
-        'circle-stroke-color': ['case', ['==', ['get', 'sel'], 1], '#e6efe8', '#0b0f0c'], 'circle-stroke-width': 2, 'circle-stroke-opacity': ['get', 'op'] } });
+    // 1.3.2: selection ring (circle) + hull symbol; both keep the Normal size at Large/XL (divided by the UI zoom)
+    m.addLayer({ id: 'boat-sel', type: 'circle', source: 'boats', filter: ['==', ['get', 'sel'], 1],
+      paint: { 'circle-radius': (touch ? 19 : 16) / uiZoom(), 'circle-color': 'rgba(230,239,232,0.12)', 'circle-stroke-color': '#e6efe8', 'circle-stroke-width': 2, 'circle-opacity': ['get', 'op'], 'circle-stroke-opacity': ['get', 'op'] } });
+    m.addLayer({ id: 'boat', type: 'symbol', source: 'boats',
+      layout: { 'icon-image': ['concat', 'boat-', ['get', 'kind'], '-', ['get', 'mv']], 'icon-size': (touch ? 0.62 : 0.52) / uiZoom(), 'icon-rotate': ['get', 'rot'],
+        'icon-rotation-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'symbol-sort-key': ['get', 'sel'] },
+      paint: { 'icon-opacity': ['get', 'op'] } });
     m.addLayer({ id: 'boat-label', type: 'symbol', source: 'boats',
       layout: { 'text-field': ['get', 'label'], 'text-font': ['Noto Sans Medium'], 'text-size': 13, 'text-anchor': 'top',
-        'text-offset': [0, 0.9], 'text-optional': true },
+        'text-offset': [0, (touch ? 1.5 : 1.3) / uiZoom()], 'text-optional': true },
       paint: { 'text-color': '#cfe3ff', 'text-halo-color': '#0b0f0c', 'text-halo-width': 1.5, 'text-opacity': ['get', 'op'] } });
     m.addLayer({ id: 'ac-sel', type: 'circle', source: 'ac', filter: ['==', ['get', 'sel'], 1],
       paint: { 'circle-radius': selBase / uiZoom(), 'circle-color': 'rgba(74,222,128,0.14)', 'circle-stroke-color': '#4ade80', 'circle-stroke-width': 2 } });
     m.addLayer({ id: 'ac', type: 'symbol', source: 'ac',
-      layout: { 'icon-image': ['concat', 'plane-', ['get', 'band']], 'icon-size': iconSize, 'icon-rotate': ['get', 'rot'],
+      layout: { 'icon-image': ['concat', 'plane-', ['get', 'cls'], '-', ['get', 'band']], 'icon-size': iconSize, 'icon-rotate': ['get', 'rot'],
         'icon-rotation-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
         'symbol-sort-key': ['get', 'sel'] },
       paint: { 'icon-opacity': ['get', 'op'] } });
@@ -396,25 +442,20 @@ export class AircraftMap {
     if (!this.ready) return this.show;
     const air = this.show !== 'boats', sea = this.show !== 'aircraft';
     for (const id of ['ac', 'ac-sel', 'trails']) this.map.setLayoutProperty(id, 'visibility', air ? 'visible' : 'none');
-    for (const id of ['boat', 'boat-cog']) this.map.setLayoutProperty(id, 'visibility', sea ? 'visible' : 'none');
+    for (const id of ['boat', 'boat-sel']) this.map.setLayoutProperty(id, 'visibility', sea ? 'visible' : 'none');
     this.toggleLabels(this.labels);
     if (!air && this.selected) this.select(null);
     if (!sea && this.boatSel) this.selectBoat(null);
     return this.show;
   }
   _renderBoats() {
-    const pts = [], vec = [];
+    const pts = [];
     for (const [mmsi, b] of this.boats || []) {
-      const col = BOAT_COLORS[b.kind] || BOAT_COLORS.other, sel = mmsi === this.boatSel ? 1 : 0;
-      pts.push({ type: 'Feature', properties: { mmsi, col, sel, op: b.op, label: trimName(b.name, 14) }, geometry: { type: 'Point', coordinates: [b.lon, b.lat] } });
-      if (typeof b.sog === 'number' && b.sog >= 0.5 && b.sog < 102 && typeof b.cog === 'number' && b.cog < 360) {
-        const nm = b.sog * 0.1, r = b.cog * Math.PI / 180;   // 6-minute course vector
-        const dlat = nm / 60 * Math.cos(r), dlon = nm / 60 * Math.sin(r) / Math.max(0.05, Math.cos(b.lat * Math.PI / 180));
-        vec.push({ type: 'Feature', properties: { col, op: b.op }, geometry: { type: 'LineString', coordinates: [[b.lon, b.lat], [b.lon + dlon, b.lat + dlat]] } });
-      }
+      const kind = BOAT_COLORS[b.kind] ? b.kind : 'other', sel = mmsi === this.boatSel ? 1 : 0;
+      const mv = typeof b.sog === 'number' && b.sog > 0.5 && b.sog < 102 ? 1 : 0;
+      pts.push({ type: 'Feature', properties: { mmsi, kind, mv, rot: boatRot(b), sel, op: b.op, label: trimName(b.name, 14) }, geometry: { type: 'Point', coordinates: [b.lon, b.lat] } });
     }
     this.map.getSource('boats').setData(fc(pts));
-    this.map.getSource('boat-cog').setData(fc(vec));
   }
 
   onMapCount() {
@@ -443,7 +484,8 @@ export class AircraftMap {
       const alt = a.alt === 'ground' ? 'ground' : (typeof a.alt === 'number' ? a.alt.toLocaleString('en-US') + ' ft' : '');
       const spd = typeof a.gs === 'number' ? Math.round(a.gs) + ' kt' : '';
       const second = [alt, spd].filter(Boolean).join(' · ');
-      pts.push({ type: 'Feature', properties: { hex, band, sel, op, rot: typeof a.track === 'number' ? a.track : 0,
+      const cls = PLANE_CLASSES.includes(a.cls) ? a.cls : 'unknown';
+      pts.push({ type: 'Feature', properties: { hex, band, cls, sel, op, rot: typeof a.track === 'number' ? a.track : 0,
         label: (a.flight || hex.toUpperCase()) + (second ? '\n' + second : '') }, geometry: { type: 'Point', coordinates: [a.lon, a.lat] } });
       if (p.trail.length > 1) lines.push({ type: 'Feature', properties: { col: ALT_COLORS[band], op },
         geometry: { type: 'LineString', coordinates: p.trail.map(t => [t[0], t[1]]) } });

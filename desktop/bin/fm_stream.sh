@@ -33,8 +33,11 @@ case "$DEMOD" in wfm|am|nfm) ;; *) DEMOD=wfm ;; esac
 # 1.3.1: FM band filters from the Listen gear (FM_AUDIO_RATE / FM_HIGHPASS / FM_LOWPASS) win over the preset's own
 if [[ "${DEMOD:-wfm}" == wfm ]]; then
   [[ "${FM_AUDIO_RATE:-}" =~ ^[0-9]+$ ]] && AUDIO_RATE="$FM_AUDIO_RATE"
+  # 1.3.2: the FM band filter always applies (default 50 Hz / 8 kHz; the old per-preset 30/15000 no longer wins)
+  HIGHPASS_HZ=50; LOWPASS_HZ=8000
   [[ "${FM_HIGHPASS:-}" =~ ^[0-9]+$ ]] && HIGHPASS_HZ="$FM_HIGHPASS"
   [[ "${FM_LOWPASS:-}" =~ ^[0-9]+$ ]] && LOWPASS_HZ="$FM_LOWPASS"
+  [[ "$LOWPASS_HZ" == 8500 ]] && LOWPASS_HZ=8000
 fi
 case "$AUDIO_RATE" in
   16000) RTL_AUDIO_RATE="16k" ;;

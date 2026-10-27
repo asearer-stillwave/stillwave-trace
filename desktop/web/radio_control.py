@@ -17,7 +17,6 @@ app = Flask(__name__)
 CONF = Path(os.environ.get("SDR_STATIONS_CONF", "/etc/sdr/stations.conf"))
 ENV = Path(os.environ.get("SDR_ENV_FILE", "/etc/sdr/fm.env"))
 SELECT = os.environ.get("SDR_SELECT_BIN", "/usr/local/sbin/sdr-select-station")
-SCAN = os.environ.get("SDR_SCAN_BIN", "/usr/local/sbin/sdr-scan")
 TUNE_FREQ = os.environ.get("SDR_TUNE_BIN", "/usr/local/sbin/sdr-tune-freq")
 ADD_STATION = os.environ.get("SDR_ADD_BIN", "/usr/local/sbin/sdr-add-station")
 APPLY = os.environ.get("SDR_APPLY_BIN", "/usr/local/sbin/sdr-apply-settings")
@@ -46,14 +45,14 @@ SCREEN_NOTICE = Path(os.environ.get("SDR_SCREEN_NOTICE", "/run/sdr-screen/shutdo
 SCREEN_CONF = Path(os.environ.get("SDR_SCREEN_CONF", "/etc/sdr/screen.env"))
 # Map center / distance origin when no receiver position is saved: LAX airport reference point
 DEFAULT_RECEIVER = (33.9425, -118.4081)
-MODES = ("fm", "spectrum", "detect", "adsb")
+MODES = ("fm", "spectrum", "adsb")   # 1.3.2: detect (Scan) removed
 
 DEFAULTS = {
     "gain": "4",
-    "audio_rate": "48000",  # 1.3.1 new-preset defaults: 48000 / 50 / 8500 Hz
+    "audio_rate": "48000",  # 1.3.2 new-preset defaults: 48000 / 50 / 8000 Hz (was 8500 in 1.3.1)
     "mp3_bitrate": "128k",
     "highpass": "50",
-    "lowpass": "8500",
+    "lowpass": "8000",
     "ppm": "0",
 }
 WEBDIR = Path(__file__).resolve().parent
@@ -169,8 +168,11 @@ def listen_page():
 
 @app.get("/scan")
 @app.get("/scan.html")
+@app.get("/detect")
+@app.get("/detect.html")
 def scan_page():
-    return _html("detect.html")
+    from flask import redirect   # 1.3.2: the Scan tab and its hidden one-shot FM scan were removed; old links open Spectrum
+    return redirect("/spectrum", code=302)
 
 
 @app.get("/dashboard")
@@ -215,13 +217,6 @@ def audio_page():
 @app.get("/spectrum.html")
 def spectrum_page():
     return _html("spectrum.html")
-
-
-@app.get("/detect")
-@app.get("/detect.html")
-def detect_page():
-    from flask import redirect
-    return redirect("/scan" + (("?" + request.query_string.decode()) if request.query_string else ""), code=302)   # renamed Scan
 
 
 @app.get("/adsb")
@@ -745,6 +740,20 @@ def radios_swap():
 LEVEL_FILE = Path(os.environ.get("SDR_LEVEL_FILE", "/run/sdr-listen/level.json"))
 
 
+@app.post("/api/listen/pi")
+def listen_pi():
+    """1.3.2: STOP / PLAY for the Pi's own playback (Bluetooth speaker / Pi output), not just the browser audio."""
+    play = bool((request.get_json(silent=True) or {}).get("play"))
+    try:
+        r = _sudo([SVC, "restart-radio" if play else "stop-radio"], timeout=30)
+    except subprocess.TimeoutExpired:
+        return jsonify(ok=False, error="timed out"), 504
+    _LIVE["data"] = None
+    if play:
+        _TUNE["t"] = time.time()
+    return jsonify(ok=r.returncode == 0, playing=play), (200 if r.returncode == 0 else 500)
+
+
 @app.get("/api/listen/level")
 def listen_level():
     """Map listen strip: what SDR 2 is playing + QUIET / TALKING (sdr-level meter, airband / NOAA only)."""
@@ -784,26 +793,22 @@ def _bank():
 
 @app.get("/api/airports")
 def airports():
-    # 1.2.6: ?id=KBUR -> any US airport from the station bank (FAA NASR, runway headings for approach rings).
-    # Without an id (or without a bank) the built-in KLAX file is served, as in 1.2.5.
-    ident = (request.args.get("id") or "").strip()
-    if ident:
-        try:
-            bank, c = _bank()
-            a = bank.airport(c, ident) if c else None
-            if a:
-                return jsonify(ok=True, airports=[bank.focus_shape(a)])
-        except Exception as exc:  # a damaged bank must never break the map
-            app.logger.warning("bank airport %s: %s", ident, exc)
+    # 1.3.2: web/airports.py. ?lat=&lon= -> nearby airports (FAA bank + OurAirports Europe); ?id=KBUR|EGLL -> focus shape;
+    # nothing -> the built-in KLAX file (1.2.5). A damaged bank must never break the map.
+    import sys as _sys
+    if str(WEBDIR) not in _sys.path:
+        _sys.path.insert(0, str(WEBDIR))
+    import airports as _ap
     try:
-        d = json.loads(AIRPORTS_FILE.read_text())
-    except (OSError, ValueError):
-        return jsonify(ok=False, airports=[])
-    if ident:
-        hit = [a for a in d.get("airports", []) if a.get("icao", "").upper() in (ident.upper(), "K" + ident.upper())]
-        if hit:
-            d = dict(d, airports=hit)
-    return jsonify(d)
+        res = _ap.api(request.args.to_dict(), str(WEBDIR), BANK_DB, str(AIRPORTS_FILE))
+    except (ValueError, TypeError) as exc:
+        return jsonify(ok=False, error="bad request: %s" % exc), 400
+    except Exception as exc:
+        app.logger.warning("airports: %s", exc)
+        try: res = json.loads(AIRPORTS_FILE.read_text())
+        except (OSError, ValueError): res = {"ok": False, "airports": []}
+    resp = jsonify(res); resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.get("/api/bank/<what>")
@@ -915,6 +920,44 @@ def _ac_add(row):
     row["reg"], row["type"], row["model"] = (r[0] or None, r[1] or None, r[2] or None) if r else (None, None, None)
 
 
+# 1.3.2 map icon class: bundled ICAO type table (aircraft_types.json) via the sdr-aircraft-db type code, else the ADS-B
+# emitter category (A1 light, A2 bizjet/turboprop, A3 airliner, A4/A5 heavy, A7 helicopter), else "unknown"
+_TYPES = {"map": None, "prefix": ()}
+CAT_CLASS = {"A1": "light", "A2": "bizjet", "A3": "airliner", "A4": "heavy", "A5": "heavy", "A7": "heli"}
+
+
+def _type_table():
+    if _TYPES["map"] is None:
+        m, pre = {}, ()
+        try:
+            d = json.loads((Path(__file__).resolve().parent / "aircraft_types.json").read_text())
+            for k, v in d.items():
+                if k.startswith("_"):
+                    continue
+                if k == "light_prefix":
+                    pre = tuple(sorted(v, key=len, reverse=True))
+                else:
+                    for c in v:
+                        m[c.upper()] = k
+        except Exception:
+            pass
+        _TYPES.update(map=m, prefix=pre)
+    return _TYPES
+
+
+def ac_class(typecode, category):
+    t = _type_table(); tc = str(typecode or "").strip().upper()
+    if tc:
+        if tc in t["map"]:
+            return t["map"][tc]
+        if any(tc.startswith(p) for p in t["prefix"]):
+            return "light"
+    cat = str(category or "").strip().upper()
+    if cat == "A2" and tc:
+        return "bizjet"
+    return CAT_CLASS.get(cat, "unknown")
+
+
 @app.get("/api/aircraft-db")
 def aircraft_db_status():
     return _json_call([AIRCRAFT_BIN, "status", "--json"], 15, "aircraft database")
@@ -999,28 +1042,6 @@ def add_station():
     return jsonify(ok=True, message=(r.stdout or "added").strip(), stations=stations())
 
 
-@app.post("/api/scan")
-def scan():
-    data = request.get_json(silent=True) or {}
-    gain = str(data.get("gain") or "20").strip()
-    try:
-        r = subprocess.run(
-            ["/usr/bin/sudo", "-n", SCAN, gain],
-            text=True,
-            capture_output=True,
-            timeout=90,
-        )
-    except subprocess.TimeoutExpired:
-        return jsonify(error="scan timed out"), 504
-    if r.returncode != 0:
-        return jsonify(error=(r.stderr or r.stdout or "scan failed").strip()), 500
-    try:
-        payload = __import__("json").loads(r.stdout.strip().splitlines()[-1])
-    except Exception:
-        return jsonify(error="bad scan output", raw=r.stdout[-500:]), 500
-    return jsonify(payload)
-
-
 # ---------- network (home Wi-Fi <-> hotspot) ----------
 # Switching is done by sdr-net-mode, which detaches itself (systemd-run) so it finishes even
 # though this request, and the phone's connection, drop when the radio changes. The endpoints
@@ -1086,6 +1107,27 @@ def net_status():
 @app.get("/api/net/scan")
 def net_scan():
     return _net_call(["scan"], "wifi scan", timeout=30)
+
+
+@app.route("/api/net/wifi-auto", methods=["GET", "POST"])
+def net_wifi_auto():
+    """1.3.2 auto-join: GET status (saved SSIDs, dBm, JOINED / TOO WEAK / NOT SEEN; never passwords).
+    POST {enabled: bool} | {rescan: true} | {forget: "SSID"}."""
+    if request.method == "GET":
+        return _net_call(["autojoin", "status"], "auto-join status", timeout=15)
+    body = request.get_json(silent=True) or {}
+    if "forget" in body:
+        ssid = str(body.get("forget") or "")
+        if not ssid or len(ssid) > 64 or any(ord(ch) < 32 for ch in ssid):
+            return jsonify(ok=False, error="pick a saved network"), 400
+        _net_web_log("POST /api/net/wifi-auto forget")
+        return _net_call(["forget", "--", ssid], "forget network", timeout=20)
+    if body.get("rescan"):
+        return _net_call(["autojoin", "rescan"], "auto-join scan", timeout=30)
+    if "enabled" in body:
+        _net_web_log("POST /api/net/wifi-auto enabled=%s" % bool(body["enabled"]))
+        return _net_call(["autojoin", "on" if body["enabled"] else "off"], "auto-join", timeout=15)
+    return jsonify(ok=False, error="nothing to do"), 400
 
 
 @app.get("/api/net/saved")
@@ -1254,7 +1296,7 @@ def services_restart():
     return jsonify(ok=True, message=(r.stdout or "restarted").strip())
 
 
-# ---------- dongle mode (fm / spectrum / detect / adsb) ----------
+# ---------- dongle mode (fm / spectrum / adsb) ----------
 
 @app.get("/api/mode")
 def mode_status():
@@ -1275,7 +1317,7 @@ def mode_set():
     data = request.get_json(silent=True) or {}
     mode = str(data.get("mode") or "").strip().lower()
     if mode not in MODES:
-        return jsonify(error="mode must be fm, spectrum, detect, or adsb"), 400
+        return jsonify(error="mode must be fm, spectrum, or adsb"), 400
     try:
         r = _sudo([MODE_BIN, "set", mode], timeout=40)
     except subprocess.TimeoutExpired:
@@ -1300,7 +1342,7 @@ def scope_proxy(sub):
     except urllib.error.HTTPError as exc:
         return Response(exc.read(), status=exc.code, mimetype="application/json")
     except Exception as exc:
-        return jsonify(error=f"spectrum/detect service is not running ({exc}). Switch mode first."), 503
+        return jsonify(error=f"spectrum service is not running ({exc}). Switch mode first."), 503
     ctype = up.headers.get("Content-Type", "application/json")
     if not ctype.startswith("text/event-stream"):
         data = up.read()
@@ -1586,6 +1628,7 @@ def adsb():
             "dist_nm": None,
         }
         _ac_add(row)
+        row["cls"] = ac_class(row.get("type"), row.get("category"))
         if row["lat"] is not None and row["lon"] is not None:
             row["dist_nm"] = round(_nm(home[0], home[1], row["lat"], row["lon"]), 1)
         out.append(row)
@@ -1821,7 +1864,9 @@ def _strip_radios():
     r = subprocess.run([DONGLES_BIN, "list", "--json"], capture_output=True, text=True, timeout=8)
     d = json.loads(r.stdout.strip().splitlines()[-1])
     return {"count": d.get("count"), "dual": bool(d.get("dual")), "assigned": bool(d.get("assigned")),
-            "degraded": bool(d.get("degraded")), "missing": d.get("missing") or [], "duplicates": d.get("duplicates") or []}
+            "degraded": bool(d.get("degraded")), "missing": d.get("missing") or [], "duplicates": d.get("duplicates") or [],
+            # 1.3.2: one top chip per dongle (SDR 1, SDR 2 in USB order): just the role, never serials
+            "dongles": [{"role": x.get("role") or ""} for x in (d.get("dongles") or [])][:4]}
 
 
 _STRIP_SRC = {"mode": _strip_mode, "net": _strip_net, "audio": _strip_audio, "scope": _strip_scope, "radios": _strip_radios}
@@ -1895,14 +1940,85 @@ def _strip_metric(mode, scope):
             return {"kind": "adsb", "count": None, "stale": True}
         n = sum(1 for a in raw.get("aircraft", []) if (a.get("seen", 0) or 0) <= 60)
         return {"kind": "adsb", "count": n}
-    if mode in ("spectrum", "detect"):
+    if mode == "spectrum":
         if not scope or scope.get("mode") != mode:
             return {"kind": mode}
-        if mode == "spectrum":
-            return {"kind": "spectrum", "center_hz": scope.get("center_hz"), "running": scope.get("running")}
-        return {"kind": "detect", "start_hz": scope.get("start_hz"), "stop_hz": scope.get("stop_hz"),
-                "running": scope.get("running")}
+        return {"kind": "spectrum", "center_hz": scope.get("center_hz"), "running": scope.get("running")}
     return None
+
+
+# 1.3.2 radio chip live status (one chip per SDR) + the Pi's own playback (Listen strip LIVE on the Bluetooth speaker)
+#   Tuning…   a tune / station / band change was POSTed in the last 20 s and the stream has no audio yet
+#   Live      sdr-fm is active and Icecast is serving audio bytes (the same check as /api/stream-ready)
+#   No signal NOAA only (a continuous broadcast): stream up, settled > 20 s after tuning, and the level meter
+#             (sdr-level) has heard nothing for 20 s. Airband silence is normal (QUIET), and broadcast FM with no
+#             carrier is loud hiss, so an audio level cannot tell "no station" there; those never show No signal.
+#   Reconnecting…  sdr-fm is active but the stream gave no audio, outside the tuning window
+_TUNE = {"t": 0.0}
+_LIVE = {"t": 0.0, "data": None}
+
+
+def _unit_active(u):
+    try:
+        return subprocess.run(["systemctl", "is-active", "--quiet", u], timeout=3).returncode == 0
+    except Exception:
+        return False
+
+
+def _stream_bytes():
+    try:
+        req = urllib.request.Request(ICECAST, headers={"Icy-MetaData": "0", "User-Agent": "sdr-strip"})
+        with urllib.request.urlopen(req, timeout=1.5) as up:
+            return len(up.read(2048)) > 0
+    except Exception:
+        return False
+
+
+def _ais_count():
+    try:
+        with urllib.request.urlopen(AIS_URL, timeout=1.5) as r:
+            return {"live": True, "n": len(ais_boats(json.loads(r.read(4 * 1024 * 1024))))}
+    except Exception:
+        return {"live": False, "n": 0}
+
+
+def _adsb_count():
+    try:
+        raw = json.loads(ADSB_JSON.read_text())
+        if time.time() - ADSB_JSON.stat().st_mtime > 15:
+            return None
+        return sum(1 for a in raw.get("aircraft", []) if (a.get("seen", 0) or 0) <= 60)
+    except (OSError, ValueError):
+        return None
+
+
+def strip_live(mode, audio, radios, metric):
+    now = time.time()
+    if _LIVE["data"] is not None and now - _LIVE["t"] < 3:
+        return _LIVE["data"]
+    fm_on = mode == "fm" and _unit_active("sdr-fm")
+    stream = fm_on and _stream_bytes()
+    since = now - _TUNE["t"]
+    state = "off"
+    if fm_on:
+        state = "live" if stream else ("tuning" if since < 20 else "reconnecting")
+        if stream and since < 4:
+            state = "tuning"
+        band = (metric or {}).get("band")
+        if state == "live" and band == "noaa" and since > 20:
+            try:
+                lv = json.loads(LEVEL_FILE.read_text())
+                if now - float(lv.get("t") or 0) < 5 and float(lv.get("rx_age") or 0) > 20:
+                    state = "nosignal"
+            except (OSError, ValueError, TypeError):
+                pass
+    au = audio or {}
+    pi_out = au.get("output") in ("speaker", "both")
+    roles = [x.get("role") for x in ((radios or {}).get("dongles") or [])]
+    d = {"radio": state, "pi_playing": bool(fm_on and pi_out and state in ("live", "nosignal")), "pi_out": pi_out,
+         "adsb_count": _adsb_count(), "ais": _ais_count() if "ais" in roles else None}
+    _LIVE.update(t=now, data=d)
+    return d
 
 
 @app.after_request
@@ -1910,6 +2026,8 @@ def _strip_after_post(resp):
     # a change made from any page shows up in the strip on its next poll, not after the cache TTL
     if request.method == "POST":
         p = request.path
+        if p.startswith(("/api/listen/tune", "/api/station", "/api/tune", "/api/listen/band", "/api/listen/radio")):
+            _TUNE["t"] = time.time(); _LIVE["data"] = None
         if p.startswith("/api/mode"):
             _strip_invalidate("mode", "scope")
         elif p.startswith("/api/listen") or p.startswith("/api/station") or p.startswith("/api/tune"):
@@ -1931,7 +2049,7 @@ def strip_status():
     mode = (parts["mode"] or {}).get("mode")
     pending = parts["_pending"]
     scope = None
-    if mode in ("spectrum", "detect"):
+    if mode == "spectrum":
         sp = _strip_get(["scope"])
         scope, pending = sp["scope"], pending + sp["_pending"]
         if not scope or scope.get("mode") != mode or not scope.get("running"):
@@ -1943,8 +2061,12 @@ def strip_status():
     except Exception:
         metric = None
     psu_start()
+    try:
+        live = strip_live(mode, parts["audio"], parts.get("radios"), metric)
+    except Exception:
+        live = None
     resp = jsonify(ok=True, t=round(time.time(), 1), mode=parts["mode"], net=parts["net"],
-                   audio=parts["audio"], metric=metric, pending=pending, psu=psu_state(), radios=parts.get("radios"))
+                   audio=parts["audio"], metric=metric, pending=pending, psu=psu_state(), radios=parts.get("radios"), live=live)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

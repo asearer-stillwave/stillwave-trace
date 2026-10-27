@@ -69,7 +69,7 @@ systemctl is-active icecast2 sdr-web sdr-net sdr-mode nginx
 echo "==== dongle mode ===="
 cat /etc/sdr/mode.env 2>/dev/null || echo "no /etc/sdr/mode.env (defaults to fm)"
 /usr/local/sbin/sdr-mode status
-for u in sdr-fm sdr-spectrum sdr-detect sdr-adsb; do
+for u in sdr-fm sdr-spectrum sdr-adsb sdr-ais; do
   echo "$u=$(systemctl is-active "$u" 2>/dev/null)"
 done
 MODE="$(/usr/local/sbin/sdr-mode current 2>/dev/null)"
@@ -85,7 +85,7 @@ ss -lptn | grep -E ':80 |:8000|:8080|:8081' || true
 echo "==== files ===="
 ls -l /usr/local/lib/sdr-station/web/radio.html /usr/local/lib/sdr-station/web/radio_control.py \
   /usr/local/lib/sdr-station/web/sdr_scope.py /usr/local/lib/sdr-station/web/spectrum.html \
-  /usr/local/lib/sdr-station/web/detect.html /usr/local/lib/sdr-station/web/adsb.html \
+  /usr/local/lib/sdr-station/web/aircraft_types.json /usr/local/lib/sdr-station/web/adsb.html \
   /usr/local/lib/sdr-station/web/mode.js /usr/local/lib/sdr-station/web/nav.js /usr/local/lib/sdr-station/web/more.html \
   /usr/local/lib/sdr-station/web/fieldnote.css /etc/nginx/sites-enabled/sdr
 echo -n "ADS-B decoder: "; /usr/local/lib/sdr-station/bin/adsb_run.sh --which || echo "not installed"
@@ -94,7 +94,7 @@ echo -n "flask :8080 "; curl -sS --max-time 3 http://127.0.0.1:8080/health; echo
 echo -n "nginx :80   "; curl -sS --max-time 3 http://127.0.0.1/health; echo
 echo "==== page title ===="
 curl -sS --max-time 3 http://127.0.0.1/ | tr '\n' ' ' | grep -o '<title>[^<]*</title>'
-for p in spectrum detect adsb network audio more; do
+for p in spectrum adsb network audio settings; do
   echo -n "/$p: "; curl -sS --max-time 3 "http://127.0.0.1/$p" | tr '\n' ' ' | grep -o '<title>[^<]*</title>'
 done
 echo "==== ADS-B map (offline) ===="
@@ -145,7 +145,7 @@ case "$MODE" in
     curl -sS --max-time 3 -o /tmp/live-play.mp3 -D - http://127.0.0.1/play.mp3 | head -15
     ls -l /tmp/live-play.mp3
     ;;
-  spectrum|detect)
+  spectrum)
     echo "==== scope ($MODE) ===="
     curl -sS --max-time 3 http://127.0.0.1:8081/health; echo
     curl -sS --max-time 3 http://127.0.0.1/api/scope/status | head -c 600; echo

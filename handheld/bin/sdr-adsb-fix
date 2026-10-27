@@ -64,7 +64,7 @@ case "${1:-}" in
 esac
 if [[ "${1:-}" != --build ]] && b="$(capable)"; then echo "ADS-B decoder OK: $b (rtlsdr)"; exit 0; fi
 [[ ${EUID} -eq 0 ]] || { echo "Run: sudo sdr-adsb-fix" >&2; exit 1; }
-build_readsb || { echo "WARNING: could not build readsb (internet? see /tmp/readsb-build.log). ADS-B stays off; FM, Scan and Spectrum still work." >&2; exit 1; }
+build_readsb || { echo "WARNING: could not build readsb (internet? see /tmp/readsb-build.log). ADS-B stays off; FM and Spectrum still work." >&2; exit 1; }
 systemctl disable --now readsb.service >/dev/null 2>&1 || true; systemctl mask readsb.service >/dev/null 2>&1 || true
 if b="$(capable)"; then echo "ADS-B decoder OK: $b (rtlsdr)"; exit 0; fi
 echo "WARNING: readsb built but does not report rtlsdr support" >&2; exit 1

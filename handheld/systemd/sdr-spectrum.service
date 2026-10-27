@@ -1,8 +1,8 @@
 [Unit]
 Description=RTL-SDR live spectrum + waterfall (SSE on 127.0.0.1:8081)
 After=network.target sdr-fm.service
-# One dongle: starting spectrum stops FM / detect / ADS-B (see sdr-mode)
-Conflicts=sdr-fm.service sdr-detect.service sdr-adsb.service
+# One dongle: starting spectrum stops FM / ADS-B (see sdr-mode)
+Conflicts=sdr-fm.service sdr-adsb.service
 
 [Service]
 Type=simple

@@ -45,7 +45,7 @@
       </select>
     </label>
     <label>High-pass Hz <input name="highpass" value="50"></label>
-    <label>Low-pass Hz <input name="lowpass" value="8500"></label>
+    <label>Low-pass Hz <input name="lowpass" value="8000"></label>
     <div class="span2 row">
       <button type="button" id="listen" class="primary">Listen (don’t save)</button>
       <button type="button" id="save">Save preset</button>
@@ -83,7 +83,7 @@ function formData(){
     audio_rate: f.audio_rate.value,
     mp3_bitrate: f.mp3_bitrate.value,
     highpass: f.highpass.value.trim() || '50',
-    lowpass: f.lowpass.value.trim() || '8500'
+    lowpass: f.lowpass.value.trim() || '8000'
   };
 }
 function fill(st){
@@ -96,7 +96,7 @@ function fill(st){
   f.audio_rate.value = st.audio_rate || '48000';
   f.mp3_bitrate.value = st.mp3_bitrate || '128k';
   f.highpass.value = st.highpass || '50';
-  f.lowpass.value = st.lowpass || '8500';
+  f.lowpass.value = st.lowpass || '8000';
 }
 async function jfetch(url, opt){
   const r = await fetch(url, Object.assign({cache:'no-store'}, opt||{}));

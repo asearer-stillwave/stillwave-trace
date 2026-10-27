@@ -63,7 +63,7 @@
   <div class="row"><button type="button" class="big" id="cfmNo">Cancel</button><button type="button" class="big primary v-danger" id="cfmYes">Reset</button></div></div></div>
 <div class="v-modal" id="sfm" hidden><div class="v-dlg" role="dialog" aria-modal="true">
   <div class="k">// TURN SDR OFF</div>
-  <p id="sfmP">Stops Listen, Map, Scan and Spectrum and releases the dongle, so you can swap the antenna safely. Turn it back on here to resume.</p>
+  <p id="sfmP">Stops Listen, Map and Spectrum and releases the dongle, so you can swap the antenna safely. Turn it back on here to resume.</p>
   <div class="row"><button type="button" class="big" id="sfmNo">Cancel</button><button type="button" class="big primary v-danger" id="sfmYes">Turn off</button></div></div></div>
 <script src="/mode.js"></script>
 <script src="/power.js"></script>
@@ -120,7 +120,7 @@
       .catch(e => { $('cfmP').textContent = 'Reset failed: ' + e.message; $('cfmYes').disabled = false; }); };
   if (/[?&]confirm=1/.test(location.search)) $('mUsb').click();
   // 1.0.9: SDR power (OFF = safe to swap antenna; ON resumes the last mode) + dongle summary
-  const MN = {fm:'Listen', spectrum:'Spectrum', detect:'Scan', adsb:'Map'};
+  const MN = {fm:'Listen', spectrum:'Spectrum', adsb:'Map'};
   let sdrOn = true;
   function sdrShow(s){
     if(!s) return;

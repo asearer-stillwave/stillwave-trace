@@ -1,6 +1,7 @@
 // Stillwave Trace 1.2.5: dual-SDR extras on the Map page.
 //  - listen strip (SDR 2): what plays, signal meter, QUIET / TALKING (squelch), tap ▴ = quick-tune picker, map stays live
-//  - airport focus: tap the LAX label (or the KLAX pill) -> zoom, Tower / Ground / Approach / ATIS chooser, planes on approach ringed
+//  - 1.3.2: 'ICAO ▾' follows the map (nearest airport to the map center, /api/airports?lat=&lon=)
+//  - airport focus: tap the LAX label (or the ICAO button) -> zoom, Tower / Ground / Approach / ATIS chooser, planes on approach ringed
 //  - degraded notice when a saved radio role is missing
 // With one dongle (no roles saved) none of this appears: the map is exactly as before.
 (function () {
@@ -41,18 +42,67 @@
     };
     apf.onclick = e => { const b = e.target.closest('button'); if (!b || !b.dataset.g) return; group = b.dataset.g; const g = grp(); if (g && g.freqs[0]) tune(g.freqs[0].mhz, g.freqs[0].name); render(); };
   }
-  // the KLAX pill in the right-hand column (map108 controls) opens airport focus
+  // 1.3.2: the 'ICAO ▾' button replaces CENTER LAX (and the 1.2.5 KLAX pill). It follows the map: the airport nearest the
+  // map center. Tap the code = center on it (with two radios: airport focus); tap ▾ = nearby airports with distances.
+  let NEAR = [], ddOpen = false, ddAnchor = null, nearT = 0, nearSeq = 0;
+  const SHORT = { tower: 'TWR', ground: 'GND', approach: 'APP', atis: 'ATIS', clearance: 'CLR', ctaf: 'CTAF', unicom: 'UNIC' };
   function addAirportPill() {
-    const col = document.querySelector('.m-r'); if (!col || kp) return;
-    kp = el('button', 'm-pill hide', 'KLAX'); kp.type = 'button'; kp.id = 'mKlax'; kp.setAttribute('aria-label', 'Focus on LAX airport');
-    kp.onclick = () => focusOn(AP[0]); col.appendChild(kp);
+    const old = $('mcLax'); if (kp || !old) return;
+    kp = el('div', 'apb'); kp.id = 'apB';
+    kp.innerHTML = '<button type="button" class="m-pill on apb-c" id="apBc" aria-label="Center on the airport">' + esc(curIcao()) + '</button>' +
+      '<button type="button" class="m-pill on apb-d" id="apBd" aria-label="Nearby airports" aria-expanded="false">▾</button>';
+    old.replaceWith(kp);
+    const dd = el('div', 'apdd hide'); dd.id = 'apDD'; dd.setAttribute('role', 'listbox'); wrap().appendChild(dd);
+    $('apBc').onclick = () => centerCur();
+    $('apBd').onclick = e => { e.stopPropagation(); ddAnchor = $('apBd'); ddOpen = !ddOpen; paintDD(); };
+    $('apDD').onclick = e => { const b = e.target.closest('button[data-i]'); if (!b) return; ddOpen = false; paintDD(); pick(b.dataset.i); };
+    document.addEventListener('click', e => { if (ddOpen && !kp.contains(e.target) && !$('apDD').contains(e.target) && !(sheet && sheet.contains(e.target))) { ddOpen = false; paintDD(); } });
+  }
+  function curIcao() { const a = AP[0]; return a ? a.icao : '—'; }
+  function paintBtn() { const c = $('apBc'); if (c) c.textContent = curIcao(); const h = $('lspAp'); if (h) h.textContent = curIcao() + ' ▾'; }
+  function paintDD() {
+    const d = $('apDD'); if (!d) return;
+    $('apBd').setAttribute('aria-expanded', ddOpen); d.classList.toggle('hide', !ddOpen);
+    const cur = curIcao();
+    d.innerHTML = '<div class="apdd-h">Near map center</div>' + (NEAR.length ? NEAR.map(a => '<button type="button" data-i="' + esc(a.icao) + '" class="' + (a.icao === cur ? 'on' : '') + '"><span>' + esc(a.icao) + '</span><small>' +
+      (a.icao === cur && a.nm < 1 ? 'centered' : Math.round(a.nm) + ' nm') + '</small></button>').join('') : '<div class="apdd-e">No airports within 60 nm</div>');
+    if (ddOpen && ddAnchor) {   // anchored under whichever ICAO ▾ opened it (map column or Quick Tune header)
+      const w = wrap().getBoundingClientRect(), r = ddAnchor.getBoundingClientRect(), below = r.bottom - w.top + 6;
+      d.style.right = Math.max(8, w.right - r.right) + 'px';
+      if (below + d.offsetHeight > w.height - 8) { d.style.top = ''; d.style.bottom = (w.bottom - r.top + 6) + 'px'; } else { d.style.bottom = ''; d.style.top = below + 'px'; }
+    }
+  }
+  async function load(icao) {
+    let a = AP.find(x => x.icao === icao) || cache[icao];
+    if (!a) { try { a = ((await j('/api/airports?id=' + encodeURIComponent(icao))).airports || [])[0]; } catch (e) { a = null; } }
+    if (a) cache[icao] = a;
+    return a || null;
+  }
+  const cache = {};
+  async function pick(icao) { const a = await load(icao); if (!a) return; setCur(a); centerCur(); }
+  function setCur(a) { if (!a || (AP[0] && AP[0].icao === a.icao)) return; AP = [a]; if (!focus) group = 'tower'; paintBtn(); paintDD(); render(); }
+  function centerCur() {
+    const a = AP[0], m = M(); if (!a || !m || !m.map) return;
+    if (dual() && a.groups && a.groups.length) return focusOn(a);
+    m.follow = false; m.map.easeTo({ center: [a.lon, a.lat], zoom: Math.max(m.map.getZoom(), a.zoom ? a.zoom - 1.5 : 9.5), duration: 600 });
+  }
+  function followMap() {
+    clearTimeout(nearT);
+    nearT = setTimeout(async () => {
+      const m = M(); if (!m || !m.map || focus) return;
+      const c = m.map.getCenter(), seq = ++nearSeq;
+      let d; try { d = await j('/api/airports?lat=' + c.lat.toFixed(4) + '&lon=' + c.lng.toFixed(4) + '&n=5'); } catch (e) { return; }
+      if (seq !== nearSeq || !d || !d.near) return;
+      NEAR = d.near; paintDD();
+      if (NEAR[0]) { const a = await load(NEAR[0].icao); if (seq === nearSeq && a) setCur(a); }
+    }, 500);
   }
 
   // ---------- data ----------
   const dual = () => !!(R && R.dual);
   const degraded = () => !!(R && R.degraded);
   function airport() { return focus || AP[0] || null; }
-  function grp() { const a = airport(); return a && (a.groups.find(g => g.id === group) || a.groups[0]); }
+  function grp() { const a = airport(); return a && a.groups && (a.groups.find(g => g.id === group) || a.groups[0]); }
   async function j(url, opt) { const r = await fetch(url, Object.assign({ cache: 'no-store' }, opt || {})); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || d.message || ('HTTP ' + r.status)); return d; }
   async function pollStrip() {
     try { const d = await j('/api/strip'); R = d.radios || null; R && (R.mode = d.mode && d.mode.mode); } catch (e) {}
@@ -92,7 +142,6 @@
       : '<b>Map radio missing</b><br>SDR 2 is doing everything for now. Plug SDR 1 back in for the full-time map.';
     strip.classList.toggle('hide', !(on || bad));
     strip.classList.toggle('bad', bad);
-    if (kp) kp.classList.toggle('hide', !on || !!focus);
     if (bad) {
       strip.classList.remove('talk');
       strip.querySelector('.ls-ico').innerHTML = WARN;
@@ -127,18 +176,25 @@
     H.classList.toggle('apfocus', !!focus && !picker);
     if (focus) {
       apf.innerHTML = '<div class="apf-h"><b>' + esc(focus.icao) + '</b><span>' + esc(focus.name) + ' · tap to tune</span></div><div class="m-seg">' +
-        focus.groups.map(x => '<button type="button" class="m-pill' + (x.id === group ? ' on' : '') + '" data-g="' + esc(x.id) + '">' + esc(x.label) + '</button>').join('') + '</div>';
+        focus.groups.map(x => '<button type="button" class="m-pill' + (x.id === group ? ' on' : '') + '" data-g="' + esc(x.id) + '">' + esc(SHORT[x.id] || x.label) + '</button>').join('') + '</div>';
       requestAnimationFrame(() => H.style.setProperty('--apf-h', apf.offsetHeight + 'px'));
     }
     sheet.classList.toggle('hide', !picker);
     H.classList.toggle('picker', picker);
     if (picker && a) {
       const cur = air ? mhz : null, gg = grp();
-      sheet.innerHTML = '<div class="lsp-h"><span><b>// Quick tune</b> · map stays live</span><span>' + esc(a.icao) + '</span></div>' +
-        '<div class="m-seg lsp-tabs">' + a.groups.map(x => '<button type="button" class="m-pill' + (x.id === gg.id ? ' on' : '') + '" data-g="' + esc(x.id) + '">' + esc(x.label) + '</button>').join('') + '</div>' +
+      const hd = '<div class="lsp-h"><span><b>// Quick tune</b> · ' + (focus ? 'map stays live' : 'follows the map') + '</span><button type="button" class="m-pill on lsp-ap" id="lspAp" aria-label="Nearby airports">' + esc(a.icao) + ' ▾</button></div>';
+      if (!gg) {   // 1.3.2: no published frequencies -> no Quick Tune (never invented)
+        sheet.innerHTML = hd + '<p class="lsp-n lsp-none">No published tower, ground, approach or ATIS frequencies for ' + esc(a.icao) + ' in the station bank. Quick Tune is off here.</p>';
+        $('lspAp').onclick = e => { e.stopPropagation(); ddAnchor = $('lspAp'); ddOpen = !ddOpen; paintDD(); };
+        return;
+      }
+      sheet.innerHTML = hd +
+        '<div class="m-seg lsp-tabs">' + a.groups.map(x => '<button type="button" class="m-pill' + (x.id === gg.id ? ' on' : '') + '" data-g="' + esc(x.id) + '">' + esc(SHORT[x.id] || x.label) + '</button>').join('') + '</div>' +
         '<div class="lsp-g">' + gg.freqs.map(f => '<button type="button" data-mhz="' + f.mhz + '" data-name="' + esc(f.name) + '" class="' + (cur && Math.abs(cur - f.mhz) < 0.002 ? 'on' : '') + '"><b>' + f3(f.mhz) + '</b><span>' + esc(f.tag || f.name.replace(new RegExp('^(' + a.icao + '|' + a.icao.replace(/^K/, '') + ') '), '')) + '</span></button>').join('') + '</div>' +
         '<div class="lsp-sq"><span>Squelch</span><span class="m-seg">' + SQ.map(([v, t]) => '<button type="button" class="m-pill' + (v === sqAir ? ' on' : '') + '" data-sq="' + v + '">' + t + '</button>').join('') + '</span></div>' +
-        '<p class="lsp-n">Squelch Low or High shows Quiet / Talking. Off plays the hiss between calls.</p>';
+        '<p class="lsp-n">' + esc(a.name) + ' · ' + (focus ? 'focused' : 'follows the map') + ' · ' + (a.source === 'ourairports' ? 'OurAirports' : 'FAA') + '</p>';
+      $('lspAp').onclick = e => { e.stopPropagation(); ddAnchor = $('lspAp'); ddOpen = !ddOpen; paintDD(); };
     }
   }
 
@@ -183,10 +239,10 @@
     const m = M(); if (!m || !m.map || !m.ready) return setTimeout(hookMap, 500);
     const up = m.update.bind(m);
     m.update = function (list, now) { const r = up(list, now); try { if (focus) markApproach(); } catch (e) {} return r; };
-    m.map.on('click', 'lax', () => { if (dual()) focusOn(AP[0]); });
+    m.map.on('click', 'lax', () => { if (dual()) load('KLAX').then(a => a && focusOn(a)); });
     m.map.on('mouseenter', 'lax', () => { if (dual()) m.map.getCanvas().style.cursor = 'pointer'; });
     m.map.on('mouseleave', 'lax', () => { m.map.getCanvas().style.cursor = ''; });
-    addAirportPill(); render();
+    addAirportPill(); m.map.on('moveend', followMap); followMap(); render();
   }
 
   async function start() {
@@ -203,7 +259,7 @@
     let a = AP.find(x => x.icao === icao);
     if (!a) { try { a = ((await j('/api/airports?id=' + encodeURIComponent(icao))).airports || [])[0]; } catch (e) { a = null; } }
     if (!a) return;
-    if (!AP.includes(a)) AP.push(a);
+    cache[a.icao] = a; setCur(a);
     const m = M();
     if (dual()) focusOn(a);
     else if (m && m.map) { m.follow = false; m.map.easeTo({ center: [a.lon, a.lat], zoom: Math.max(a.zoom || 11, 10.5), duration: 700 }); }

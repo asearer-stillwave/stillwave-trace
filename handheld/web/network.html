@@ -34,6 +34,15 @@
   <p>Phones on this Wi‑Fi or the hotspot disconnect now. Turn it back on here on the screen, or reboot.</p>
   <div class="row"><button type="button" class="big" id="wfmNo">Cancel</button><button type="button" class="big primary v-danger" id="wfmYes">Turn off</button></div></div></div>
 
+  <div class="card" id="autocard">
+    <div class="aprow nw-row"><h2>Auto-join known Wi‑Fi</h2><button type="button" class="v-sw" id="aj" role="switch" aria-checked="false" aria-label="Auto-join known Wi‑Fi"></button></div>
+    <p class="note">Joins a saved network if the signal is strong, otherwise starts the Trace hotspot.</p>
+    <div class="now hide" id="ajNow"></div>
+    <h2 class="sub">Saved networks <button type="button" id="ajScan" class="sm">Check signal</button></h2>
+    <div class="aj-list" id="ajList"><p class="note">…</p></div>
+    <p class="note" id="ajNote">Strong = 3 bars or more (about −67 dBm). If Wi‑Fi drops for 30 s, the hotspot comes back.</p>
+  </div>
+
   <div class="card" id="joincard">
     <h2>Join Wi‑Fi</h2>
     <p class="note">Pick a network or type its name. Saved networks need no password.</p>
@@ -309,6 +318,39 @@ async function refresh(){
 }
 refresh();
 loadSaved();
+
+// 1.3.2 auto-join known Wi-Fi (no passwords here: only names, dBm and state)
+const AJS = {joined:'Joined', weak:'Too weak', unseen:'Not seen', ok:'In range'};
+function ajBars(d){ return d == null ? 0 : d >= -55 ? 4 : d >= -67 ? 3 : d >= -75 ? 2 : 1; }
+let ajArm = null;
+function ajPaint(a){
+  const sw = $('aj'); sw.classList.toggle('on', !!a.enabled); sw.setAttribute('aria-checked', String(!!a.enabled));
+  const now = $('ajNow'); now.classList.toggle('hide', !a.current);
+  if (a.current) now.textContent = 'Connected · ' + a.current + (a.auto ? ' · joined automatically' : '');
+  const L = $('ajList'); L.textContent = '';
+  if (!a.networks || !a.networks.length) { L.appendChild(el('p','note','No saved networks yet. Join one below and Trace remembers it.')); }
+  for (const n of a.networks || []) {
+    const r = el('div', 'aj-row' + (n.state === 'joined' ? ' on' : '')); r.appendChild(el('span','aj-n',n.ssid));
+    const m = el('span','aj-m'); const b = el('span','aj-bars'); const k = ajBars(n.signal);
+    for (let i = 0; i < 4; i++) { const x = el('i', i < k ? (k < 3 ? 'w' : 'g') : ''); x.style.height = (4 + i * 3) + 'px'; b.appendChild(x); }
+    m.appendChild(b); m.appendChild(el('span', 'aj-s ' + n.state, (n.signal != null ? n.signal + ' dBm · ' : '') + (AJS[n.state] || n.state)));
+    r.appendChild(m);
+    const f = el('button', 'sm', ajArm === n.ssid ? 'Tap again' : 'Forget'); f.type = 'button';
+    f.onclick = async () => {
+      if (ajArm !== n.ssid) { ajArm = n.ssid; ajPaint(a); setTimeout(() => { if (ajArm === n.ssid) { ajArm = null; ajPaint(a); } }, 3500); return; }
+      ajArm = null; try { ajPaint(await jfetch('/api/net/wifi-auto', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({forget: n.ssid})})); loadSaved(); setMsg('Forgotten.', 'ok'); } catch (e) { setMsg(e.message, 'err'); }
+    };
+    r.appendChild(f); L.appendChild(r);
+  }
+  const h = a.hostname ? a.hostname.toLowerCase() : '';
+  $('ajNote').textContent = 'Strong = 3 bars or more (about ' + String(a.threshold || -67).replace('-', '−') + ' dBm). If Wi‑Fi drops for 30 s, the hotspot comes back.' + (h ? ' On home Wi‑Fi, put your phone on the same network and open http://' + h + '.local/' : '');
+}
+async function ajLoad(body){
+  try { ajPaint(await jfetch('/api/net/wifi-auto', body ? {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {})); } catch (e) { $('ajList').textContent = ''; $('ajList').appendChild(el('p','note','Auto-join status unavailable: ' + e.message)); }
+}
+$('aj').onclick = () => ajLoad({enabled: !$('aj').classList.contains('on')});
+$('ajScan').onclick = async () => { $('ajScan').disabled = true; await ajLoad({rescan: true}); $('ajScan').disabled = false; };
+ajLoad();
 </script>
 </body>
 </html>

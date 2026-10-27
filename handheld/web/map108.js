@@ -15,7 +15,7 @@
   fs.title = 'Full screen'; fs.onclick = () => { const on = !H.classList.contains('mapfs'); H.classList.toggle('mapfs', on); try { if (H.classList.contains('embed')) window.parent.document.documentElement.classList.toggle('mapfs', on); } catch (e) {} fs.classList.toggle('on', on); fs.title = on ? 'Show the status bar and menu' : 'Full screen'; layout(); };
   tr.append(seg, fs);
   const r = document.createElement('div'); r.className = 'm-ov m-r';
-  const map = { cLax: 'Center LAX', cMe: 'Center me', tRings: 'Rings <span id="mRingsV">3</span>', tLabels: 'Labels' };
+  const map = { cLax: 'KLAX ▾', cMe: 'Center me', tRings: 'Rings <span id="mRingsV">3</span>', tLabels: 'Labels' };
   for (const [id, t] of Object.entries(map)) {
     const p = pill(t, 'm' + id, $(id).classList.contains('on') ? 'on' : ''); p.onclick = () => { $(id).click(); sync(); }; r.appendChild(p);
   }
@@ -57,6 +57,7 @@
   function layout() {
     const st = $('qstrip'), tb = $('qtabs'), side = tb && getComputedStyle(tb).flexDirection === 'column', vis = e => e && getComputedStyle(e).display !== 'none';
     H.style.setProperty('--m-t', (vis(st) ? st.offsetHeight : 0) + 'px');
+    H.style.setProperty('--m-tr-w', tr.offsetWidth + 'px');   // 1.3.2: the count chip stops short of MAP / LIST
     H.style.setProperty('--m-b', (!side && vis(tb) ? tb.offsetHeight : 0) + 'px');
     H.style.setProperty('--m-l', (side && vis(tb) ? tb.offsetWidth : 0) + 'px');
     setTimeout(() => window.dispatchEvent(new Event('resize')), 50);

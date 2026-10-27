@@ -446,7 +446,7 @@ def cmd_status():
     used = sum(i["bytes"] for i in installed()) + (os.path.getsize(la) if os.path.isfile(la) else 0)
     parts = {f[:-13]: os.path.getsize(os.path.join(PACKS, f)) for f in (os.listdir(PACKS) if os.path.isdir(PACKS) else []) if f.endswith(".pmtiles.part")}
     return {"ok": True, "content_url": content_url(), "packs": installed(), "builtin_bytes": os.path.getsize(la) if os.path.isfile(la) else 0,
-            "maps_bytes": used, "free": free_bytes(), "reserve": RESERVE, "queue": queue_get(), "job": j, "partial": parts,
+            "maps_bytes": used, "free": free_bytes(), "disk_total": shutil.disk_usage(MAPS).total, "reserve": RESERVE, "queue": queue_get(), "job": j, "partial": parts,
             "worker": bool(worker_pid()), "bank": bank_meta(), "net": net_state()}
 
 

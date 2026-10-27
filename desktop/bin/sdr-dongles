@@ -6,7 +6,7 @@
   sdr-dongles swap                       1.2.5: swap the map and airband dongles
   sdr-dongles label adsb|radio           write the serial label into the ONLY plugged-in dongle's EEPROM (rtl_eeprom), then replug it
 Roles: 1.2.5 roles saved by serial (Radio roles page) win; otherwise the 1.0.9 serial labels STILLWAVE-ADSB / STILLWAVE-RADIO.
-adsb = SDR 1, the aircraft map full time (1090 MHz). radio = SDR 2, Listen (airband) / Scan / Spectrum. spare = not used.
+adsb = SDR 1, the aircraft map full time (1090 MHz). radio = SDR 2, Listen (airband) / Spectrum. spare = not used.
 With one dongle (or roles missing / duplicate serials) everything shares one dongle, exactly like before (single-dongle fallback)."""
 import glob, json, os, re, subprocess, sys, time
 SYS = os.environ.get("SDR_USB_SYSFS", "/sys/bus/usb/devices")
@@ -65,17 +65,17 @@ def summary(resolve=True):
     degraded = assigned and bool(missing) and len(ds) >= 1
     if not ds: msg = "No radio detected. Check that the SDR dongle is plugged in (try another USB port), then tap Reset SDR USB."
     elif dups: msg = "Two dongles share the serial %s. Give each one its own serial (see the guide), then pick roles." % dups[0]
-    elif dual: msg = "Two radios: SDR 1 runs the map full time, SDR 2 does Listen (airband) / Scan / Spectrum."
-    elif degraded and "radio" in missing: msg = "Airband radio (SDR 2) missing. The map still runs; Listen, Scan and Spectrum share SDR 1."
+    elif dual: msg = "Two radios: SDR 1 runs the map full time, SDR 2 does Listen (airband) / Spectrum."
+    elif degraded and "radio" in missing: msg = "Airband radio (SDR 2) missing. The map still runs; Listen and Spectrum share SDR 1."
     elif degraded: msg = "Map radio (SDR 1) missing. Everything shares SDR 2 until it is back."
     elif len(ds) >= 2: msg = "%d dongles found. Pick a job for each one below." % len(ds)
-    else: msg = "One dongle: Listen, Map, Scan and Spectrum take turns."
-    # 1.3.1 AIS: needs a dongle of its own (never the only one). With ADS-B + AIS, Listen / Scan / Spectrum share the map dongle.
+    else: msg = "One dongle: Listen, Map and Spectrum take turns."
+    # 1.3.1 AIS: needs a dongle of its own (never the only one). With ADS-B + AIS, Listen / Spectrum share the map dongle.
     ais = by["ais"][0] if len(by["ais"]) == 1 and len(ds) >= 2 and not dups else None
     if len(by["ais"]) == 1 and len(ds) == 1: msg = "AIS needs its own dongle: plug in a second SDR. With one dongle the boats layer stays off."
     elif ais and not dual:
         others = [d for d in ds if d is not ais]
-        msg = "Two radios: one runs AIS (boats) full time; the other does the map, Listen, Scan and Spectrum (taking turns)." if len(others) == 1 else msg
+        msg = "Two radios: one runs AIS (boats) full time; the other does the map, Listen and Spectrum (taking turns)." if len(others) == 1 else msg
     elif ais and dual: msg = "Three radios: map, airband and AIS (boats) all run at once."
     out = {"ok": True, "count": len(ds), "dual": dual, "dongles": ds, "message": msg, "duplicates": dups,
            "assigned": assigned, "degraded": degraded, "missing": missing, "ais": bool(ais), "ais_decoder": ais_decoder()}

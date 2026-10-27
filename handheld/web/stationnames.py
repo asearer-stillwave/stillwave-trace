@@ -120,8 +120,19 @@ def quick_tag(grp, label):
 
 
 def quick_tags(grp, labels):
-    """Tags for one group's labels (same order); duplicates get 1, 2, 3."""
+    """Tags for one group's labels (same order); duplicates get 1, 2, 3.
+    1.3.2: bearing sectors are kept only when EVERY frequency of that kind has one (KLAX: APP NW / SE / NE, DEP SE / NW).
+    When sector ranges are mixed with frequencies that have nothing to tell them apart (KSBA "App/Departure 151-329" next
+    to plain "App/Departure"), the whole kind is numbered instead (APP 1, APP 2 ...). A raw bearing range such as
+    "APP 151-329" never reaches a button."""
     t = [quick_tag(grp, l) for l in labels]
+    rng = [bool(re.search(r"\b(\d{3})[- ](\d{3})\b", l or "")) for l in labels]
+    kind = [x.split(" ")[0] if not x.startswith("CLASS") else x for x in t]
+    for k in set(kind):
+        idx = [i for i, y in enumerate(kind) if y == k]
+        if any(rng[i] for i in idx) and not all(rng[i] for i in idx):
+            for i in idx: t[i] = k
+    t = [re.sub(r"\s*\b\d{3}[- ]\d{3}\b.*$", "", x) or x for x in t]
     for x in set(t):
         idx = [i for i, y in enumerate(t) if y == x]
         if len(idx) > 1:

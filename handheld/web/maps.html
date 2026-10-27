@@ -13,13 +13,13 @@
 <div class="wrap">
   <div class="pre-back-h nav-back"><a class="btn sm fm-edit" href="/settings" aria-label="Back to Settings"><span aria-hidden="true">‹</span> Settings</a></div>
   <div class="brand"><h1>Download <span class="acc">maps</span></h1></div>
-  <p class="lead">Pick a small part of the world at a time. Maps work with no internet once they are on the box.</p>
+  <p class="lead">Maps work offline once they are on the SD card.</p>
   <div id="warn"></div>
-  <div class="card mp-store" id="store"><div class="st-h"><span>Storage</span><span id="stH">—</span></div><div class="mp-bar" id="stBar"></div><p class="note" style="margin:0" id="stN">—</p></div>
+  <div class="card mp-store" id="store"><div class="st-h"><span>SD card</span><span id="stH">—</span></div><div class="mp-bar" id="stBar"></div><p class="note" style="margin:0" id="stN">—</p></div>
   <div id="job"></div>
   <h2 class="mgrp">My maps</h2>
   <div class="mp-list" id="mine"></div>
-  <h2 class="mgrp" id="brH">Add a region</h2>
+  <h2 class="mgrp" id="brH">Get more maps</h2>
   <div id="crumb"></div>
   <div id="browse"></div>
   <details class="card" id="srcBox" style="margin-top:1rem"><summary>Content source</summary>
@@ -36,7 +36,7 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
 const MB = n => n >= 1e9 ? (n/1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n/1e6)) + ' MB';
-const DETAIL = {street:'Street detail', towns:'Highways and towns', overview:'Zoomed-out overview'};
+const DETAIL = {street:'Streets', towns:'Towns', overview:'Overview'};
 let ST = null, CAT = null, path = [], armed = null, lastErr = null;
 function msg(t, k){ const m = $('msg'); m.className = 'status mp-msg ' + (k || ''); m.textContent = t || ''; }
 async function J(url, opt){ const r = await fetch(url, Object.assign({cache:'no-store'}, opt || {})); const d = await r.json().catch(() => ({})); if (!r.ok || d.ok === false) { const e = new Error(d.error || d.message || ('HTTP ' + r.status)); e.d = d; throw e; } return d; }
@@ -45,11 +45,13 @@ const row = (t, s, sz, end, attrs) => `<div class="mp-row${attrs ? ' click' : ''
 
 function renderStore(){
   if (!ST) return;
-  const used = ST.maps_bytes, free = ST.free, tot = used + free;
+  // 1.3.2: the whole SD card: system + other | maps | downloading | free
+  const used = ST.maps_bytes, free = ST.free, tot = ST.disk_total || (used + free), other = Math.max(0, tot - free - used);
   const dl = ST.queue.length && CAT ? ST.queue.reduce((a, id) => a + ((CAT.packs.find(p => p.id === id) || {}).bytes || 0), 0) : 0;
-  $('stH').textContent = MB(Math.max(0, free - ST.reserve)) + ' usable';
-  $('stBar').innerHTML = `<i style="width:${Math.max(1, used/tot*100).toFixed(1)}%"></i>${dl ? `<i class="dl" style="width:${Math.max(1, dl/tot*100).toFixed(1)}%"></i>` : ''}`;
-  $('stN').textContent = `Maps ${MB(used)}${dl ? ' + ' + MB(dl) + ' downloading' : ''} · ${MB(free)} free (1 GB is kept spare)`;
+  const pc = n => Math.max(n > 0 ? 1 : 0, n / tot * 100).toFixed(1);
+  $('stH').textContent = MB(Math.max(0, free - ST.reserve)) + ' free for maps';
+  $('stBar').innerHTML = `<i class="sys" style="width:${pc(other)}%"></i><i style="width:${pc(used)}%"></i>${dl ? `<i class="dl" style="width:${pc(dl)}%"></i>` : ''}`;
+  $('stN').innerHTML = `<span class="k sys"></span>System ${MB(other)} · <span class="k"></span>Maps ${MB(used)}${dl ? ' · <span class="k dl"></span>' + MB(dl) + ' coming' : ''} · ${MB(free)} free of ${MB(tot)} (1 GB kept spare)`;
 }
 function renderJob(){
   const j = ST.job || {}, q = ST.queue || [], name = id => ((CAT && CAT.packs.find(p => p.id === id)) || {}).name || id;
@@ -73,7 +75,7 @@ function renderMine(){
   let h = row('Los Angeles metro', 'Built in · street detail', MB(ST.builtin_bytes || 0), '<span class="mp-tag">Built in</span>');
   for (const p of ST.packs) {
     const del = armed === p.id ? 'Tap again' : 'Delete';
-    h += row(esc(p.name), esc((DETAIL[p.detail] || 'Map') + ' · ' + (p.installed || '')), MB(p.bytes),
+    h += row(esc(p.name), esc(DETAIL[p.detail] || 'Map'), MB(p.bytes),
       `<span class="mp-btns"><button type="button" class="sm" data-a="view" data-id="${esc(p.id)}">View</button><button type="button" class="sm v-warn" data-a="delete" data-id="${esc(p.id)}">${del}</button></span>`);
   }
   $('mine').innerHTML = h;
@@ -98,9 +100,15 @@ function renderBrowse(){
     : net === 'offline' ? `<div class="mp-warn"><b>No internet.</b> Connect to Wi‑Fi to download maps.</div>`
     : CAT.online === false ? `<div class="mp-warn"><b>Offline.</b> Showing the last map list. ${esc(CAT.message || '')}</div>` : '';
   if (CAT.source === 'protomaps' && CAT.note) h += `<p class="note">${esc(CAT.note)}</p>`;
+  // 1.3.2: one Download button per pack; a pack bigger than the free space (minus the 1 GB spare) says so before you tap
+  const room = Math.max(0, ST.free - ST.reserve - (ST.queue || []).reduce((a, id) => a + (((CAT.packs.find(p => p.id === id)) || {}).bytes || 0), 0));
   const ps = packsIn(cur);
-  if (ps.length) h += `<div class="mp-list">${ps.map(p => row(esc(p.name), esc((p.sub ? p.sub + ' · ' : '') + (DETAIL[p.detail] || '') + (p.build ? ' · ' + p.build.slice(0,4) + '-' + p.build.slice(4,6) : '')), (p.estimate ? '~' : '') + MB(p.bytes),
-      have.has(p.id) ? '<span class="mp-tag">On box</span>' : q.has(p.id) ? '<span class="mp-tag">Queued</span>' : `<button type="button" class="sm primary" data-a="get" data-id="${esc(p.id)}"${canGet ? '' : ' disabled'}>Get</button>`)).join('')}</div>`;
+  const tooBig = ps.filter(p => !have.has(p.id) && !q.has(p.id) && p.bytes > room);
+  if (tooBig.length) h += `<div class="mp-warn"><b>Won't fit.</b> ${tooBig.length === 1 ? esc(tooBig[0].name) + ' needs ' + MB(tooBig[0].bytes) + '; ' + MB(room) + ' is free.' : tooBig.length + ' maps here are bigger than the ' + MB(room) + ' free.'} Delete a map above to make room.</div>`;
+  if (ps.length) h += `<div class="mp-list">${ps.map(p => row(esc(p.name), esc((p.sub ? p.sub + ' · ' : '') + (DETAIL[p.detail] || '')), (p.estimate ? '~' : '') + MB(p.bytes),
+      have.has(p.id) ? '<span class="mp-tag">On SD</span>' : q.has(p.id) ? '<span class="mp-tag">Queued</span>' : p.bytes > room ? '<span class="mp-tag warn">Too big</span>' : `<button type="button" class="sm primary" data-a="get" data-id="${esc(p.id)}"${canGet ? '' : ' disabled'}>Download</button>`)).join('')}</div>`;
+  // 1.3.2: z14 street level for the whole USA is not ready; listed so it is not a surprise
+  if (!cur || /^(us|usa|north-america|na)$/i.test(cur || '')) h += `<div class="mp-list mp-soon">${row('USA street level', 'z14 · ~8.8 GB · coming soon', '', '<button type="button" class="sm" disabled aria-disabled="true">Soon</button>')}</div>`;
   const ks = kids(cur);
   if (ks.length) h += (ps.length ? '<h2 class="mgrp">Areas inside</h2>' : '') + `<div class="mp-list">${ks.map(r => { const n = countPacks(r.id); return row(esc(r.name), esc(r.sub || (n + (n === 1 ? ' map' : ' maps'))), '', null, `data-a="open" data-id="${esc(r.id)}" role="button" tabindex="0"`); }).join('')}</div>`;
   if (!ps.length && !ks.length) h += '<p class="note">Nothing to download here yet.</p>';

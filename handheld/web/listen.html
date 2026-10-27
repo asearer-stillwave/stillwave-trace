@@ -135,14 +135,27 @@ function shortOf(st){
   return call + ' ' + mhz;
 }
 // 1.3: LIVE indicator + Stop / Play in the activity strip (the audio element itself is hidden)
-let userStopped = false;
+// 1.3.2 fix: 1.3.1 only looked at the browser <audio> element, so while the Pi itself played to the Bluetooth speaker
+// (fm_stream.sh AUDIO_OUT=speaker|both: rtl_fm -> ffmpeg -> PipeWire on the Pi, no browser stream at all) the strip said
+// OFF / PLAY. Now it also reads the Pi's real playback from /api/strip "live" (pi_playing) and STOP stops the Pi.
+let userStopped = false, piLive = null;
+function piPlaying(){ return !!(piLive && piLive.pi_playing); }
 function liveShow(){
   const p = document.getElementById('player'), lv = document.getElementById('vLive'), b = document.getElementById('vStop');
   if (!p || !lv) return;
-  const on = !p.paused && !p.ended && p.readyState > 2;
-  lv.textContent = on ? 'Live' : (p.paused ? (userStopped ? 'Stopped' : 'Off') : 'Wait');
+  const web = !p.paused && !p.ended && p.readyState > 2, pi = piPlaying();
+  const on = web || pi;
+  lv.textContent = on ? 'Live' : (pi === false && piLive && piLive.pi_out && piLive.radio === 'off' ? 'Stopped' : (p.paused ? (userStopped ? 'Stopped' : 'Off') : 'Wait'));
   lv.className = 'v-live' + (on ? '' : ' off');
-  b.textContent = p.paused ? '▶ Play' : '■ Stop'; b.setAttribute('aria-label', p.paused ? 'Play audio' : 'Stop audio');
+  const stop = web || pi;
+  b.textContent = stop ? '■ Stop' : '▶ Play'; b.setAttribute('aria-label', stop ? 'Stop audio' : 'Play audio');
+  b.title = pi && !web ? 'Playing on the Pi speaker' : '';
+}
+document.addEventListener('fieldnote-strip', e => { const d = e.detail; piLive = d && d.live ? d.live : null; liveShow(); });
+async function piSet(play){
+  try { await fetch('/api/listen/pi', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({play})}); } catch (e) {}
+  piLive = Object.assign({}, piLive || {}, {pi_playing: false, radio: play ? 'tuning' : 'off'}); liveShow();
+  if (window.fieldnoteStrip) setTimeout(() => window.fieldnoteStrip.refresh(), play ? 2500 : 400);
 }
 function nameOf(st){ return (st && st.name) ? st.name : 'Unknown'; }
 function setMsg(t,k){ const el=document.getElementById('msg'); el.className='status '+(k||''); el.textContent=t||''; }
@@ -208,7 +221,7 @@ function render(s){
   for(const st of stations){
     if(!st||!st.id) continue;
     const b=document.createElement('button'); b.type='button';
-    b.className='v-pre station'+(current&&current.id===st.id?' on':'');
+    b.className='v-pre fm-st'+(current&&current.id===st.id?' on':'');
     const f = fmMHz(st); b.innerHTML='<b></b><span></span>';
     b.firstChild.textContent = f == null ? '—' : f.toFixed(1); b.lastChild.textContent = nameOf(st).split(/\s+/)[0];
     b.title=nameOf(st); b.setAttribute('aria-label', nameOf(st));
@@ -219,7 +232,7 @@ function render(s){
 window.fmTuneStation = st => tune(st);
 async function tune(st){
   setMsg('Tuning '+nameOf(st)+'…','ok');
-  document.querySelectorAll('button.station').forEach(b=>b.disabled=true);
+  document.querySelectorAll('button.fm-st').forEach(b=>b.disabled=true);
   try{
     const r=await fetch('/api/station/'+encodeURIComponent(st.id),{method:'POST'});
     const j=await r.json().catch(()=>({}));
@@ -232,7 +245,7 @@ async function tune(st){
     if(window.listenReload) window.listenReload();
     await attach(true);
   }catch(e){ setMsg(e.message,'err'); }
-  document.querySelectorAll('button.station').forEach(b=>b.disabled=false);
+  document.querySelectorAll('button.fm-st').forEach(b=>b.disabled=false);
 }
 async function boot(){
   attach(false);
@@ -250,19 +263,40 @@ boot();
   let L = {airband:[], noaa:[], band:'fm', bands:{}}, band = 'fm', af = 133.9, step = 0.025, edit = false, tuneTo = null;
   const sqOf = b => String(((L.bands||{})[b]||{}).squelch ?? 0);
   // 1.3.1 audio filters (FM: rate / high-pass / low-pass; airband: high-pass / low-pass, default 200-3400 Hz)
-  const FOPT = {fm:{rate:[['24000','24k'],['32000','32k'],['44100','44.1k'],['48000','48k']], hp:[['30','30'],['50','50'],['100','100'],['200','200']], lp:[['5000','5k'],['8500','8.5k'],['12000','12k'],['15000','15k']]},
+  const FOPT = {fm:{rate:[['24000','24k'],['32000','32k'],['44100','44.1k'],['48000','48k']], hp:[['50','50'],['60','60'],['70','70'],['80','80']], lp:[['6000','6k'],['7000','7k'],['8000','8k'],['9000','9k']]},   // 1.3.2 options, defaults 50 / 8k
                 airband:{hp:[['100','100'],['200','200'],['300','300']], lp:[['2800','2.8k'],['3400','3.4k'],['4000','4k'],['5000','5k']]}};
+  // 1.3.2 APPLY / CANCEL (FM + airband): taps only mark a change as pending (striped, dashed amber); nothing retunes
+  // until APPLY sends them all at once. CANCEL drops them. NOAA (gain / squelch only) still saves on tap.
+  const APPLY_BANDS = ['fm', 'airband'], pend = {fm:{}, airband:{}};
+  function curOf(b, k){
+    const cfg = (L.bands||{})[b] || {};
+    if (k === 'gain') return cfg.gain == null ? 'station' : String(cfg.gain);
+    if (k === 'squelch') return sqOf(b);
+    return String(cfg[k] ?? (b === 'fm' ? cfg['station_' + k] : '') ?? '');
+  }
+  const same = (a, b) => a === b || (a !== 'station' && b !== 'station' && a !== '' && b !== '' && String(parseFloat(a)) === String(parseFloat(b)));
   function drawSets(){
     document.querySelectorAll('.v-bandset').forEach(card => {
-      const b = card.dataset.band, cfg = (L.bands||{})[b] || {}, g = cfg.gain == null ? 'station' : String(cfg.gain);
+      const b = card.dataset.band, P = pend[b] || {};
+      const val = k => (k in P) ? P[k] : curOf(b, k);
+      const cls = (k, v) => { const on = same(v, curOf(b, k)), pd = (k in P) && same(v, P[k]); return on || pd ? ' class="' + (on ? 'on' : '') + (pd ? ' pend' : '') + '"' : ''; };
       const gs = card.querySelector('.bs-gain');
-      gs.innerHTML = GAINS[b].map(([v, t]) => '<button type="button" data-g="' + v + '"' + (String(parseFloat(v)) === String(parseFloat(g)) || v === g ? ' class="on"' : '') + '>' + t + '</button>').join('');
-      card.querySelectorAll('.bs-sq button').forEach(x => x.classList.toggle('on', x.dataset.q === sqOf(b)));
+      gs.innerHTML = GAINS[b].map(([v, t]) => '<button type="button" data-g="' + v + '"' + cls('gain', v) + '>' + t + '</button>').join('');
+      card.querySelectorAll('.bs-sq button').forEach(x => { x.classList.toggle('on', same(x.dataset.q, curOf(b, 'squelch'))); x.classList.toggle('pend', ('squelch' in P) && same(x.dataset.q, P.squelch)); });
       card.querySelectorAll('.bs-f').forEach(sp => { const k = sp.dataset.k, opts = (FOPT[b]||{})[k] || [];
-        const cur = String(cfg[k] ?? (b === 'fm' ? cfg['station_' + k] : '') ?? '');
-        sp.innerHTML = opts.map(([v, t]) => '<button type="button" data-f="' + k + '" data-v="' + v + '"' + (v === cur ? ' class="on"' : '') + '>' + t + '</button>').join(''); });
-      // 1.3: the gear shows the current values ("30 · LOW", "GAIN AUTO"); no help paragraph
-      const gt = g === 'station' ? 'Gain auto' : (String(parseFloat(g)) === '49.6' ? 'Max' : String(parseFloat(g)));
+        sp.innerHTML = opts.map(([v, t]) => '<button type="button" data-f="' + k + '" data-v="' + v + '"' + cls(k, v) + '>' + t + '</button>').join(''); });
+      if (APPLY_BANDS.includes(b)) {
+        let ft = card.querySelector('.bs-apply');
+        if (!ft) { ft = document.createElement('div'); ft.className = 'bs-apply';
+          ft.innerHTML = '<p class="bs-pend" role="status" aria-live="polite"></p><div class="bs-btns"><button type="button" class="bs-cancel">Cancel</button><button type="button" class="primary bs-go">Apply</button></div>';
+          card.appendChild(ft); }
+        const n = Object.keys(P).length;
+        ft.querySelector('.bs-pend').textContent = n ? '● ' + n + (n === 1 ? ' change' : ' changes') + ' pending · radio not retuned yet' : '';
+        ft.querySelector('.bs-pend').hidden = !n;
+        ft.querySelector('.bs-cancel').disabled = !n; ft.querySelector('.bs-go').disabled = !n;
+      }
+      // 1.3: the gear shows the current (applied) values ("30 · LOW", "GAIN AUTO"); no help paragraph
+      const ga = curOf(b, 'gain'), gt = ga === 'station' ? 'Gain auto' : (String(parseFloat(ga)) === '49.6' ? 'Max' : String(parseFloat(ga)));
       const sq = {'0':'Off','20':'Low','50':'High'}[sqOf(b)] || sqOf(b);
       const gv = document.querySelector('.v-gear[data-band="' + b + '"] .v-gv'); if (gv) gv.textContent = b === 'fm' ? gt : gt.replace('Gain auto', 'Auto') + ' · ' + sq;
     });
@@ -271,16 +305,25 @@ boot();
     try{
       const r = await fetch('/api/listen/band', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.assign({band: b}, body))});
       const j = await r.json().catch(() => ({})); if(!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      L.bands = j.bands || L.bands; drawSets();
+      L.bands = j.bands || L.bands; if (pend[b]) pend[b] = {}; drawSets();
       setMsg('Saved for ' + ({fm:'FM', airband:'airband', noaa:'NOAA'})[b] + (L.band === b ? '; the stream restarts for a second' : '') + '.', 'ok');
-      if(L.band === b){ await waitReady(15000); await attach(true); }
+      if(L.band === b){ if (window.fieldnoteStrip) window.fieldnoteStrip.refresh(); await waitReady(15000); await attach(true); }
     }catch(e){ setMsg(e.message, 'err'); }
   }
   document.querySelectorAll('.v-bandset').forEach(card => card.onclick = e => {
-    const x = e.target.closest('button'); if(!x) return;
-    if(x.dataset.g) saveSet(card.dataset.band, {gain: x.dataset.g});
-    else if(x.dataset.q) saveSet(card.dataset.band, {squelch: +x.dataset.q});
-    else if(x.dataset.f) saveSet(card.dataset.band, {[x.dataset.f]: x.dataset.v});
+    const x = e.target.closest('button'); if(!x) return; const b = card.dataset.band;
+    let k = null, v = null;
+    if(x.dataset.g) { k = 'gain'; v = x.dataset.g; }
+    else if(x.dataset.q) { k = 'squelch'; v = x.dataset.q; }
+    else if(x.dataset.f) { k = x.dataset.f; v = x.dataset.v; }
+    if (x.classList.contains('bs-cancel')) { pend[b] = {}; drawSets(); setMsg(''); return; }
+    if (x.classList.contains('bs-go')) { const P = pend[b], body = {};
+      for (const [kk, vv] of Object.entries(P)) body[kk] = kk === 'squelch' ? +vv : vv;
+      if (Object.keys(body).length) saveSet(b, body); return; }
+    if (!k) return;
+    if (!APPLY_BANDS.includes(b)) { saveSet(b, {[k]: k === 'squelch' ? +v : v}); return; }
+    if (same(v, curOf(b, k))) delete pend[b][k]; else pend[b][k] = v;
+    drawSets();
   });
   const fmt = f => f.toFixed(3);
   function showBand(b){
@@ -309,7 +352,10 @@ boot();
     } catch (e) {}
   }
   setInterval(level, 1500); level();
-  $('vStop').onclick = () => { const p = $('player'); if (p.paused) { userStopped = false; attach(true); } else { userStopped = true; p.pause(); p.removeAttribute('src'); p.load(); liveShow(); } };
+  $('vStop').onclick = () => { const p = $('player'), web = !p.paused;
+    if (web || piPlaying()) { userStopped = true; if (web) { p.pause(); p.removeAttribute('src'); p.load(); } if (piPlaying()) piSet(false); liveShow(); }
+    else if (piLive && piLive.pi_out) { userStopped = false; piSet(true); }
+    else { userStopped = false; attach(true); } };
   // 1.3: +/- snap to the nearest valid channel on the chosen grid (25 kHz, or 8.33 kHz = 25/3 kHz); off-grid goes to the next channel that way
   const G = () => step === 0.025 ? 40 : 120;   // channels per MHz
   function snap(f){ return Math.round(f * G()) / G(); }
@@ -429,7 +475,7 @@ boot();
   load().then(() => {
     let b = q.get('band') || (L.band && L.band !== 'other' ? L.band : '') || localStorage.getItem('listenBand') || 'fm';
     showBand(b);
-    if(isFinite(qf) && q.get('tune') === '1'){        // Scan > LISTEN: tune that frequency with the right demod
+    if(isFinite(qf) && q.get('tune') === '1'){        // Spectrum tap-to-listen (?f=…&tune=1): tune that frequency with the right demod
       const d = qf >= 87.5 && qf <= 108 ? 'wfm' : qf >= 118 && qf <= 137 ? 'am' : 'nfm';
       if(d === 'wfm') tune(qf, 'wfm', '', 'fm'); else tune(qf, d, '', d === 'am' ? 'airband' : (qf >= 162.39 && qf <= 162.56 ? 'noaa' : 'other'));
       history.replaceState(null, '', location.pathname);

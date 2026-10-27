@@ -1,6 +1,6 @@
 // Stillwave Trace dongle mode (1.0.8: START screen per tab, no mode row).
-// Load /mode.js on a page; <body data-mode="fm|spectrum|detect|adsb"> ties the page to a mode. (Page navigation is the tab bar in nav.js.)
-// One RTL-SDR: Listen (FM), Spectrum, Scan and ADS-B take turns owning it.
+// Load /mode.js on a page; <body data-mode="fm|spectrum|adsb"> ties the page to a mode. (Page navigation is the tab bar in nav.js.)
+// One RTL-SDR: Listen (FM), Spectrum and ADS-B take turns owning it.
 (function(){
   // Kiosk flag for the Trace display: /?kiosk=1 sets it (kiosk=0 clears), then it sticks
   // for this browser profile so every page hides the pointer.
@@ -17,13 +17,12 @@
   const MODES = [
     {id:'fm', label:'FM radio', page:'/listen', start:'Start listening', tab:'Listen'},
     {id:'spectrum', label:'Spectrum', page:'/spectrum', start:'Start spectrum', tab:'Spectrum'},
-    {id:'detect', label:'Scan', page:'/scan', start:'Start scan', tab:'Scan'},
     {id:'adsb', label:'ADS-B', page:'/adsb', start:'Start map', tab:'Map'}
   ];
   // 1.0.8: no SDR MODE row. Each tab belongs to one dongle mode (<body data-mode="...">). When the dongle is doing
   // something else the page shows the START screen (mode line + big START button). Opening a tab never switches.
   const PAGE_MODE = document.body && document.body.dataset.mode;
-  const NAMES = {fm:'FM', spectrum:'SPECTRUM', detect:'SCAN', adsb:'ADS-B', none:'NO', unknown:'UNKNOWN'};
+  const NAMES = {fm:'FM', spectrum:'SPECTRUM', adsb:'ADS-B', none:'NO', unknown:'UNKNOWN'};
   let gate = null;
   function gateRender(s){
     if(!PAGE_MODE) return;

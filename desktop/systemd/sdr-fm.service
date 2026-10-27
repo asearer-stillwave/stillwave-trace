@@ -3,8 +3,8 @@ Description=RTL-SDR FM receiver -> Icecast and/or the Pi speaker
 After=network-online.target icecast2.service
 Wants=network-online.target
 Requires=icecast2.service
-# One dongle: starting FM stops spectrum / detect / ADS-B (see sdr-mode)
-Conflicts=sdr-spectrum.service sdr-detect.service sdr-adsb.service
+# One dongle: starting FM stops spectrum / ADS-B (see sdr-mode)
+Conflicts=sdr-spectrum.service sdr-adsb.service
 
 [Service]
 Type=simple
