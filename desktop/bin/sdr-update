@@ -740,6 +740,10 @@ def install_verified(tgz, inner, source, reinstall=False):
             prune({ver, cur})
         shutil.rmtree(os.path.join(STATE, "staging"), ignore_errors=True)
         msg = f"Updated to {ver}."
+        try:   # 1.3.3: an update turns the splash on (auto honors an explicit off), then checks it; never fatal
+            subprocess.run(["bash", os.path.join(src, "bin", "sdr-splash"), "auto"], capture_output=True, text=True, timeout=900)
+        except Exception as e:
+            log(f"boot splash auto after update: {e}")
         try:   # 1.3.1: a skipped/broken boot splash is reported, never a silent OK
             sp = subprocess.run(["bash", os.path.join(src, "bin", "sdr-splash"), "check"], capture_output=True, text=True, timeout=60)
             if sp.returncode not in (0, 124):

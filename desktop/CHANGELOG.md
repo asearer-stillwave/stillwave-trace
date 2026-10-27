@@ -5,6 +5,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/). Newest first. Times are
 Sources: build logs (`PROGRESS-*.md`), READMEs, VERSION files and the timestamped backups in `/workspace/sdr/backup/`.
 Before 1.0.2 there are no per-version build logs, so those dates are taken from backup timestamps and say "by".
 
+## [1.3.3] and [1.3.3-desktop] - 2026-10-26 (PT) - Boot splash fix; both editions
+### Fixed
+- **Boot splash on Raspberry Pi OS.** The Pi OS plymouth initramfs hook takes the theme only from `Theme=` in `/etc/plymouth/plymouthd.conf` and ignores `default.plymouth`. When that file had no active `Theme=` line, the stock theme was built in and the safety check rolled back to text boot. `sdr-splash on` now adds `[Daemon]` / `Theme=stillwave-trace` when missing; `--splash off` restores the original file.
+- **Updates turn the splash on.** `sdr-update` now runs `sdr-splash auto` after a successful update (respects a user "off" preference, non-fatal), then `sdr-splash check`. Before, updates only checked it.
+
 ## [1.3.2] and [1.3.2-desktop] - 2026-10-26 (PT) - Airport follows the map, Wi-Fi auto-join, Scan removed, AIS fixes (13 items); both editions
 ### Added
 - **Airport button follows the map.** `ICAO ▾` replaces CENTER LAX (and the KLAX pill). It shows the airport nearest the map center. Tap the code to center on it (with two radios this opens airport focus). Tap ▾ for nearby airports with distances in nm. CENTER ME stays. US airports come from the FAA station bank, Europe from OurAirports (public domain, bundled `web/airports_eu.json`: 466 scheduled-service airports). Frequencies are never invented. With no published tower, ground, approach or ATIS frequencies, Quick Tune says so and stays off. API: `GET /api/airports?lat=&lon=` (web/airports.py).

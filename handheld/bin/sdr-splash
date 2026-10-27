@@ -206,6 +206,14 @@ set_default_theme() {
   if [[ -f "$PLYCONF" ]] && grep -q '^[[:space:]]*Theme=' "$PLYCONF" && ! grep -q "^[[:space:]]*Theme=$THEME[[:space:]]*$" "$PLYCONF"; then
     mkdir -p "$STATE_DIR"; [[ -f "$STATE_DIR/plymouthd.conf.pre" ]] || cp -a "$PLYCONF" "$STATE_DIR/plymouthd.conf.pre"
     sed -i "s/^[[:space:]]*Theme=.*/Theme=$THEME/" "$PLYCONF"
+  elif ! grep -q '^[[:space:]]*Theme=' "$PLYCONF" 2>/dev/null; then
+    # 1.3.3: Raspberry Pi OS's plymouth hook takes the theme only from plymouthd.conf Theme= (it ignores
+    # default.plymouth), and a stock conf has it commented out. Add [Daemon] Theme= so the initramfs carries it.
+    mkdir -p "$STATE_DIR" "$(dirname "$PLYCONF")"
+    if [[ -f "$PLYCONF" ]]; then [[ -f "$STATE_DIR/plymouthd.conf.pre" ]] || cp -a "$PLYCONF" "$STATE_DIR/plymouthd.conf.pre"
+    else : >"$STATE_DIR/plymouthd.conf.pre"; fi
+    if grep -q '^[[:space:]]*\[Daemon\]' "$PLYCONF" 2>/dev/null; then sed -i "/^[[:space:]]*\[Daemon\]/a Theme=$THEME" "$PLYCONF"
+    else printf '[Daemon]\nTheme=%s\n' "$THEME" >>"$PLYCONF"; fi
   fi
   theme_is_default
 }
