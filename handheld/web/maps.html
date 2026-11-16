@@ -94,27 +94,27 @@ function errRow(title, j, sz, id){
 }
 function laRows(){
   const la = (MJ && MJ.la) || {street: (ST.builtin_bytes || 0) >= 1e7, bytes: ST.builtin_bytes || 0}, j = MJ && MJ.jobs && MJ.jobs.la;
-  if (la.street && !busy(j)) return row('Los Angeles metro', 'Street map installed' + (la.build ? ' · build ' + esc(la.build) : ''), MB(la.bytes), '<span class="mp-tag">Installed</span>');
-  let h = row('Los Angeles metro', 'Outline only · street map not installed', MB(la.bytes || 1e6), '<span class="mp-tag warn">Outline only</span>');
+  if (la.street && !busy(j)) return row('Los Angeles metro', 'Full map installed' + (la.build ? ' · build ' + esc(la.build) : ''), MB(la.bytes), '<span class="mp-tag">Installed</span>');
+  let h = row('Los Angeles metro', 'Outline only · full map not installed', MB(la.bytes || 1e6), '<span class="mp-tag warn">Outline only</span>');
   const est = (la && la.estimate) || 58e6;
-  if (busy(j)) h += dlRow('Los Angeles street map', j, est, 'la');
-  else if (j && j.state === 'failed') h += errRow('Los Angeles street map', j, MB(est), 'la');
-  else h += row('Los Angeles street map', 'Streets, airports, labels', MB(est), '<button type="button" class="sm primary" data-a="mjstart" data-id="la">Get street map</button>');
+  if (busy(j)) h += dlRow('Los Angeles map', j, est, 'la');
+  else if (j && j.state === 'failed') h += errRow('Los Angeles map', j, MB(est), 'la');
+  else h += row('Los Angeles map', 'Cities, major roads, airports', MB(est), '<button type="button" class="sm primary" data-a="mjstart" data-id="la">Get map</button>');   // 1.3.8: no "street" wording (the map stops at zoom 10)
   return h;
 }
 function renderUSA(){
   const el = $('usa'); if (!el) return;
-  if (!MJ || !MJ.usa) { el.innerHTML = row('USA street map', 'Checking…', '', ''); return; }
-  const u = MJ.usa, j = MJ.jobs && MJ.jobs.usa, T = 'USA street map', GB = n => (n / 1e9).toFixed(1) + ' GB';
+  if (!MJ || !MJ.usa) { el.innerHTML = row('USA map', 'Checking…', '', ''); return; }
+  const u = MJ.usa, j = MJ.jobs && MJ.jobs.usa, T = 'USA map', GB = n => (n / 1e9).toFixed(1) + ' GB';
   if (busy(j)) { el.innerHTML = dlRow(T, j, u.estimate, 'usa'); return; }
   if (u.installed) {
     const del = armed === 'usa' ? 'Tap again' : 'Delete';
-    el.innerHTML = row(T, 'Lower 48 · street detail' + (u.build ? ' · build ' + esc(u.build.replace(/(\d{4})(\d\d)(\d\d)/, '$1-$2-$3')) : ''), GB(u.bytes),
+    el.innerHTML = row(T, 'Lower 48 · cities and major roads' + (u.build ? ' · build ' + esc(u.build.replace(/(\d{4})(\d\d)(\d\d)/, '$1-$2-$3')) : ''), GB(u.bytes),
       `<span class="mp-btns"><span class="mp-tag">Installed</span><button type="button" class="sm v-warn" data-a="mjdelete" data-id="usa">${del}</button></span>`); return;
   }
   if (j && j.state === 'failed') { el.innerHTML = errRow(T, j, GB(u.estimate), 'usa'); return; }
   const kept = u.pieces_done ? ' · ' + GB(u.kept_bytes) + ' already downloaded' : '';
-  el.innerHTML = row(T, 'Lower 48 · street detail · needs ~' + GB(u.need) + ' free' + kept, GB(u.estimate),
+  el.innerHTML = row(T, 'Lower 48 · cities and major roads · needs ~' + GB(u.need) + ' free' + kept, GB(u.estimate),
     `<button type="button" class="sm primary" data-a="mjstart" data-id="usa">${u.pieces_done ? 'Resume' : 'Download'}</button>`);
 }
 let mjWas = {};
@@ -123,7 +123,7 @@ async function mjStatus(){
   const js = (MJ && MJ.jobs) || {};
   for (const id of ['la', 'usa']) {
     const s = js[id] && js[id].state;
-    if (mjWas[id] && busy({state: mjWas[id]}) && s === 'done') { msg((id === 'la' ? 'Los Angeles' : 'USA') + ' street map installed. The map reloads with it.', 'ok'); try { sessionStorage.setItem('traceMapReady', '1'); localStorage.setItem('traceMapsChanged', String(Date.now())); } catch (e) {} }
+    if (mjWas[id] && busy({state: mjWas[id]}) && s === 'done') { msg((id === 'la' ? 'Los Angeles' : 'USA') + ' map installed. The map reloads with it.', 'ok'); try { sessionStorage.setItem('traceMapReady', '1'); localStorage.setItem('traceMapsChanged', String(Date.now())); } catch (e) {} }
     mjWas[id] = s;
   }
   if (ST) { renderMine(); renderUSA(); }

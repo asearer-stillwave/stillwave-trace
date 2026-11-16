@@ -16,6 +16,29 @@
 <meta http-equiv="Cache-Control" content="no-store">
 <title>Stillwave Trace · Listen</title>
 <link rel="stylesheet" href="/fieldnote.css">
+<style>/* 1.3.8 Listen > Any MHz (manual frequency entry), approved preview */
+html:not(.hdmi) .v-sub.five button { font-size: 12px; letter-spacing: .04em; padding: 0 4px; white-space: nowrap; }
+html.kiosk:not(.hdmi) .page-listen .v-sub.five button { font-size: 13px; }
+.mx-disp { display: flex; align-items: baseline; justify-content: center; gap: 8px; padding: .5rem .6rem; border-radius: 14px; border: 1px solid var(--signal); background: var(--night); box-shadow: 0 0 14px rgba(74,222,128,.25) inset; }
+.mx-disp b { font-family: Anton, var(--display, sans-serif); font-size: 58px; line-height: 1; color: var(--signal); letter-spacing: .02em; }
+.mx-disp b i { font-style: normal; color: rgba(74,222,128,.35); }
+.mx-disp b u { text-decoration: none; display: inline-block; width: 3px; height: 46px; background: var(--signal); margin-left: 3px; vertical-align: -4px; animation: none; }
+.mx-disp.bad { border-color: #f59e0b; box-shadow: 0 0 14px rgba(245,158,11,.25) inset; }
+.mx-disp.bad b { color: #f59e0b; }
+.mx-disp small { font-family: var(--mono); font-size: 13px; letter-spacing: .16em; color: var(--static); }
+.mx-band { margin: .45rem 0 .2rem; text-align: center; font-family: var(--mono); font-size: 12px; letter-spacing: .12em; color: var(--static); text-transform: uppercase; }
+.mx-band b { color: var(--signal); }
+.mx-keys { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; margin: .6rem 0; }
+.mx-keys button { min-height: 66px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font: 700 26px var(--mono); color: var(--paper); }
+.mx-keys button.fn { font-size: 15px; letter-spacing: .1em; color: var(--static); }
+.mx-go { width: 100%; min-height: 64px; font-size: 18px !important; letter-spacing: .14em; margin-top: .2rem; }
+.mx-recent { display: flex; gap: .5rem; flex-wrap: wrap; }
+.mx-recent button { min-height: 48px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font: 700 14px var(--mono); color: var(--paper); }
+.mx-recent button small { display: block; font-size: 10px; letter-spacing: .1em; color: var(--static); }
+.mx-recent button.on { border-color: var(--signal); color: var(--signal); }
+html.hdmi .mx-wrap { display: grid; grid-template-columns: 1.1fr 1fr; gap: 1rem; align-items: start; }
+html.hdmi .mx-keys button { min-height: 52px; }
+</style>
 </head>
 <body class="page-listen" data-mode="fm">
 <script src="/nav.js"></script>
@@ -26,8 +49,8 @@
     <span class="v-live off" id="vLive">Off</span><b id="vWhat">—</b><span class="v-talk" id="vTalk"></span>
     <span class="v-sig" id="vSig" aria-hidden="true"></span><button type="button" class="sm v-stop" id="vStop" aria-label="Stop audio">■ Stop</button>
   </div>
-  <div class="v-sub four" role="tablist" id="bands">
-    <button type="button" role="tab" data-b="fm">FM</button><button type="button" role="tab" data-b="airband">Airband</button><button type="button" role="tab" data-b="noaa">NOAA</button><button type="button" role="tab" data-b="frs">FRS / GMRS</button>
+  <div class="v-sub four five" role="tablist" id="bands">
+    <button type="button" role="tab" data-b="fm">FM</button><button type="button" role="tab" data-b="airband">Airband</button><button type="button" role="tab" data-b="noaa">NOAA</button><button type="button" role="tab" data-b="frs">FRS / GMRS</button><button type="button" role="tab" data-b="any">Any MHz</button>
   </div>
 
   <section id="pfm">
@@ -99,6 +122,34 @@
     <div class="frs-grid" id="frG2"></div>
     <div class="frs-g"><h2>CH 15–22 · GMRS</h2><span class="frs-b hi">50 W · repeater out</span></div>
     <div class="frs-grid" id="frG3"></div>
+  </section>
+
+  <!-- 1.3.8: Any MHz = manual frequency entry, 24-1766 MHz, Auto / AM / NFM / WFM, own ANY_* settings (other bands untouched) -->
+  <section id="pany" hidden>
+    <div class="mx-wrap">
+    <div class="card v-tcard">
+      <div class="v-h"><h2>// Any frequency</h2><button type="button" class="sm v-gear" data-band="any" aria-expanded="false" aria-label="Band settings: gain and squelch"><span aria-hidden="true">⚙</span> <span class="v-gv">—</span></button></div>
+      <div class="v-bandset v-gearp" data-band="any" hidden>
+        <div class="bs-row"><span class="bs-k">Gain</span><span class="v-seg2 bs-gain"></span></div>
+      </div>
+      <div class="mx-disp" id="mxD" role="status" aria-live="polite"><b id="mxF">446.00<i>00</i><u></u></b><small>MHz</small></div>
+      <div class="mx-band" id="mxB">Auto mode: <b>NFM</b></div>
+      <div class="v-steprow"><span class="v-stepk">Mode</span><span class="v-seg2" id="mxM"><button type="button" data-m="auto">Auto</button><button type="button" data-m="am">AM</button><button type="button" data-m="nfm">NFM</button><button type="button" data-m="wfm">WFM</button></span></div>
+      <div class="v-steprow"><span class="v-stepk">Squelch</span><span class="v-seg2" id="mxSq"><button type="button" data-q="0">Off</button><button type="button" data-q="20">Low</button><button type="button" data-q="50">High</button></span></div>
+    </div>
+    <div>
+      <div class="mx-keys" id="mxK">
+        <button type="button" data-k="1">1</button><button type="button" data-k="2">2</button><button type="button" data-k="3">3</button>
+        <button type="button" data-k="4">4</button><button type="button" data-k="5">5</button><button type="button" data-k="6">6</button>
+        <button type="button" data-k="7">7</button><button type="button" data-k="8">8</button><button type="button" data-k="9">9</button>
+        <button type="button" data-k=".">.</button><button type="button" data-k="0">0</button><button type="button" class="fn" data-k="del" aria-label="Delete last digit">⌫ DEL</button>
+      </div>
+      <button type="button" class="primary mx-go" id="mxGo">Listen ▸</button>
+      <div class="frs-g" id="mxRH" hidden><h2>Recent</h2><span class="frs-b">tap to tune</span></div>
+      <div class="mx-recent" id="mxR"></div>
+      <p class="note v-hint">24–1766 MHz, receive only. Auto picks WFM for 88–108, AM for 118–137 airband, NFM for everything else.</p>
+    </div>
+    </div>
   </section>
 
   <div class="v-near" id="vNear" hidden role="dialog" aria-label="Presets near here"><div class="v-nearl" id="vNearL"></div></div>
@@ -284,7 +335,7 @@ boot();
 (function(){
   const $ = id => document.getElementById(id);
   // 1.0.9: gain / squelch are saved per band (FM, airband, NOAA) in fm.env; the Band settings card edits the visible band
-  const GAINS = {fm:[['station','Station'],['10','10'],['20','20'],['30','30'],['40','40']], airband:[['20','20'],['30','30'],['40','40'],['49.6','Max']], noaa:[['20','20'],['30','30'],['40','40'],['49.6','Max']], frs:[['20','20'],['30','30'],['40','40'],['49.6','Max']]};
+  const GAINS = {fm:[['station','Station'],['10','10'],['20','20'],['30','30'],['40','40']], airband:[['20','20'],['30','30'],['40','40'],['49.6','Max']], noaa:[['20','20'],['30','30'],['40','40'],['49.6','Max']], frs:[['20','20'],['30','30'],['40','40'],['49.6','Max']], any:[['20','20'],['30','30'],['40','40'],['49.6','Max']]};
   let L = {airband:[], noaa:[], frs:[], band:'fm', bands:{}}, band = 'fm', af = 133.9, step = 0.025, edit = false, tuneTo = null;
   const sqOf = b => String(((L.bands||{})[b]||{}).squelch ?? 0);
   // 1.3.1 audio filters (FM: rate / high-pass / low-pass; airband: high-pass / low-pass, default 200-3400 Hz)
@@ -331,7 +382,7 @@ boot();
       const r = await fetch('/api/listen/band', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.assign({band: b}, body))});
       const j = await r.json().catch(() => ({})); if(!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
       L.bands = j.bands || L.bands; if (pend[b]) pend[b] = {}; drawSets();
-      setMsg('Saved for ' + ({fm:'FM', airband:'airband', noaa:'NOAA', frs:'FRS / GMRS'})[b] + (L.band === b ? '; the stream restarts for a second' : '') + '.', 'ok');
+      setMsg('Saved for ' + ({fm:'FM', airband:'airband', noaa:'NOAA', frs:'FRS / GMRS', any:'Any MHz'})[b] + (L.band === b ? '; the stream restarts for a second' : '') + '.', 'ok');
       if(L.band === b){ if (window.fieldnoteStrip) window.fieldnoteStrip.refresh(); await waitReady(15000); await attach(true); }
     }catch(e){ setMsg(e.message, 'err'); }
   }
@@ -354,8 +405,8 @@ boot();
   function showBand(b){
     band = b; localStorage.setItem('listenBand', b);
     document.querySelectorAll('#bands button').forEach(x => { const on = x.dataset.b === b; x.classList.toggle('on', on); x.setAttribute('aria-selected', on); });
-    ['fm','airband','noaa','frs'].forEach(k => $('p' + k).hidden = k !== b);
-    $('bandT').textContent = {fm:'FM', airband:'airband', noaa:'NOAA', frs:'FRS'}[b];
+    ['fm','airband','noaa','frs','any'].forEach(k => $('p' + k).hidden = k !== b);
+    $('bandT').textContent = {fm:'FM', airband:'airband', noaa:'NOAA', frs:'FRS', any:'Any MHz'}[b] || 'FM';
     document.querySelectorAll('.v-gearp').forEach(x => x.hidden = true); document.querySelectorAll('.v-gear').forEach(x => x.setAttribute('aria-expanded', 'false'));
     nearClose(); nowLine();
   }
@@ -363,6 +414,7 @@ boot();
   function nowLine(){
     const c = L.current || {}, f = parseFloat(String(c.frequency||'').replace(/[^0-9.]/g,''));
     const bn = {fm:'FM', airband:'Airband', noaa:'NOAA', frs:'FRS'}[L.band] || 'Radio';
+    if (L.band === 'any' && isFinite(f)) { $('vWhat').textContent = (f.toFixed(4) + ' ' + String(L.demod || 'nfm').toUpperCase()).toUpperCase(); return; }   // 1.3.8
     if (L.band === 'frs' && isFinite(f)) { const c2 = frsList().find(x => Math.abs(x.mhz - f) < 0.0004); $('vWhat').textContent = ((c2 ? 'CH ' + c2.ch + ' · ' : '') + f.toFixed(4) + ' NFM').toUpperCase(); return; }
     $('vWhat').textContent = (bn + (isFinite(f) ? ' · ' + (L.band === 'fm' ? f.toFixed(1) : fmt(f)) : '')).toUpperCase();
   }
@@ -488,7 +540,69 @@ boot();
     rf = +C[i].mhz; drawFrs(); clearTimeout(tuneTo); tuneTo = setTimeout(() => tune(rf, 'nfm', 'CH ' + C[i].ch, 'frs'), 600); }
   $('frDn').onclick = () => frStep(-1); $('frUp').onclick = () => frStep(1);
   $('frSq').onclick = e => { const x = e.target.closest('button'); if (!x || x.dataset.q === sqOf('frs')) return; saveSet('frs', {squelch: +x.dataset.q}).then(drawFrs); };
-  function renderAll(){ drawAir(); try { drawFm(); } catch (e) {} try { drawNoaa(); } catch (e) {} try { drawFrs(); } catch (e) {} grid($('aGrid'), L.airband, 'airband', 'am'); grid($('nGrid'), L.noaa, 'noaa', 'nfm'); nowLine(); }
+  // 1.3.8 Any MHz: keypad entry (up to 4 decimals), Auto / AM / NFM / WFM, own squelch + gain (ANY_*), recent list from the box
+  const ANY_LO = 24, ANY_HI = 1766;
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
+  let mxE = null, mxFresh = true, mxMode = localStorage.getItem('anyMode') || 'auto';
+  if (!['auto', 'am', 'nfm', 'wfm'].includes(mxMode)) mxMode = 'auto';
+  const mxAuto = f => f >= 87.5 && f <= 108 ? 'wfm' : f >= 118 && f < 137 ? 'am' : 'nfm';
+  const mxDemod = f => mxMode === 'auto' ? mxAuto(f) : mxMode;
+  const f4 = f => (+f).toFixed(4);
+  // what is at this frequency (US band plan, short); '' when nothing well known
+  function mxWhat(f){
+    const rg = f < 30 ? 'HF' : f < 300 ? 'VHF' : 'UHF';
+    const S = [[26.965, 27.405, 'CB radio'], [28, 29.7, 'amateur 10 m band'], [50, 54, 'amateur 6 m band'], [87.5, 108, 'broadcast FM'],
+      [108, 118, 'aviation navigation'], [118, 137, 'airband'], [137, 138, 'weather satellites'], [144, 148, 'amateur 2 m band'],
+      [156, 162.025, 'marine VHF'], [162.4, 162.55, 'NOAA weather'], [148, 174, 'VHF business / public safety'], [222, 225, 'amateur 1.25 m band'],
+      [225, 400, 'military airband'], [462.55, 462.725, 'FRS / GMRS'], [467.55, 467.725, 'FRS / GMRS'], [420, 450, 'amateur 70 cm band'],
+      [450, 470, 'UHF business / public safety'], [470, 512, 'UHF T-band'], [902, 928, 'amateur 33 cm / ISM'], [978, 978, 'UAT aircraft data'],
+      [1090, 1090, 'ADS-B aircraft'], [1240, 1300, 'amateur 23 cm band']];
+    const s = S.find(([a, z]) => f >= a - 1e-6 && f <= z + 1e-6);
+    return rg + (s ? ' · ' + s[2] : '');
+  }
+  const mxVal = () => { const v = parseFloat(mxE); return isFinite(v) ? v : NaN; };
+  const mxOk = f => isFinite(f) && f >= ANY_LO && f <= ANY_HI;
+  function drawAny(){
+    const a = (L.bands || {}).any || {};
+    if (mxE == null) { const cf = parseFloat(String((L.current||{}).frequency||'').replace(/[^0-9.]/g,'')); mxE = f4(L.band === 'any' && isFinite(cf) ? cf : (a.mhz || 446)); mxFresh = true; }
+    const f = mxVal(), ok = mxOk(f), d = mxDemod(f);
+    // typed part, then the grey 4-decimal padding, then the cursor
+    const [ip, dp] = mxE.split('.'), has = mxE.includes('.');
+    const pad = has ? '0'.repeat(Math.max(0, 4 - dp.length)) : (ip ? '.0000' : '0.0000');
+    $('mxF').innerHTML = esc(mxE) + '<i>' + pad + '</i>' + (mxFresh ? '' : '<u></u>');
+    $('mxD').classList.toggle('bad', !!mxE && !ok && !(mxE.length < 2));
+    $('mxB').innerHTML = !isFinite(f) ? 'Type a frequency' : !ok ? (f < ANY_LO ? 'Below' : 'Above') + ' the tuner range · ' + ANY_LO + '–' + ANY_HI + ' MHz'
+      : (mxMode === 'auto' ? 'Auto mode: ' : 'Mode: ') + '<b>' + d.toUpperCase() + '</b> · ' + esc(mxWhat(f));
+    $('mxM').querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.m === mxMode));
+    const sq = sqOf('any'); $('mxSq').querySelectorAll('button').forEach(x => { x.classList.toggle('on', x.dataset.q === sq); x.disabled = d === 'wfm'; });
+    $('mxGo').disabled = !ok; $('mxGo').textContent = ok ? 'Listen ' + f4(f) + ' ' + d.toUpperCase() + ' ▸' : ANY_LO + '–' + ANY_HI + ' MHz only';
+    const R = (a.recent || []).slice(0, 6), cf = parseFloat(String((L.current||{}).frequency||'').replace(/[^0-9.]/g,''));
+    $('mxRH').hidden = !R.length; const box = $('mxR'); box.innerHTML = '';
+    R.forEach(r => { const b = document.createElement('button'); b.type = 'button'; b.className = L.band === 'any' && Math.abs(cf - r.mhz) < 0.0004 ? 'on' : '';
+      b.innerHTML = '<span></span><small></small>'; b.firstChild.textContent = f4(r.mhz); b.lastChild.textContent = String(r.demod).toUpperCase();
+      b.onclick = () => { mxE = f4(r.mhz); mxFresh = true; if (mxMode !== 'auto' || mxAuto(r.mhz) !== r.demod) { mxMode = r.demod; localStorage.setItem('anyMode', mxMode); } drawAny(); tune(+r.mhz, r.demod, f4(r.mhz) + ' MHz', 'any'); };
+      box.appendChild(b); });
+  }
+  function mxKey(k){
+    if (mxFresh) { mxE = ''; mxFresh = false; }
+    if (k === 'del') mxE = mxE.slice(0, -1);
+    else if (k === '.') { if (!mxE.includes('.')) mxE = (mxE || '0') + '.'; }
+    else { const [ip, dp] = mxE.split('.'); if (mxE.includes('.') ? dp.length < 4 : ip.length < 4) mxE = (mxE === '0' ? '' : mxE) + k; }
+    drawAny();
+  }
+  function mxListen(){ const f = mxVal(); if (!mxOk(f)) return; const v = +f.toFixed(4); mxE = f4(v); mxFresh = true; drawAny(); tune(v, mxDemod(v), f4(v) + ' MHz', 'any'); }
+  $('mxK').onclick = e => { const x = e.target.closest('button'); if (x) mxKey(x.dataset.k); };
+  $('mxGo').onclick = mxListen;
+  $('mxM').onclick = e => { const x = e.target.closest('button'); if (!x) return; mxMode = x.dataset.m; localStorage.setItem('anyMode', mxMode); drawAny(); };
+  $('mxSq').onclick = e => { const x = e.target.closest('button'); if (!x || x.disabled || x.dataset.q === sqOf('any')) return; saveSet('any', {squelch: +x.dataset.q}).then(drawAny); };
+  // a USB / Bluetooth keyboard works too (desktop): digits, '.', Backspace, Enter
+  document.addEventListener('keydown', e => {
+    if (band !== 'any' || e.ctrlKey || e.metaKey || e.altKey || (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))) return;
+    if (/^[0-9]$/.test(e.key)) mxKey(e.key); else if (e.key === '.' || e.key === ',') mxKey('.'); else if (e.key === 'Backspace') mxKey('del');
+    else if (e.key === 'Enter') mxListen(); else return;
+    e.preventDefault();
+  });
+  function renderAll(){ drawAir(); try { drawFm(); } catch (e) {} try { drawNoaa(); } catch (e) {} try { drawFrs(); } catch (e) {} try { drawAny(); } catch (e) {} grid($('aGrid'), L.airband, 'airband', 'am'); grid($('nGrid'), L.noaa, 'noaa', 'nfm'); nowLine(); }
   async function load(){
     try{ const r = await fetch('/api/listen', {cache:'no-store'}); L = await r.json(); }catch(e){ }
     const cf = parseFloat(String((L.current||{}).frequency||'').replace(/[^0-9.]/g,''));
@@ -501,7 +615,7 @@ boot();
       const r = await fetch('/api/listen/tune', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mhz, demod, squelch: demod === 'wfm' ? 0 : +sqOf(b === 'other' ? 'noaa' : b), name: name || '', band: b})});
       const j = await r.json().catch(() => ({}));
       if(!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      if(b === 'airband') af = mhz; if(b === 'fm') ff = mhz; if(b === 'noaa') nf = mhz; if(b === 'frs') rf = mhz;
+      if(b === 'airband') af = mhz; if(b === 'fm') ff = mhz; if(b === 'noaa') nf = mhz; if(b === 'frs') rf = mhz; if(b === 'any') { mxE = f4(mhz); mxFresh = true; }
       await load();
       if(window.sdrMode) window.sdrMode.refresh();
       if(window.fieldnoteStrip) window.fieldnoteStrip.refresh();

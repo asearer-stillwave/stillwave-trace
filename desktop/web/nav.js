@@ -178,7 +178,7 @@ window.traceErr = window.traceErr || (function () {
   function metricText(mode, m) {
     if (!m) return null;
     if (mode === 'fm' && typeof m.mhz === 'number') {
-      const air = m.band === 'airband' || m.band === 'noaa' || m.band === 'frs' || m.band === 'other';
+      const air = m.band === 'airband' || m.band === 'noaa' || m.band === 'frs' || m.band === 'other' || m.band === 'any';
       const f = air ? m.mhz.toFixed(3) : (Math.round(m.mhz * 10) / 10).toFixed(1) + ' MHz';
       const nm = m.name && !/^Tune /.test(m.name) ? m.name : '';
       return nm ? [nm, nm + (air ? ' · ' + f : '')] : [f, f];   // 1.0.8: station name in the strip
@@ -193,7 +193,7 @@ window.traceErr = window.traceErr || (function () {
   const ROLE_NAME = { adsb: 'ADS-B', ais: 'AIS', radio: 'Radio', spare: 'Spare' };
   function radioJob(mode) {
     const m = S && S.metric;
-    if (mode === 'fm') return (m && m.band === 'airband') ? 'Airband' : (m && m.band === 'noaa') ? 'NOAA' : (m && m.band === 'frs') ? 'FRS' : 'FM';
+    if (mode === 'fm') return (m && m.band === 'airband') ? 'Airband' : (m && m.band === 'noaa') ? 'NOAA' : (m && m.band === 'frs') ? 'FRS' : (m && m.band === 'any') ? 'Any MHz' : 'FM';
     return MODE_NAME[mode] || 'Radio';
   }
   function radioState(mode) {   // -> [text, class, dot]

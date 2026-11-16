@@ -11,7 +11,7 @@
   const WARN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3 2 21h20z"/><path d="M12 10v5M12 18v.5"/></svg>';
   const SQ = [['0', 'Off'], ['20', 'Low'], ['50', 'High']];
   const GN = [['20', '20'], ['30', '30'], ['40', '40'], ['49.6', 'Max']];   // 1.3.4: airband gain steps, same as the Listen page
-  let R = null, LV = null, AP = [], focus = null, group = 'tower', picker = false, busy = false, sqAir = '0', gnAir = '40', openRow = null;   // 1.3.4: openRow = 'g' | 's' (GAIN / SQ chip expanded)
+  let R = null, RL = null, LV = null, AP = [], focus = null, group = 'tower', picker = false, busy = false, sqAir = '0', gnAir = '40', openRow = null;   // 1.3.4: openRow = 'g' | 's' (GAIN / SQ chip expanded)
   const wrap = () => $('mapwrap');
   const el = (tag, cls, html) => { const d = document.createElement(tag); if (cls) d.className = cls; if (html != null) d.innerHTML = html; return d; };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -113,7 +113,7 @@
   function grp() { const a = airport(); return a && a.groups && (a.groups.find(g => g.id === group) || a.groups[0]); }
   async function j(url, opt) { const r = await fetch(url, Object.assign({ cache: 'no-store' }, opt || {})); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || d.message || ('HTTP ' + r.status)); return d; }
   async function pollStrip() {
-    try { const d = await j('/api/strip'); R = d.radios || null; R && (R.mode = d.mode && d.mode.mode); } catch (e) {}
+    try { const d = await j('/api/strip'); R = d.radios || null; R && (R.mode = d.mode && d.mode.mode); RL = d.live || null; } catch (e) {}   // 1.3.8: RL = FM play state
     render();
   }
   async function pollLevel() {
@@ -173,15 +173,20 @@
     g.onclick = () => { picker = !picker; render(); };
     const air = LV && LV.live && LV.demod !== 'wfm';
     const mhz = LV && parseFloat(String(LV.frequency).replace(/[^0-9.]/g, ''));
+    // 1.3.8: broadcast FM has no squelch meter (sdr-level is airband / NOAA only), so LV.live stays false while FM plays.
+    // The strip's FM state (/api/strip live.radio: sdr-fm running + audio flowing) says whether SDR 2 is playing FM.
+    const fmSt = !air && R && R.mode === 'fm' && (!LV || LV.demod === 'wfm') && RL && RL.radio !== 'off' ? RL.radio : '';
     if (busy) { $('lsN').textContent = 'Tuning…'; }
     else if (air) { $('lsN').textContent = LV.name || f3(mhz) + ' MHz'; }
-    else if (LV && LV.live) { $('lsN').textContent = LV.name || 'FM radio'; }
+    else if (fmSt || (LV && LV.live)) { $('lsN').textContent = (LV && LV.name) || (mhz ? f3(mhz).replace(/0+$/, '').replace(/\.$/, '') + ' FM' : 'FM radio'); }
     else { $('lsN').textContent = R.mode && R.mode !== 'fm' && R.mode !== 'adsb' && R.mode !== 'none' ? 'SDR 2 · ' + R.mode : 'SDR 2 ready'; }
     if (!$('lsF').classList.contains('err'))
-      $('lsF').textContent = air ? f3(mhz) + ' MHz ' + (LV.demod === 'am' ? 'AM' : 'NFM') + ' · SDR 2' + (focus ? ' · ' + focus.icao : '') : (LV && LV.live ? 'Broadcast FM · SDR 2' : 'Tap ▴ to listen to the tower');
+      $('lsF').textContent = air ? f3(mhz) + ' MHz ' + (LV.demod === 'am' ? 'AM' : 'NFM') + ' · SDR 2' + (focus ? ' · ' + focus.icao : '') : (fmSt || (LV && LV.live) ? (LV && LV.band === 'any' && mhz ? f3(mhz) + ' MHz WFM · SDR 2' : 'Broadcast FM · SDR 2') : 'Tap ▴ to listen to the tower')   /* 1.3.8: Any MHz in wide FM is not broadcast FM */;
     const st = LV && LV.state, talk = st === 'talking';
     strip.classList.toggle('talk', talk);
-    const s = $('lsS'); s.textContent = talk ? '● Talking' : st === 'quiet' ? 'Quiet' : st === 'squelch_off' ? 'Squelch off' : 'Idle';
+    const s = $('lsS');
+    if (fmSt) s.textContent = fmSt === 'live' ? '● Playing' : fmSt === 'tuning' ? 'Tuning…' : fmSt === 'nosignal' ? 'No signal' : 'Reconnecting';
+    else s.textContent = talk ? '● Talking' : st === 'quiet' ? 'Quiet' : st === 'squelch_off' ? 'Squelch off' : 'Idle';
     const bars = LV && typeof LV.db === 'number' ? Math.max(0, Math.min(6, Math.round((LV.db + 60) / 8))) : 0;
     strip.querySelectorAll('.ls-m i').forEach((i, k) => i.classList.toggle('on', k < bars));
     // airport chooser (focus) and quick-tune sheet

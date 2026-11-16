@@ -105,8 +105,12 @@ def load_cfg(mode):
     try:
         data = json.loads(STATE.read_text())
         d = data.get(mode) or {}
-        if mode == "spectrum" and not BOOT_MARK.exists():   # 1.0.8: first spectrum start after boot opens at 98.7 MHz
-            d = dict(d, center_hz=98.7e6)
+        # 1.3.8: Spectrum remembers its last center, span and gain across reopen AND reboot (1.0.8 re-centered on
+        # 98.7 MHz at the first start after boot). SDR_SCOPE_BOOT_CENTER=98.7 in the unit environment brings that back.
+        boot_c = os.environ.get("SDR_SCOPE_BOOT_CENTER", "").strip()
+        if mode == "spectrum" and boot_c and not BOOT_MARK.exists():
+            try: d = dict(d, center_hz=float(boot_c) * 1e6)
+            except ValueError: pass
             try: BOOT_MARK.touch()
             except OSError: pass
         return validate(mode, d)

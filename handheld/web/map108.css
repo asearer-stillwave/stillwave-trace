@@ -207,8 +207,10 @@ html.m108.cardopen .m-gain { visibility: hidden; }
 /* ---------- 1.3.6 #9: FM towers (towers.js) ---------- */
 .m-pill.tw .ti { width: 14px; height: 14px; display: inline-block; vertical-align: -2px; margin-right: 4px; }
 .m-pill.tw.on { color: #fb7185; border-color: #fb7185; box-shadow: 0 0 16px rgba(251,113,133,.45); }
-html.m108 .tcard { position: absolute; left: 10px; right: 10px; bottom: 76px; z-index: 9; max-width: 640px; margin: 0 auto;
-  background: rgba(11,15,12,.86); border: 1px solid #fb7185; border-radius: 14px; padding: 10px 12px 12px; box-shadow: 0 0 14px rgba(251,113,133,.28); font-family: var(--mono); }
+/* 1.3.8: solid tower card above the map labels and the ADS-B gain control (was see-through rgba .86, z-index 9) */
+html.m108 .tcard { position: absolute; left: 10px; right: 10px; bottom: 76px; z-index: 12; max-width: 640px; margin: 0 auto;
+  background: #0b0f0c; border: 1px solid #fb7185; border-radius: 14px; padding: 10px 12px 12px; box-shadow: 0 0 0 1px #fb7185, 0 6px 24px rgba(0,0,0,.65), 0 0 14px rgba(251,113,133,.28); font-family: var(--mono); }
+html.m108.tcardopen .m-gain, html.m108.tcardopen .qtn { visibility: hidden; }
 .tcard .th { display: flex; align-items: center; gap: 10px; }
 .tcard .th b { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 700 17px/1.1 var(--mono); letter-spacing: .06em; color: #e7f5ec; text-transform: uppercase; white-space: nowrap; }
 .tcard .th b em { font-style: normal; color: #fb7185; }

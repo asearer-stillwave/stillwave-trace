@@ -619,8 +619,8 @@ def listen_band():
     """1.0.9: per-band gain / squelch (FM, airband, NOAA), saved separately (sdr-listen band -> sdr-fm-env)."""
     d = request.get_json(silent=True) or {}
     band = str(d.get("band") or "")
-    if band not in ("fm", "airband", "noaa", "frs"):
-        return jsonify(error="band must be fm, airband, noaa or frs"), 400
+    if band not in ("fm", "airband", "noaa", "frs", "any"):   # 1.3.8: any = Listen > Any MHz
+        return jsonify(error="band must be fm, airband, noaa, frs or any"), 400
     args = [LISTEN, "band", band]
     if d.get("gain") is not None:
         args.append("gain=" + str(d.get("gain"))[:8])
@@ -772,7 +772,7 @@ def listen_level():
     """Map listen strip: what SDR 2 is playing + QUIET / TALKING (sdr-level meter, airband / NOAA only)."""
     e = env()
     band = e.get("BAND") or ("fm" if (e.get("DEMOD") or "wfm") == "wfm" else "other")
-    sq = e.get({"airband": "AIRBAND_SQUELCH", "noaa": "NOAA_SQUELCH", "frs": "FRS_SQUELCH"}.get(band, "SQUELCH")) or e.get("SQUELCH") or "0"
+    sq = e.get({"airband": "AIRBAND_SQUELCH", "noaa": "NOAA_SQUELCH", "frs": "FRS_SQUELCH", "any": "ANY_SQUELCH"}.get(band, "SQUELCH")) or e.get("SQUELCH") or "0"
     try:
         lv = json.loads(LEVEL_FILE.read_text())
         fresh = time.time() - float(lv.get("t", 0)) < 3
@@ -2064,7 +2064,7 @@ def _strip_metric(mode, scope):
             mhz = None
         e = env()
         band = e.get("BAND") or "fm"
-        return {"kind": "fm", "mhz": mhz, "name": st.get("name") or "", "band": band if band in ("airband", "noaa", "frs", "other") else "fm",
+        return {"kind": "fm", "mhz": mhz, "name": st.get("name") or "", "band": band if band in ("airband", "noaa", "frs", "other", "any") else "fm",
                 "demod": e.get("DEMOD") or "wfm"}
     if mode == "adsb":
         try:

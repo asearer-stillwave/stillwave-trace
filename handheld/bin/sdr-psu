@@ -78,6 +78,10 @@ def apply_text(text):
         if m:
             sec = m.group(1).strip().lower()
     hdr = "" if sec == "all" else "[all]\n"
+    # 1.3.8 STAGED, OFF by default (held pending the power-bank test with two Nano 3 dongles): SDR_PSU_SECTION=pi5 writes
+    # the line inside its own [pi5] section ("[pi5]" / line / "[all]") instead of under [all]. Default output is unchanged.
+    if os.environ.get("SDR_PSU_SECTION", "") == "pi5":
+        return base + "\n" + BEGIN + "\n[pi5]\n" + LINE + "\n[all]\n" + END + "\n"
     return base + "\n" + BEGIN + "\n" + hdr + LINE + "\n" + END + "\n"
 
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Stillwave Trace installer (1.3.7; the version comes from ./VERSION). Handheld edition tree of trace-1.3.7.zip:
-# normally started by the package's top-level install.sh (edition question / --display dsi), which passes --display.
+# Stillwave Trace installer (1.3.8; the version comes from ./VERSION). Handheld edition tree of trace-1.3.8.zip:
+# normally started by the package's top-level install.sh (edition question / --display dsi), which passes --display dsi.
 #   sudo bash install.sh                 install / update the station (keeps /etc/sdr settings)
-#   sudo bash install.sh --display       same, then set up the 5" Touch Display 2 kiosk
+#   sudo bash install.sh --display dsi   same, then set up the 5" Touch Display 2 kiosk (a bare --display works too)
 #   sudo bash install.sh --display-only  only the display/kiosk part (fieldnote-display-setup, alias trace-display-setup)
 #   options for --display:  --dsi-port 0|1   Pi 5 only: ribbon in DISP0 (0 -> dtoverlay=...,dsi0) or DISP1 (1, the default)
 #                           --force-edition  convert a box that runs Trace Desktop into handheld Trace (see below)
@@ -19,6 +19,15 @@ FORCE_EDITION=0
 [[ "${SDR_UPDATE_RUN:-}" == 1 ]] && UPGRADE=1
 prev=""
 for arg in "$@"; do
+  # 1.3.8: --display takes an optional value, like the package installer: --display dsi (also touch / handheld).
+  # A bare --display still means the 5" touch display.
+  if [[ "$prev" == --display ]]; then
+    prev=""
+    case "$arg" in
+      dsi|touch|handheld) continue ;;
+      hdmi|desktop) echo "This is handheld Trace (5\" touch display). For HDMI use the desktop edition: sudo bash <package>/install.sh --display hdmi" >&2; exit 2 ;;
+    esac
+  fi
   if [[ "$prev" == --dsi-port ]]; then
     case "$arg" in 0|1) DSI_PORT="$arg" ;; *) echo "--dsi-port must be 0 (DISP0) or 1 (DISP1)" >&2; exit 2 ;; esac
     prev=""; continue
@@ -27,7 +36,9 @@ for arg in "$@"; do
     --dsi-port) prev="--dsi-port" ;;
     --dsi-port=*) DSI_PORT="${arg#--dsi-port=}"; case "$DSI_PORT" in 0|1) ;; *) echo "--dsi-port must be 0 (DISP0) or 1 (DISP1)" >&2; exit 2 ;; esac ;;
     --force-edition) FORCE_EDITION=1 ;;
-    --display) DO_DISPLAY=1 ;;
+    --display) DO_DISPLAY=1; prev="--display" ;;
+    --display=dsi|--display=touch|--display=handheld) DO_DISPLAY=1 ;;
+    --display=*) echo "This is handheld Trace: --display dsi (5\" touch display) is the only display option." >&2; exit 2 ;;
     --display-only) DO_DISPLAY=1; DISPLAY_ONLY=1 ;;
     --upgrade) UPGRADE=1 ;;
     --resume) RESUME=1 ;;
@@ -36,6 +47,7 @@ for arg in "$@"; do
     *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
+[[ "$prev" == --display ]] && prev=""
 [[ -z "$prev" ]] || { echo "$prev needs a value (0 or 1)" >&2; exit 2; }
 DSI_ARGS=(); [[ -n "$DSI_PORT" ]] && DSI_ARGS=(--dsi-port "$DSI_PORT")
 if [[ $UPGRADE -eq 1 ]]; then DO_DISPLAY=0; DISPLAY_ONLY=0; fi
@@ -847,7 +859,7 @@ if [[ $UPGRADE -eq 1 ]]; then
   fi
 elif [[ $DO_DISPLAY -eq 1 ]]; then
   echo
-  /usr/local/sbin/fieldnote-display-setup --user "$RUN_USER" ${DSI_ARGS[@]+"${DSI_ARGS[@]}"} && mark_step display || echo "WARNING: display setup reported a problem (see above). Resume: sudo bash $SRC/install.sh --resume --display"
+  /usr/local/sbin/fieldnote-display-setup --user "$RUN_USER" ${DSI_ARGS[@]+"${DSI_ARGS[@]}"} && mark_step display || echo "WARNING: display setup reported a problem (see above). Resume: sudo bash $SRC/install.sh --resume --display dsi"
 elif [[ -f /etc/systemd/system/fieldnote-kiosk.service ]]; then
   # Existing cage kiosk (it may be hand-edited): apply ONLY the hidden-pointer drop-in, never rewrite the unit.
   if grep -qx 'CURSOR=shown' /etc/sdr/display.env 2>/dev/null; then

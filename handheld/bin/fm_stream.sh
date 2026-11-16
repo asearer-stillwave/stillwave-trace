@@ -58,7 +58,8 @@ AUDIO_OUT="${AUDIO_OUT:-phone}"
 case "$AUDIO_OUT" in phone|speaker|both) ;; *) AUDIO_OUT=phone ;; esac
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 # voice band: NOAA (narrow FM) fixed 200-3400 Hz; 1.3.1 airband (AM) from the Listen gear, default 200-3400 Hz
-if [[ "$DEMOD" == am ]]; then
+if [[ "$DEMOD" == am && "${BAND:-}" == any ]]; then HIGHPASS_HZ=200; LOWPASS_HZ=3400   # 1.3.8 Any MHz: plain voice band, not the airband gear
+elif [[ "$DEMOD" == am ]]; then
   HIGHPASS_HZ=200; LOWPASS_HZ=3400
   [[ "${AIRBAND_HIGHPASS:-}" =~ ^[0-9]+$ ]] && HIGHPASS_HZ="$AIRBAND_HIGHPASS"
   [[ "${AIRBAND_LOWPASS:-}" =~ ^[0-9]+$ ]] && LOWPASS_HZ="$AIRBAND_LOWPASS"
@@ -111,12 +112,16 @@ echo "Starting ${STATION_NAME} at ${FREQ} gain=${GAIN} -> ${TARGET}" >&2
 # 1.0.9: per-band gain / squelch (FM_GAIN, AIRBAND_GAIN/AIRBAND_SQUELCH, NOAA_GAIN/NOAA_SQUELCH in fm.env, written only by
 # sdr-fm-env via sdr-listen band). FM: FM_GAIN when set, else the station's GAIN. Airband / NOAA default to gain 40, squelch off
 # (the settings verified on hardware: rtl_fm -M am|fm -s 24k -g 40 -l 0 -E dc).
+if [[ "${BAND:-}" == any ]]; then   # 1.3.8 Any MHz: own ANY_GAIN / ANY_SQUELCH (default 40 / Low); wide FM has no squelch
+  EFF_GAIN="${ANY_GAIN:-40}"; EFF_SQ="${ANY_SQUELCH:-20}"; [[ "$DEMOD" == wfm ]] && EFF_SQ=0
+else
 case "$DEMOD" in
   wfm) EFF_GAIN="${FM_GAIN:-$GAIN}"; EFF_SQ=0 ;;
   am)  EFF_GAIN="${AIRBAND_GAIN:-40}"; EFF_SQ="${AIRBAND_SQUELCH:-0}" ;;
   nfm) if [[ "${BAND:-}" == frs ]]; then EFF_GAIN="${FRS_GAIN:-40}"; EFF_SQ="${FRS_SQUELCH:-20}"   # 1.3.6 FRS / GMRS
        else EFF_GAIN="${NOAA_GAIN:-40}"; EFF_SQ="${NOAA_SQUELCH:-0}"; fi ;;
 esac
+fi
 [[ "$EFF_GAIN" =~ ^[0-9]+(\.[0-9]+)?$ ]] || EFF_GAIN="$GAIN"
 [[ "$EFF_SQ" =~ ^[0-9]+$ ]] || EFF_SQ=0
 # 1.0.9 fix: AM / narrow FM used -s 12k / 12.5k with -r resampling, which gave silence. They now sample at the audio

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stillwave Trace DESKTOP edition installer (1.3.7-desktop; version from ./VERSION). Desktop edition tree of trace-1.3.7.zip,
+# Stillwave Trace DESKTOP edition installer (1.3.8-desktop; version from ./VERSION). Desktop edition tree of trace-1.3.8.zip,
 # normally started by the package's top-level install.sh (edition question / --display hdmi). HDMI monitor, 720p (default) or 1080p landscape.
 #   sudo bash install.sh --display hdmi  install the station + the full-screen HDMI kiosk (720p) (then reboot)
 #   sudo bash install.sh                 install / update the station only (keeps /etc/sdr settings)
@@ -399,6 +399,13 @@ install -m 755 "$SRC/bin/sdr-bt" /usr/local/sbin/sdr-bt
 echo "[progress] 50 Writing settings"
 install -m 755 "$SRC/bin/sdr-power" /usr/local/sbin/sdr-power
 install -m 755 "$SRC/bin/sdr-psu" /usr/local/sbin/sdr-psu          # 1.2.4: power supply status (desktop = Pi 4: config.txt is never changed)
+# 1.3.8 STAGED, OFF (held pending the power-bank test with two Nano 3 dongles): on a Pi 5 / CM5 desktop, lift the 600 mA
+# USB cap with usb_max_current_enable=1 in its own [pi5] section. Idempotent (sdr-psu replaces its own marked block), other
+# boards are never touched. To enable after the test, set TRACE_PI5_USB_CURRENT=1 below.
+TRACE_PI5_USB_CURRENT=0
+if [[ $TRACE_PI5_USB_CURRENT -eq 1 ]]; then
+  SDR_PSU_SECTION=pi5 /usr/local/sbin/sdr-psu config apply || { [[ $? -eq 3 ]] && echo "Pi 5: reboot once so the USB current setting takes effect"; }
+fi
 install -m 755 "$SRC/bin/sdr-boot-setup" /usr/local/lib/sdr-station/bin/sdr-boot-setup
 touch /var/log/sdr-power.log && chmod 644 /var/log/sdr-power.log
 # ---- kiosk screen: off button, timeout, wake on touch, brightness, dark screen at power-off (sdr-screen) ----
@@ -759,7 +766,7 @@ if [[ $UPGRADE -eq 1 ]]; then
   :
 elif [[ $DO_DISPLAY -eq 1 ]]; then
   echo
-  /usr/local/sbin/fieldnote-display-setup --hdmi --user "$RUN_USER" && mark_step display || echo "WARNING: display setup reported a problem (see above). Resume: sudo bash $SRC/install.sh --resume --display"
+  /usr/local/sbin/fieldnote-display-setup --hdmi --user "$RUN_USER" && mark_step display || echo "WARNING: display setup reported a problem (see above). Resume: sudo bash $SRC/install.sh --resume --display hdmi"
 elif [[ ! -f /etc/sdr/display.env ]]; then
   echo "For the full-screen HDMI kiosk run:  sudo bash install.sh --display-only   (then sudo reboot)"
 fi

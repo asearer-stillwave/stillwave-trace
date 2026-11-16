@@ -60,7 +60,7 @@ if [[ "${1:-}" == "--health" ]]; then
   done
   echo "HEALTH FAILED after $((SECONDS - T0))s: $why"; exit 1
 fi
-echo "==== installed files (1.3.7 manifest) ===="
+echo "==== installed files (1.3.8 manifest) ===="
 if [[ -s /usr/local/lib/sdr-station/MANIFEST ]]; then
   miss=0; total=0
   while IFS= read -r f; do total=$((total + 1)); [[ -e "/usr/local/lib/sdr-station/$f" ]] || { miss=$((miss + 1)); echo "MISSING: /usr/local/lib/sdr-station/$f"; }; done < /usr/local/lib/sdr-station/MANIFEST
@@ -117,6 +117,13 @@ sudo -n -l /usr/local/sbin/sdr-power reboot >/dev/null 2>&1 && echo "sudoers: sd
 tail -3 /var/log/sdr-power.log 2>/dev/null || true
 echo "==== power supply (1.2.4) ===="
 if [[ -x /usr/local/sbin/sdr-psu ]]; then /usr/local/sbin/sdr-psu status 2>/dev/null || echo "sdr-psu status failed"; else echo "sdr-psu missing"; fi
+# 1.3.8: raw under-voltage readout (bit 0 = under-voltage now, bit 16 = since boot; 0x0 = clean)
+if command -v vcgencmd >/dev/null 2>&1; then
+  thr="$(vcgencmd get_throttled 2>/dev/null)"; v="${thr#*=}"
+  if [[ "$v" =~ ^0x[0-9a-fA-F]+$ ]]; then
+    echo "vcgencmd get_throttled: $v  under-voltage now: $(( (v & 0x1) ? 1 : 0 ))  since boot: $(( (v & 0x10000) ? 1 : 0 ))"
+  else echo "vcgencmd get_throttled: no reading ($thr)"; fi
+else echo "vcgencmd get_throttled: vcgencmd not installed"; fi
 curl -s -m 3 http://127.0.0.1:8080/api/power/supply 2>/dev/null || echo "(web power API not answering)"; echo
 grep -n 'stillwave-trace-power\|usb_max_current_enable' /boot/firmware/config.txt /boot/config.txt 2>/dev/null || echo "config.txt: no usb_max_current_enable (expected on a Pi 4)"
 if [[ -f /etc/systemd/system/fieldnote-kiosk.service.d/fieldnote-cursor.conf ]]; then

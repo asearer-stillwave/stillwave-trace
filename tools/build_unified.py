@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Stillwave Trace 1.3.7: ONE fresh-install / upgrade zip for both editions -> /workspace/out-1.3.7/trace-1.3.7.zip
+"""Stillwave Trace 1.3.8: ONE fresh-install / upgrade zip for both editions -> $TRACE_OUT (default /workspace/out-1.3.8)/trace-1.3.8.zip
 Layout (no top folder; unzip -d DIR, then sudo bash DIR/install.sh):
-  install.sh VERSION README.txt   (from /workspace/sdr/work/trace-unified: edition question / --display dsi|hdmi / --upgrade)
+  install.sh VERSION README.txt   (from /workspace/sdr/work138/trace-unified: edition question / --display dsi|hdmi / --upgrade)
   common/    files that are byte-identical (same mode) in both edition trees
-  handheld/  the rest of /workspace/sdr/work/sdr-station
+  handheld/  the rest of /workspace/sdr/work138/sdr-station
   desktop/   the rest of /workspace/sdr/work/sdr-station-desktop
 Skips __pycache__, .pyc/.pyo, *.pmtiles, *.pre-* rollback copies, .tmp. Refuses .pem / private-key material, unit keys,
 Wi-Fi / password files, cloud-init user-data / network-config and anything from the Pi 5 kit. Never reads /workspace/sdr/keys."""
 import hashlib, os, re, stat, sys, time, zipfile
-OUT = "/workspace/out-1.3.7"; NAME = "trace-1.3.7.zip"; VER = "1.3.7"; LIMIT = 25 * 1000 * 1000
-HH, DT, UNI = "/workspace/sdr/work/sdr-station", "/workspace/sdr/work/sdr-station-desktop", "/workspace/sdr/work/trace-unified"
+OUT = os.environ.get("TRACE_OUT", "/workspace/out-1.3.8"); NAME = "trace-1.3.8.zip"; VER = "1.3.8"; LIMIT = 25 * 1000 * 1000
+HH, DT, UNI = "/workspace/sdr/work138/sdr-station", "/workspace/sdr/work138/sdr-station-desktop", "/workspace/sdr/work138/trace-unified"
 DENY = re.compile(r"(\.pem$|trace-unit-keys|(^|/)user-data$|(^|/)network-config$|wpa_supplicant|wifi.*pass|password|(^|/)keys/|(^|/)kit/|pi5-desktop)", re.I)
 SKIPF = re.compile(r"(\.pyc$|\.pyo$|\.pmtiles$|\.pre-[^/]*$|\.tmp$)")
 PRIV = (b"-----BEGIN PRIVATE KEY-----", b"BEGIN OPENSSH PRIVATE KEY", b"BEGIN EC PRIVATE KEY", b"BEGIN RSA PRIVATE KEY")

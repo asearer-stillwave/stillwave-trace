@@ -4,7 +4,8 @@ import * as maplibregl from '/maplib/maplibre-gl.mjs';
 
 const LAX = [-118.4081, 33.9425];
 // 1.3.7: closest zoom = the LA basin view (city names, major roads). Was 15.5 (LA street level from the pmc layers).
-export const MAX_ZOOM = 10;
+export const MAX_ZOOM = 12;        // 1.3.8: the view can zoom two levels past 10 (approved preview)...
+export const DATA_MAX_ZOOM = 10;   // ...but only zoom 10 map data is ever loaded: z11/z12 enlarge the z10 tiles (overzoom)
 const TRAIL_SECS = 120, TRAIL_MAX = 150, STALE_FADE = 15, STALE_DROP = 60;
 const NM = 1852;
 const ALT_COLORS = ['#5f7a68', '#1c6b3c', '#26904f', '#33b866', '#4ade80', '#97f0b8', '#c8f8d9', '#f4fff7', '#6b6f6d']; // GND (grey-green) · <1k · 1-3k · 3-6k · 6-10k (Signal) · 10-20k · 20-30k · 30k+ (white) · unknown (neutral grey, drawn at 60%)
@@ -59,7 +60,7 @@ function packSources(packs) {
   (packs || []).forEach((p, i) => {
     const id = 'pk' + i;
     // 1.3.7: the whole map stops at zoom 10, so packs are read up to zoom 10 at most (pack files are unchanged)
-    const mx = Math.min(MAX_ZOOM, p.maxzoom || 14);
+    const mx = Math.min(DATA_MAX_ZOOM, p.maxzoom || 14);
     src[id] = { type: 'vector', tiles: ['pmtiles://' + location.origin + p.url + '/{z}/{x}/{y}'], minzoom: Math.min(p.minzoom || 0, mx),
                 maxzoom: mx, bounds: p.bbox };
     if (p.attribution) src[id].attribution = p.attribution;
@@ -82,7 +83,7 @@ function pmtilesStyle(url, manifest, packs) {
     sources: url ? {
       // the SoCal overview (zoom 0-11 in the file; the map stops at 10). 1.3.7: the LA street-level layers (pmc, zoom
       // 12-14 of the same file) are no longer drawn; la.pmtiles itself is unchanged.
-      pmo: { type: 'vector', tiles: ['pmtiles://' + abs], minzoom: 0, maxzoom: 11, attribution: att },
+      pmo: { type: 'vector', tiles: ['pmtiles://' + abs], minzoom: 0, maxzoom: DATA_MAX_ZOOM, attribution: att },
     } : {},
     // 1.3.5: no LA file but a pack (the USA street map) -> draw the packs alone (1.3.7: also capped at zoom 10)
     layers: url ? basemapLayers('pmo', 'outer') : [{ id: 'bg', type: 'background', paint: { 'background-color': '#0b0f0c' } }],

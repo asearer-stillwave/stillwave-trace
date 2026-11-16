@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stillwave Trace 1.3.7 installer, both editions in one package (trace-1.3.7.zip).
+# Stillwave Trace 1.3.8 installer, both editions in one package (trace-1.3.8.zip).
 #   sudo bash install.sh                  asks which edition, then installs it:
 #                                           1) Handheld (5" touch display)
 #                                           2) Desktop (HDMI)
@@ -105,7 +105,7 @@ ARGS=()
 if [[ $UPGRADE -eq 1 ]]; then ARGS+=(--upgrade)
 elif [[ "$ED" == desktop && -n "$DISP" ]]; then ARGS+=(--display hdmi)
 elif [[ "$ED" == desktop ]]; then ARGS+=(--display hdmi)        # picked 2) Desktop (HDMI): station + HDMI kiosk
-else ARGS+=(--display)                                          # picked 1) or --display dsi: station + 5" touch kiosk
+else ARGS+=(--display dsi)                                      # picked 1) or --display dsi: station + 5" touch kiosk (1.3.8: no bare --display)
 fi
 ARGS+=(${PASS[@]+"${PASS[@]}"})
 echo "Running: bash $STAGE/install.sh ${ARGS[*]}"

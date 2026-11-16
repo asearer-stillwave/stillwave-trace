@@ -416,12 +416,12 @@ function bnPaint(j){
   if (st === 'running' || st === 'retrying' || st === 'checking') {
     const tot = j.total || 58e6, have = Math.min(j.have || 0, tot), pct = Math.min(100, Math.floor(have / tot * 100));
     const eta = j.eta == null ? '' : 'about ' + (j.eta > 90 ? Math.round(j.eta / 60) + ' min' : j.eta + ' s') + ' left';
-    n.innerHTML = '<div class="r"><span class="t"><b>Downloading</b> · LA street map</span><button type="button" class="gh" data-b="cancel">Cancel</button></div>' +
+    n.innerHTML = '<div class="r"><span class="t"><b>Downloading</b> · Los Angeles map</span><button type="button" class="gh" data-b="cancel">Cancel</button></div>' +
       '<div class="bar"><i style="width:' + pct + '%"></i></div><div class="r s"><span class="t">' + (st === 'retrying' ? 'Connection lost, retrying…' : MB1(have) + ' of ' + MB1(tot) + ' · ' + pct + '%') + '</span><span>' + eta + '</span></div>' +
       '<div class="s">Keep Wi‑Fi on. You can keep using Trace.</div>';
   } else if (st === 'done') {
     n.classList.add('ok');
-    n.innerHTML = '<div class="r"><span class="t"><b>Street map installed</b> · Los Angeles metro</span></div><div class="s">' + MB1(j.total || j.have || 0) + ' · reloading the map…</div>';
+    n.innerHTML = '<div class="r"><span class="t"><b>Map installed</b> · Los Angeles metro</span></div><div class="s">' + MB1(j.total || j.have || 0) + ' · reloading the map…</div>';
   } else if (st === 'failed') {
     n.classList.add('err');
     const off = j.reason === 'offline', ns = j.reason === 'nospace';
@@ -430,7 +430,7 @@ function bnPaint(j){
       '<div class="s">' + escH(off ? 'Connect to Wi‑Fi with internet, then tap Retry.' : (j.message || 'Tap Retry.')) + '</div>';
   } else {
     n.classList.remove('mn-dl'); n.classList.add('mn-basic');
-    n.innerHTML = '<span class="t"><b>Basic map</b> · street map not installed</span><button type="button" class="go" data-b="start" style="padding:9px 12px;min-height:0">Get map ›</button><button type="button" class="x" aria-label="Dismiss">✕</button>';
+    n.innerHTML = '<span class="t"><b>Basic map</b> · full map not installed</span><button type="button" class="go" data-b="start" style="padding:9px 12px;min-height:0">Get map ›</button><button type="button" class="x" aria-label="Dismiss">✕</button>';
     n.querySelector('.x').onclick = () => { n.classList.add('hide'); clearTimeout(bnT); try { sessionStorage.setItem('traceBasicMapNote', 'x'); } catch (e) {} };
   }
   n.querySelectorAll('[data-b]').forEach(b => b.onclick = async () => {
@@ -479,7 +479,7 @@ async function boot(){
   // 1.3.5: no street map (LA or USA) -> GET MAP banner that downloads the LA street map on the box (no keyboard / SSH)
   const hasUSA = info && (info.packs || []).some(p => p.id === 'usa');
   if (!info || !(info.street || hasUSA)) mapBanner();
-  try { if (sessionStorage.getItem('traceMapReady') === '1') { sessionStorage.removeItem('traceMapReady'); mapToast('\u2713 Street map ready'); } } catch (e) {}
+  try { if (sessionStorage.getItem('traceMapReady') === '1') { sessionStorage.removeItem('traceMapReady'); mapToast('\u2713 Map ready'); } } catch (e) {}
   try {
     map = await new AircraftMap($('map'), { receiver: receiver, rings: ringPrefs(), onSelect: p => { if (p) showBoat(null); showCard(p); }, onBoat: b => { if (b) showCard(null); showBoat(b); }, onFollow: setFollowBtn }).start(info);
     paintRings(); map.map.on('zoomend', () => { if (!$('ringset').classList.contains('hide')) paintRings(); });

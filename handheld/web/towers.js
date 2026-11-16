@@ -75,11 +75,11 @@
     if (M.selected) M.select(null); if (M.boatSel) M.selectBoat(null);
     mark(i); paint();
   }
-  function close() { if (!card) return; card.remove(); card = null; site = null; sel = null; mark(-1); }
+  function close() { if (!card) return; card.remove(); card = null; site = null; sel = null; mark(-1); document.documentElement.classList.remove('tcardopen'); }
 
   function paint() {
     if (!site || !sel) return;
-    if (!card) { card = document.createElement('div'); card.className = 'tcard'; card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', 'FM tower'); $('mapwrap').appendChild(card); }
+    if (!card) { card = document.createElement('div'); card.className = 'tcard'; card.setAttribute('role', 'dialog'); card.setAttribute('aria-label', 'FM tower'); $('mapwrap').appendChild(card); document.documentElement.classList.add('tcardopen'); }   // 1.3.8: hides the gain control while the card is open
     const st = site.stations, n = st.length, rc = (M && M.receiver) || { lat: 33.9425, lon: -118.4081 };
     const d = nm(rc, site), b = brg(rc, site), i0 = st.indexOf(sel);
     const lo = Math.max(0, Math.min(i0 - 2, n - 6)), show = more ? st : st.slice(lo, lo + 6), rest = n - show.length;
@@ -89,7 +89,7 @@
       '<div class="tco' + (more ? ' all' : '') + '">' + show.map(x => '<button type="button" data-c="' + esc(x.call) + '" data-f="' + x.mhz + '"' + (x === sel ? ' class="on"' : '') + '>' + x.mhz.toFixed(1) + '<small>' + esc(x.call) + '</small></button>').join('') +
         (rest > 0 ? '<button type="button" class="more">+' + rest + '<small>more ›</small></button>' : more && n > 6 ? '<button type="button" class="more">‹<small>less</small></button>' : '') + '</div>' +
       '<dl class="agrid"><div><dt>City</dt><dd>' + esc(sel.city || '—') + '</dd></div><div><dt>Power</dt><dd>' + (sel.erp_kw != null ? +(+sel.erp_kw).toFixed(2) + ' kW' : '—') + '</dd></div>' +
-        '<div><dt>Height</dt><dd>' + (sel.haat_m != null ? Math.round(sel.haat_m) + ' m' : '—') + '</dd></div><div><dt>From you</dt><dd>' + d.toFixed(0) + ' NM ' + CARD[Math.round(b / 45) % 8] + '</dd></div></dl>' +
+        '<div><dt>Above terrain</dt><dd>' + (sel.haat_m != null ? Math.round(sel.haat_m) + ' m' : '—') + '</dd></div><div><dt>From you</dt><dd>' + d.toFixed(0) + ' NM ' + CARD[Math.round(b / 45) % 8] + '</dd></div></dl>' +
       '<div class="tgo"><button type="button" class="tune">Tune ' + sel.mhz.toFixed(1) + ' FM ▸</button></div><p class="tnote" id="twN"></p>';
     card.querySelector('.tx').onclick = close;
     card.querySelectorAll('.tco button').forEach(bt => bt.onclick = () => {
