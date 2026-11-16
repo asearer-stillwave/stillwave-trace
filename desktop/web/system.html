@@ -1,7 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -21,6 +23,12 @@
     <h1>Sys<span class="acc">tem</span></h1>
   </div>
   <p class="lead">Services and logs (moved here from Network in 1.3.1).</p>
+  <div class="card">
+    <h2>Screen</h2>
+    <p class="note">Reloads the Trace screen on this box, like a browser refresh. Use it if the screen looks stuck or out of date. It also works from a phone.</p>
+    <p><button type="button" id="reloadScr" class="primary">Reload screen</button></p>
+  </div>
+
   <div class="card">
     <h2>Logs</h2>
     <p class="note">Network log: if a Wi‑Fi or hotspot switch fails, show and copy it.</p>
@@ -48,7 +56,7 @@
 <script src="/screen.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-function setMsg(t,k){ const el=$('msg'); el.className='status '+(k||''); el.textContent=t||''; }
+function setMsg(t,k){ const el=$('msg'); el.className='status '+(k||''); el.textContent=(window.traceErr ? traceErr.clean(t) : t)||''; }
 async function jfetch(url, opt){
   const r = await fetch(url, Object.assign({cache:'no-store'}, opt||{}));
   const t = await r.text();
@@ -82,6 +90,12 @@ $('showlog').onclick = async () => {
     const j = await jfetch('/api/net/log');
     pre.textContent = j.log || JSON.stringify(j, null, 2);
   } catch(e) { pre.textContent = e.message; }
+};
+$('reloadScr').onclick = async () => {   // 1.3.5: no keyboard needed (was Ctrl+Shift+R)
+  setMsg('Reloading the screen…','ok');
+  try { await jfetch('/api/ui/reload',{method:'POST'}); } catch(e){ setMsg(e.message,'err'); return; }
+  if (document.documentElement.classList.contains('kiosk')) setTimeout(() => window.top.location.reload(), 300);
+  else setMsg('The screen on the box reloads in a few seconds.','ok');
 };
 refresh();
 </script>

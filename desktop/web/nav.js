@@ -1,3 +1,29 @@
+// 1.3.4: shared friendly error card (approved mockup 1.3.4-errors). Raw helper output (sudo / command not found / paths)
+// never reaches the page text; it sits behind a collapsed Details toggle. traceErr.clean() is for one-line status messages.
+window.traceErr = window.traceErr || (function () {
+  const SYS = /sudo:|command not found|Traceback|\/usr\/(local\/)?s?bin\/|No such file|Permission denied|Errno|Internal Server Error|^HTTP 5\d\d/i;
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const sys = m => SYS.test(String(m || ''));
+  const clean = (m, fb) => sys(m) ? (fb || 'The helper on this box did not answer.') : String(m == null ? '' : m);
+  function card(what, why, raw, retry) {
+    const d = document.createElement('div'); d.className = 'ec'; d.setAttribute('role', 'alert');
+    d.innerHTML = '<h3>Couldn\u2019t read ' + esc(what) + '</h3><p>' + esc(why) + '</p><div class="ec-row"><button type="button" class="sm primary ec-retry">Try again</button>' +
+      '<button type="button" class="sm ec-web">Restart web UI</button></div>' + (raw ? '<details><summary>Details</summary><pre>' + esc(raw) + '</pre></details>' : '');
+    const rb = d.querySelector('.ec-retry'), wb = d.querySelector('.ec-web');
+    rb.onclick = () => { rb.disabled = true; rb.textContent = 'Checking\u2026'; Promise.resolve().then(() => retry && retry()).catch(() => {}).then(() => { rb.disabled = false; rb.textContent = 'Try again'; }); };
+    let armed = false;
+    wb.onclick = () => {
+      if (!armed) { armed = true; wb.textContent = 'Tap again to restart'; setTimeout(() => { armed = false; wb.textContent = 'Restart web UI'; }, 4000); return; }
+      wb.disabled = true; wb.textContent = 'Restarting\u2026';
+      fetch('/api/services/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which: 'sdr-web' }) }).catch(() => {});
+      setTimeout(() => location.reload(), 6000);
+    };
+    return d;
+  }
+  function show(host, what, why, raw, retry) { if (!host) return; host.innerHTML = ''; host.appendChild(card(what, why, raw, retry)); }
+  function hide(host) { if (host) host.innerHTML = ''; }
+  return { sys, clean, card, show, hide };
+})();
 // Stillwave Trace 1.0.8: single-load app. "/" is the shell (app.html): status strip + nav are built once and each tab
 // lives in its own same-origin frame that stays loaded, so switching tabs is instant (no page reload) and the map keeps
 // its instance. The shell runs the one live-update loop (/api/strip) and forwards it to the frames.
@@ -152,7 +178,7 @@
   function metricText(mode, m) {
     if (!m) return null;
     if (mode === 'fm' && typeof m.mhz === 'number') {
-      const air = m.band === 'airband' || m.band === 'noaa' || m.band === 'other';
+      const air = m.band === 'airband' || m.band === 'noaa' || m.band === 'frs' || m.band === 'other';
       const f = air ? m.mhz.toFixed(3) : (Math.round(m.mhz * 10) / 10).toFixed(1) + ' MHz';
       const nm = m.name && !/^Tune /.test(m.name) ? m.name : '';
       return nm ? [nm, nm + (air ? ' · ' + f : '')] : [f, f];   // 1.0.8: station name in the strip
@@ -167,7 +193,7 @@
   const ROLE_NAME = { adsb: 'ADS-B', ais: 'AIS', radio: 'Radio', spare: 'Spare' };
   function radioJob(mode) {
     const m = S && S.metric;
-    if (mode === 'fm') return (m && m.band === 'airband') ? 'Airband' : (m && m.band === 'noaa') ? 'NOAA' : 'FM';
+    if (mode === 'fm') return (m && m.band === 'airband') ? 'Airband' : (m && m.band === 'noaa') ? 'NOAA' : (m && m.band === 'frs') ? 'FRS' : 'FM';
     return MODE_NAME[mode] || 'Radio';
   }
   function radioState(mode) {   // -> [text, class, dot]
@@ -187,7 +213,7 @@
   }
   function chipHTML(c, first) {
     return '<a class="qs-chip qs-job qs-sdr' + (c.cls === 'err' ? ' err' : c.cls === 'warn' ? ' warn' : '') + '"' + (first ? ' id="qsJob"' : '') + ' href="' + c.href + '" aria-label="' + c.aria.replace(/"/g, '') + '">' +
-      '<span class="qs-dot ' + c.dot + '"></span><span class="qs-txt"><span class="qs-k"></span><span class="qs-v ' + c.cls + '"></span></span></a>';
+      '<span class="qs-dot ' + c.dot + (c.num ? ' num' : '') + '">' + (c.num ? '<b>' + c.num + '</b>' : '') + '</span><span class="qs-txt"><span class="qs-k"></span><span class="qs-v ' + c.cls + '"></span></span></a>';
   }
   function renderJob() {
     const md = S && S.mode, mode = md && md.mode, rd = S && S.radios, lv = S && S.live, box = $('qsJobs');
@@ -203,7 +229,7 @@
     } else {
       const miss = rd.missing || [];
       dl.forEach((d, i) => {
-        const n = 'SDR ' + (i + 1) + ' · ';
+        const n = 'SDR ' + (i + 1) + ' · ', c0 = chips.length;
         if (d.role === 'adsb') {
           const c = lv && lv.adsb_count;
           chips.push(c != null ? { k: n + 'ADS-B', v: c + ' AC', cls: 'live', dot: 'ok', href: '/adsb' } : { k: n + 'ADS-B', v: md && md.adsb_live ? '—' : 'Off', cls: 'dash', dot: md && md.adsb_live ? 'unk' : '', href: '/adsb' });
@@ -214,6 +240,7 @@
           if (mode === 'adsb' || mode === 'none' || !mode) chips.push({ k: n + 'Radio', v: busyTo ? 'Switching…' : 'Off', cls: busyTo ? 'err' : 'dash', dot: busyTo ? 'err' : '', href: '/listen' });
           else { const [v, cls, dot] = radioState(mode); chips.push({ k: n + radioJob(mode), v, cls, dot, href: MODE_PAGE[mode] || '/listen' }); }
         } else chips.push({ k: n + (ROLE_NAME[d.role] || 'Spare'), v: 'Spare', cls: 'dash', dot: '', href: '/dongles' });
+        if (chips[c0]) chips[c0].num = i + 1;   // 1.3.6: narrow screens show a "1"/"2" badge instead of "SDR 1 · "
       });
       miss.forEach(r => chips.push({ k: 'SDR · ' + (ROLE_NAME[r] || r), v: 'No radio', cls: 'err', dot: 'err', href: '/dongles' }));
     }
@@ -222,7 +249,12 @@
     if (box.dataset.sig !== sig) {
       box.dataset.sig = sig;
       box.innerHTML = chips.map((c, i) => chipHTML(c, i === 0)).join('');
-      box.querySelectorAll('.qs-chip').forEach((el, i) => { el.querySelector('.qs-k').textContent = chips[i].k; el.querySelector('.qs-v').textContent = chips[i].v; });
+      box.querySelectorAll('.qs-chip').forEach((el, i) => {
+        const c = chips[i], k = el.querySelector('.qs-k'), m = c.num ? /^(SDR \d · )(.*)$/.exec(c.k) : null;
+        if (m) { const p = document.createElement('span'); p.className = 'qs-kn'; p.textContent = m[1]; k.append(p, m[2]); } else k.textContent = c.k;
+        const v = el.querySelector('.qs-v'); v.textContent = c.v;
+        if (/^Live /.test(c.v)) { v.dataset.short = '▶ ' + c.v.slice(5); }
+      });
       box.classList.toggle('multi', chips.length > 1);
       setTimeout(measure, 0);
     }
@@ -406,4 +438,25 @@
   render();
   refresh();
   window.fieldnoteStrip = { refresh, get: () => S, icons: ICON };
+})();
+// 1.3.5: kiosk auto-reload. The kiosk shell (top window, html.kiosk) polls /api/ui/epoch and reloads itself when it changes:
+// after an update restarts the web UI, after a map is installed or deleted, or from Settings > System > Reload screen.
+// Nobody needs a keyboard (Ctrl+Shift+R) on the device. Phones and other browsers are never reloaded under the user.
+(function () {
+  if (window.top !== window || window.__traceEpoch) return;
+  window.__traceEpoch = true;
+  let first = null, fails = 0;
+  async function tick() {
+    if (!document.documentElement.classList.contains('kiosk')) return setTimeout(tick, 15000);
+    try {
+      const j = await (await fetch('/api/ui/epoch', { cache: 'no-store' })).json();
+      fails = 0;
+      if (j && j.epoch) {
+        if (first === null) first = j.epoch;
+        else if (j.epoch !== first) { location.reload(); return; }
+      }
+    } catch (e) { fails++; }   // web UI restarting: keep the old epoch, reload when it answers with a new one
+    setTimeout(tick, fails ? 3000 : 5000);
+  }
+  setTimeout(tick, 4000);
 })();

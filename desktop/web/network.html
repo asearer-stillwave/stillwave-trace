@@ -1,7 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -21,6 +23,7 @@
     <h1>Net<span class="acc">work</span></h1>
   </div>
   <p class="lead">Join Wi‑Fi or share this box as a hotspot.</p>
+  <div id="netErr"></div>
 
   <div class="card" id="netcard">
     <div class="aprow nw-row"><h2>Wi‑Fi</h2><button type="button" class="v-sw on" id="nWifi" role="switch" aria-checked="true" aria-label="Wi‑Fi on or off"></button></div>
@@ -101,7 +104,7 @@
 <script>
 const $ = id => document.getElementById(id);
 let NET = {};
-function setMsg(t,k){ const el=$('msg'); el.className='status '+(k||''); el.textContent=t||''; }
+function setMsg(t,k){ const el=$('msg'); el.className='status '+(k||''); el.textContent=(window.traceErr ? traceErr.clean(t) : t)||''; }
 async function jfetch(url, opt){
   const r = await fetch(url, Object.assign({cache:'no-store'}, opt||{}));
   const t = await r.text();
@@ -165,7 +168,7 @@ async function loadSaved(){
       const meta = [n.active ? 'connected' : '', n.name !== n.ssid ? 'profile '+n.name : '', 'saved'].filter(Boolean).join(' · ');
       box.appendChild(netButton(n.ssid || n.name, meta, true, () => pick(n.ssid || n.name, true), n.active));
     });
-  } catch(e) { box.textContent=''; box.appendChild(el('p','note err', 'Saved networks: '+e.message)); }
+  } catch(e) { box.textContent=''; box.appendChild(el('p','note err', traceErr.clean('Saved networks: '+e.message, 'Saved networks: not available right now.'))); }
 }
 $('scanwifi').onclick = async () => {
   const box = $('wifis');
@@ -178,7 +181,7 @@ $('scanwifi').onclick = async () => {
       box.appendChild(netButton(n.ssid, meta, n.saved, () => pick(n.ssid, n.saved)));
     });
     if (!(j.networks||[]).length) box.appendChild(el('p','note', j.note || 'No networks found.'));
-  } catch(e){ box.textContent=''; box.appendChild(el('p','note err', e.message)); }
+  } catch(e){ box.textContent=''; box.appendChild(el('p','note err', traceErr.clean(e.message, 'Nearby networks: not available right now.'))); }
 };
 $('netlast').onclick = () => { const d = $('netlastD'), open = d.classList.toggle('hide') === false; $('netlast').setAttribute('aria-expanded', open); };
 // 1.3: Wi-Fi on/off moved here from Settings (confirm before turning off)
@@ -298,7 +301,7 @@ $('apSave').onclick = async () => {
     m.textContent = 'Saved: ' + j.ap_ssid + ' · ' + (j.ap_band === 'a' ? '5 GHz' : '2.4 GHz') + (j.saved_mode === 'ap' ? ' · starts at boot' : '') + (j.restarted ? '. The hotspot is restarting: rejoin ' + j.ap_ssid + '.' : '.');
     try { await refresh(); } catch (e) {}
     apPaint(true);
-  } catch (e) { m.className = 'status err'; m.textContent = e.message; }
+  } catch (e) { m.className = 'status err'; m.textContent = traceErr.clean(e.message); }
   finally { $('apSave').disabled = false; }
 };
 // ---- hotspot password (only on request) ----
@@ -314,7 +317,8 @@ $('appwshow').onclick = async () => {
 };
 
 async function refresh(){
-  try { renderNet(await jfetch('/api/net')); } catch(e) { setMsg(e.message,'err'); }
+  try { renderNet(await jfetch('/api/net')); traceErr.hide($('netErr')); }
+  catch(e) { traceErr.show($('netErr'), 'Wi‑Fi status', 'The network service didn’t answer. Wi‑Fi and the hotspot keep working; this page just can’t show them right now.', e.message, refresh); }
 }
 refresh();
 loadSaved();
@@ -346,7 +350,7 @@ function ajPaint(a){
   $('ajNote').textContent = 'Strong = 3 bars or more (about ' + String(a.threshold || -67).replace('-', '−') + ' dBm). If Wi‑Fi drops for 30 s, the hotspot comes back.' + (h ? ' On home Wi‑Fi, put your phone on the same network and open http://' + h + '.local/' : '');
 }
 async function ajLoad(body){
-  try { ajPaint(await jfetch('/api/net/wifi-auto', body ? {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {})); } catch (e) { $('ajList').textContent = ''; $('ajList').appendChild(el('p','note','Auto-join status unavailable: ' + e.message)); }
+  try { ajPaint(await jfetch('/api/net/wifi-auto', body ? {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {})); } catch (e) { $('ajList').textContent = ''; $('ajList').appendChild(el('p','note',traceErr.clean('Auto-join status unavailable: ' + e.message, 'Auto-join status: not available right now.'))); }
 }
 $('aj').onclick = () => ajLoad({enabled: !$('aj').classList.contains('on')});
 $('ajScan').onclick = async () => { $('ajScan').disabled = true; await ajLoad({rescan: true}); $('ajScan').disabled = false; };

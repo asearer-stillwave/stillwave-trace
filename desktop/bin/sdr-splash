@@ -42,15 +42,16 @@ DEBS="${SDR_SPLASH_DEBS:-$LIB/vendor/plymouth}"
 SRC="${SDR_SPLASH_SRC:-$LIB/plymouth/stillwave-trace}"
 THEMES="${SDR_SPLASH_THEMES:-$R/usr/share/plymouth/themes}"
 THEME=stillwave-trace; TDIR="$THEMES/$THEME"; TFILE="$TDIR/$THEME.plymouth"
-FILES=(stillwave-trace.plymouth stillwave-trace.script bg.png bg-shutdown.png bg-wide.png bg-wide-shutdown.png sweep.png hub.png bg-stillwave.png ok.png cd0.png cd1.png cd2.png cd3.png cd4.png cd5.png bg-wide-stillwave.png cdw0.png cdw1.png cdw2.png cdw3.png cdw4.png cdw5.png
-       g0.png g1.png g2.png g3.png g4.png g5.png g6.png g7.png g8.png g9.png g10.png g11.png g12.png g13.png g14.png g15.png g16.png g17.png g18.png g19.png g20.png g21.png g22.png g23.png g24.png g25.png g26.png g27.png g28.png g29.png g30.png g31.png g32.png g33.png g34.png g35.png g36.png g37.png g38.png g39.png g40.png g41.png g42.png g43.png g44.png g45.png g46.png g47.png g48.png g49.png g50.png g51.png g52.png g53.png g54.png g55.png g56.png g57.png g58.png g59.png g60.png g61.png g62.png g63.png g64.png g65.png g66.png g67.png g68.png g69.png g70.png g71.png g72.png g73.png g74.png g75.png g76.png g77.png g78.png g79.png g80.png g81.png g82.png g83.png g84.png g85.png g86.png g87.png g88.png g89.png g90.png g91.png g92.png)   # 1.3: STILLWAVE screen, countdown captions, console glyphs
+FILES=(stillwave-trace.plymouth stillwave-trace.script bg-reboot.png cursor.png bg-wide-reboot.png bg.png bg-shutdown.png bg-wide.png bg-wide-shutdown.png sweep.png hub.png bg-stillwave.png ok.png cd0.png cd1.png cd2.png cd3.png cd4.png cd5.png bg-wide-stillwave.png cdw0.png cdw1.png cdw2.png cdw3.png cdw4.png cdw5.png
+       g0.png g1.png g2.png g3.png g4.png g5.png g6.png g7.png g8.png g9.png g10.png g11.png g12.png g13.png g14.png g15.png g16.png g17.png g18.png g19.png g20.png g21.png g22.png g23.png g24.png g25.png g26.png g27.png g28.png g29.png g30.png g31.png g32.png g33.png g34.png g35.png g36.png g37.png g38.png g39.png g40.png g41.png g42.png g43.png g44.png g45.png g46.png g47.png g48.png g49.png g50.png g51.png g52.png g53.png g54.png g55.png g56.png g57.png g58.png g59.png g60.png g61.png g62.png g63.png g64.png g65.png g66.png g67.png g68.png g69.png g70.png g71.png g72.png g73.png g74.png g75.png g76.png g77.png g78.png g79.png g80.png g81.png g82.png g83.png g84.png g85.png g86.png g87.png g88.png g89.png g90.png g91.png g92.png
+       s0.png s1.png s2.png s3.png s4.png s5.png s6.png s7.png s8.png s9.png s10.png s11.png s12.png s13.png s14.png s15.png s16.png s17.png s18.png s19.png s20.png s21.png s22.png s23.png s24.png s25.png s26.png s27.png s28.png s29.png s30.png s31.png s32.png s33.png s34.png s35.png s36.png s37.png s38.png s39.png s40.png s41.png s42.png s43.png s44.png s45.png s46.png s47.png s48.png s49.png s50.png s51.png s52.png s53.png s54.png s55.png s56.png s57.png s58.png s59.png s60.png s61.png s62.png s63.png s64.png s65.png s66.png s67.png s68.png s69.png s70.png s71.png s72.png s73.png s74.png s75.png s76.png s77.png s78.png s79.png s80.png s81.png s82.png s83.png s84.png s85.png s86.png s87.png s88.png s89.png s90.png s91.png s92.png ok8.png cursor8.png)   # 1.3: STILLWAVE screen, countdown captions, console glyphs
 STATE_DIR="${SDR_SPLASH_STATE:-$R/var/lib/sdr-splash}"; STATE="$STATE_DIR/state.env"
 PREF="${SDR_SPLASH_PREF:-$R/etc/sdr/splash.env}"
 HOOK="$R/etc/initramfs-tools/hooks/stillwave-splash"
 DROPIN="$R/etc/systemd/system/plymouth-quit.service.d/stillwave-retain-splash.conf"
 PLYCONF="$R/etc/plymouth/plymouthd.conf"
 KIOSK="$R/etc/systemd/system/fieldnote-kiosk.service"
-TOKENS="quiet splash loglevel=3 vt.global_cursor_default=0 logo.nologo plymouth.ignore-serial-consoles"
+TOKENS="quiet splash loglevel=3 vt.global_cursor_default=0 logo.nologo plymouth.ignore-serial-consoles plymouth.force-scale=1"
 BEGIN="# >>> stillwave-splash >>> (managed by sdr-boot-setup --splash; remove with: sudo sdr-boot-setup --splash off)"
 END="# <<< stillwave-splash <<<"
 TS="$(date +%Y%m%d-%H%M%S)"
@@ -174,7 +175,7 @@ initrd_has_theme() {
   return 1
 }
 # the desktop 720p EDID (and its initramfs hook) are part of the stamp, so one rebuild here carries both
-build_stamp() { cat "$HOOK" "${FILES[@]/#/$TDIR/}" "$R/etc/initramfs-tools/hooks/trace-edid" "$R/lib/firmware/edid/trace-720p.bin" 2>/dev/null | sha256sum | cut -d' ' -f1; }
+build_stamp() { cat "$HOOK" "${FILES[@]/#/$TDIR/}" "$R/etc/initramfs-tools/hooks/trace-edid" "$R/lib/firmware/edid/trace-720p.bin" "$R/lib/firmware/edid/trace-1080p.bin" "$PLYCONF" 2>/dev/null | sha256sum | cut -d' ' -f1; }
 
 rebuild_initrd() {  # keep the current initrd.img until the new one is built
   mkdir -p "$STATE_DIR"
@@ -191,10 +192,40 @@ rebuild_initrd() {  # keep the current initrd.img until the new one is built
 
 theme_is_default() {
   [[ "$(readlink -f "$THEMES/default.plymouth" 2>/dev/null)" == "$(readlink -f "$TFILE")" ]] || return 1
-  if [[ -f "$PLYCONF" ]] && grep -q '^[[:space:]]*Theme=' "$PLYCONF"; then
-    grep -q "^[[:space:]]*Theme=$THEME[[:space:]]*$" "$PLYCONF" || return 1
-  fi
+  plyconf_ok || return 1   # 1.3.7: the theme as Debian's plymouth-set-default-theme reads it, plus DeviceScale=1
   return 0
+}
+# 1.3.7: Debian 13's plymouth-set-default-theme (and the initramfs hook that calls it) reads the theme with
+#   awk RS=<section header> FS="[=[:space:]]+" '$1~/Theme/{print $2}'
+# i.e. ONLY from the FIRST key of a section. 1.3.6 put DeviceScale=1 above Theme= under [Daemon], so the theme read
+# as empty and the initramfs was built without the splash. Same awk as plymouth 24.004.60-5 (comment lines dropped).
+plyconf_theme() {
+  echo $(grep -v '^#' "$PLYCONF" 2>/dev/null | awk '
+    BEGIN { RS="[[][[:blank:]]*[^[:space:]]+[:blank:]*[]\n]"; FS="[=[:space:]]+"; OFS=""; ORS="" }
+    $1 ~/Theme/ { print $2 }')
+}
+plyconf_ok() {
+  [[ "$(plyconf_theme)" == "$THEME" ]] || return 1
+  awk '/^[[:space:]]*\[/{d=($0 ~ /^[[:space:]]*\[Daemon\][[:space:]]*$/)} d && /^[[:space:]]*DeviceScale[[:space:]]*=[[:space:]]*1[[:space:]]*$/{f=1} END{exit !f}' "$PLYCONF" 2>/dev/null
+}
+# 1.3.7: write [Daemon] as  Theme=stillwave-trace  then  DeviceScale=1  (Theme first, right under the header), drop any
+# other Theme= / DeviceScale= lines in [Daemon] sections, keep every other line. Idempotent (rewrites only on a change);
+# also repairs the 1.3.6 layout ([Daemon] / DeviceScale=1 / Theme=...). First-ever copy kept for "off".
+plyconf_fix() {
+  mkdir -p "$STATE_DIR" "$(dirname "$PLYCONF")"
+  local tmp; tmp="$(mktemp)"
+  { [[ -f "$PLYCONF" ]] && cat "$PLYCONF"; } | awk -v th="$THEME" '
+    /^[[:space:]]*\[[^]]*\][[:space:]]*$/ { sec = $0; gsub(/[[:space:]]/, "", sec)
+      if (sec == "[Daemon]" && !done) { print "[Daemon]"; print "Theme=" th; print "DeviceScale=1"; done = 1; next } }
+    sec == "[Daemon]" && /^[[:space:]]*(Theme|DeviceScale)[[:space:]]*=/ { next }
+    { print }
+    END { if (!done) { print "[Daemon]"; print "Theme=" th; print "DeviceScale=1" } }' >"$tmp"
+  if [[ -f "$PLYCONF" ]] && cmp -s "$PLYCONF" "$tmp"; then rm -f "$tmp"; return 0; fi
+  if [[ ! -f "$STATE_DIR/plymouthd.conf.pre" ]]; then
+    if [[ -f "$PLYCONF" ]]; then cp -a "$PLYCONF" "$STATE_DIR/plymouthd.conf.pre"; else : >"$STATE_DIR/plymouthd.conf.pre"; fi
+  fi
+  if [[ -f "$PLYCONF" ]]; then cat "$tmp" >"$PLYCONF"; else install -m 644 "$tmp" "$PLYCONF"; fi
+  rm -f "$tmp"; say "plymouthd.conf: [Daemon] Theme=$THEME (first), DeviceScale=1"
 }
 set_default_theme() {
   local cur; cur="$(readlink -f "$THEMES/default.plymouth" 2>/dev/null || true)"
@@ -203,18 +234,9 @@ set_default_theme() {
      && update-alternatives --set default.plymouth "$TFILE" >/dev/null 2>&1; then :
   elif command -v plymouth-set-default-theme >/dev/null; then plymouth-set-default-theme "$THEME" >/dev/null 2>&1 || true
   else ln -sfn "$TFILE" "$THEMES/default.plymouth"; set_state LINKED 1; fi
-  if [[ -f "$PLYCONF" ]] && grep -q '^[[:space:]]*Theme=' "$PLYCONF" && ! grep -q "^[[:space:]]*Theme=$THEME[[:space:]]*$" "$PLYCONF"; then
-    mkdir -p "$STATE_DIR"; [[ -f "$STATE_DIR/plymouthd.conf.pre" ]] || cp -a "$PLYCONF" "$STATE_DIR/plymouthd.conf.pre"
-    sed -i "s/^[[:space:]]*Theme=.*/Theme=$THEME/" "$PLYCONF"
-  elif ! grep -q '^[[:space:]]*Theme=' "$PLYCONF" 2>/dev/null; then
-    # 1.3.3: Raspberry Pi OS's plymouth hook takes the theme only from plymouthd.conf Theme= (it ignores
-    # default.plymouth), and a stock conf has it commented out. Add [Daemon] Theme= so the initramfs carries it.
-    mkdir -p "$STATE_DIR" "$(dirname "$PLYCONF")"
-    if [[ -f "$PLYCONF" ]]; then [[ -f "$STATE_DIR/plymouthd.conf.pre" ]] || cp -a "$PLYCONF" "$STATE_DIR/plymouthd.conf.pre"
-    else : >"$STATE_DIR/plymouthd.conf.pre"; fi
-    if grep -q '^[[:space:]]*\[Daemon\]' "$PLYCONF" 2>/dev/null; then sed -i "/^[[:space:]]*\[Daemon\]/a Theme=$THEME" "$PLYCONF"
-    else printf '[Daemon]\nTheme=%s\n' "$THEME" >>"$PLYCONF"; fi
-  fi
+  # 1.3.3: Raspberry Pi OS's plymouth hook takes the theme only from plymouthd.conf Theme= (it ignores default.plymouth).
+  # 1.3.6: DeviceScale=1 (no HiDPI 2x console). 1.3.7: both written by plyconf_fix with Theme= FIRST under [Daemon].
+  plyconf_fix
   theme_is_default
 }
 
@@ -277,7 +299,7 @@ do_off() {
   if [[ -z "$quiet_initrd" && ( $had_hook -eq 1 || $was_default -eq 1 || -n "$(get_state BUILT)" ) ]] && command -v update-initramfs >/dev/null; then
     rebuild_initrd || warn "initramfs not rebuilt; harmless: without 'splash' on the kernel command line the Pi boots in text mode"
   fi
-  set_state BUILT ""; set_state ENABLED 0
+  set_state BUILT ""; set_state THEME_SHA ""; set_state ENABLED 0
   say "off: normal text boot from the next reboot"
 }
 
@@ -290,16 +312,31 @@ do_on() {
   elif [[ ! -s "$INITRD" && $PIOS -eq 0 ]]; then why="no initramfs at $INITRD"
   fi
   if [[ -z "$why" ]] && ! have_plymouth; then
-    # 1.3.1: Raspberry Pi OS Lite has no plymouth. Install the bundled trixie arm64 .debs first (works offline).
-    if [[ -z "${SDR_SPLASH_NO_APT:-}" ]] && compgen -G "$DEBS/*.deb" >/dev/null && grep -q 'VERSION_CODENAME=trixie' "$R/etc/os-release" 2>/dev/null \
+    # 1.3.6: online first (apt picks versions that match this system); offline: the bundled trixie arm64 .debs, each one
+    # ONLY when that package is missing or older. Never forced with dpkg: 1.3.5 downgraded libxkbcommon0 and broke cage.
+    if [[ -z "${SDR_SPLASH_NO_APT:-}" ]] && timeout 5 getent hosts deb.debian.org archive.raspberrypi.com ports.ubuntu.com >/dev/null 2>&1; then
+      say "installing plymouth (apt) ..."; mkdir -p "$STATE_DIR"
+      DEBIAN_FRONTEND=noninteractive timeout 600 apt-get install -y --no-install-recommends plymouth plymouth-themes >"$STATE_DIR/apt.log" 2>&1 \
+        || DEBIAN_FRONTEND=noninteractive timeout 600 apt-get install -y --no-install-recommends plymouth >>"$STATE_DIR/apt.log" 2>&1 || true
+    fi
+    if ! have_plymouth && [[ -z "${SDR_SPLASH_NO_APT:-}" ]] && [[ -s "$DEBS/SHA256SUMS" ]] && grep -q 'VERSION_CODENAME=trixie' "$R/etc/os-release" 2>/dev/null \
        && [[ "$(dpkg --print-architecture 2>/dev/null)" == arm64 ]] && (cd "$DEBS" && sha256sum -c --quiet SHA256SUMS >/dev/null 2>&1); then
       mkdir -p "$STATE_DIR"; say "installing plymouth from the bundled packages (offline) ..."
-      DEBIAN_FRONTEND=noninteractive timeout 600 apt-get install -y --no-install-recommends "$DEBS"/*.deb >"$STATE_DIR/apt.log" 2>&1 \
-        || DEBIAN_FRONTEND=noninteractive timeout 600 dpkg -i "$DEBS"/*.deb >>"$STATE_DIR/apt.log" 2>&1 || true
-    fi
-    if ! have_plymouth && [[ -z "${SDR_SPLASH_NO_APT:-}" ]] && timeout 5 getent hosts deb.debian.org ports.ubuntu.com >/dev/null 2>&1; then
-      say "installing plymouth (apt) ..."
-      DEBIAN_FRONTEND=noninteractive timeout 600 apt-get install -y --no-install-recommends plymouth >/dev/null 2>&1 || true
+      local -a want=(); local f pkg ver cur
+      while read -r _ f; do
+        [[ "$f" == *.deb && -f "$DEBS/$f" ]] || continue
+        pkg="$(dpkg-deb -f "$DEBS/$f" Package 2>/dev/null)"; ver="$(dpkg-deb -f "$DEBS/$f" Version 2>/dev/null)"
+        [[ -n "$pkg" && -n "$ver" ]] || continue
+        cur="$(dpkg-query -W -f='${db:Status-Status} ${Version}' "$pkg" 2>/dev/null || true)"
+        if [[ "$cur" == installed\ * ]] && ! dpkg --compare-versions "$ver" gt "${cur#installed }"; then
+          echo "keep $pkg ${cur#installed } (bundled $ver is not newer)" >>"$STATE_DIR/apt.log"; continue
+        fi
+        want+=("$DEBS/$f")
+      done < "$DEBS/SHA256SUMS"
+      if (( ${#want[@]} )); then
+        DEBIAN_FRONTEND=noninteractive timeout 600 apt-get install -y --no-install-recommends --no-remove "${want[@]}" >>"$STATE_DIR/apt.log" 2>&1 \
+          || warn "bundled plymouth packages did not install (see $STATE_DIR/apt.log); nothing was forced"
+      fi
     fi
     have_plymouth || why="plymouth (with its script plugin) is not installed and could not be installed now"
   fi
@@ -307,10 +344,15 @@ do_on() {
   if [[ -n "$why" ]]; then set_state SKIPPED "$why"; warn "NOT turned on: $why. The Pi keeps its normal text boot."; return 1; fi
   set_state SKIPPED ""
   for f in "${FILES[@]}"; do [[ -s "$SRC/$f" ]] || { warn "theme file missing: $SRC/$f"; return 1; }; done
+  # 1.3.5: hash of the shipped theme files. When it differs from what was last installed (an update changed the
+  # script or a picture), wipe the theme dir (no stale files from an older theme) and force an initramfs rebuild,
+  # instead of trusting the "initramfs already has the theme" check, which only looks for the theme's name.
+  local src_sha force=0; src_sha="$(cd "$SRC" && cat "${FILES[@]}" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+  if [[ "$(get_state THEME_SHA)" != "$src_sha" ]]; then force=1; rm -rf "$TDIR"; say "theme files changed: re-copying and rebuilding the initramfs"; fi
   mkdir -p "$TDIR" && for f in "${FILES[@]}"; do install -m 644 "$SRC/$f" "$TDIR/$f"; done
   if ! set_default_theme; then warn "could not make $THEME the default Plymouth theme"; do_off quiet; return 1; fi
   write_hook
-  if [[ "$(get_state BUILT)" == "$(build_stamp)" ]] && initrd_has_theme; then
+  if [[ $force -eq 0 && "$(get_state BUILT)" == "$(build_stamp)" ]] && initrd_has_theme; then
     say "initramfs already has the theme"
   elif [[ -n "${SDR_SPLASH_NO_INITRAMFS:-}" ]]; then
     say "initramfs rebuild skipped (SDR_SPLASH_NO_INITRAMFS)"
@@ -323,6 +365,7 @@ do_on() {
     fi
     set_state BUILT "$(build_stamp)"
   fi
+  [[ -n "${SDR_SPLASH_NO_INITRAMFS:-}" ]] || set_state THEME_SHA "$src_sha"
   mkdir -p "$STATE_DIR"
   # cmdline.txt
   local added; added="$(cmdline_edit add "$CMDLINE" "$CMDLINE.tmp-$$" $TOKENS)" || { rm -f "$CMDLINE.tmp-$$"; do_off; return 1; }
@@ -352,7 +395,9 @@ do_on() {
   if [[ -f "$KIOSK" ]]; then
     local ply; ply="$(command -v plymouth || echo /usr/bin/plymouth)"
     local tmp; tmp="$(mktemp)"
-    printf '# Stillwave Trace (sdr-boot-setup --splash): keep the boot splash on screen until the kiosk draws\n[Service]\nExecStart=\nExecStart=-%s quit --retain-splash\n' "$ply" >"$tmp"
+    # 1.3.4: ExecStartPre holds the quit until the splash has been up about 20 s (10 s log + 10 s art); a minimum only,
+    # so a slower boot is not delayed further. BOOT_MIN= in /etc/sdr/splash.env changes it (0 = no hold).
+    printf '# Stillwave Trace (sdr-boot-setup --splash): keep the boot splash on screen until the kiosk draws\n[Service]\nExecStartPre=-/bin/bash %s hold\nExecStart=\nExecStart=-%s quit --retain-splash\n' "$LIB/bin/sdr-splash" "$ply" >"$tmp"
     mkdir -p "$(dirname "$DROPIN")"
     if [[ -f "$DROPIN" ]] && cmp -s "$DROPIN" "$tmp"; then rm -f "$tmp"; else install -m 644 "$tmp" "$DROPIN"; rm -f "$tmp"; reload; fi
   fi
@@ -407,7 +452,22 @@ do_status() {
   return 0
 }
 
+# 1.3.4: boot hold (plymouth-quit ExecStartPre). Waits until plymouthd has run BOOT_MIN seconds (default 20, max 30).
+do_hold() {
+  local min p e i
+  min="$(awk -F= '$1=="BOOT_MIN"{print $2}' "$PREF" 2>/dev/null | tail -1)"; [[ "$min" =~ ^[0-9]+$ ]] || min=20
+  (( min > 30 )) && min=30
+  p="$(pidof plymouthd 2>/dev/null | awk '{print $1}')"; [[ -n "$p" ]] || return 0
+  for ((i = 0; i < 70; i++)); do
+    e="$(ps -o etimes= -p "$p" 2>/dev/null | tr -d ' ')"; [[ "$e" =~ ^[0-9]+$ ]] || return 0
+    (( e >= min )) && return 0
+    sleep 0.5
+  done
+  return 0
+}
+
 case "${1:-}" in
+  hold)   do_hold; exit 0 ;;
   on)     need_root; set_pref on; do_on ;;
   off)    need_root; set_pref off; do_off ;;
   auto)   need_root; if [[ "$(pref)" == off ]]; then say "left off (you turned it off; sudo sdr-boot-setup --splash on)"; else do_on; fi ;;

@@ -102,5 +102,12 @@ html[data-ts] .sb-row.sb-c{grid-template-columns:minmax(0,1fr) auto} html[data-t
 .mp-store .note .k { display:inline-block; width:9px; height:9px; border-radius:2px; background:var(--signal); margin:0 5px 0 2px; vertical-align:middle; }
 .mp-store .note .k.sys { background:#3a4a3f; } .mp-store .note .k.dl { background:repeating-linear-gradient(45deg,var(--signal) 0 3px,#2a8a50 3px 6px); }
 .mp-tag.warn { border-color:rgba(245,165,36,.6); color:#f5a524; }
-.mp-soon .mp-row { opacity:.55; }
+.mp-soon .mp-row { opacity:1; border:1px dashed rgba(245,165,36,.5); }   /* 1.3.4: clear "not available yet" state */
+.mp-soon .mp-row .ms { color:#f5a524; }
 .mp-soon { margin-top:.6rem; }
+/* 1.3.5 on-screen LA / USA street map downloads (approved mockups 1.3.5-maps) */
+.mp-row.dlr { grid-template-columns:minmax(0,1fr) auto; }
+.mp-row .mpdl { grid-column:1/-1; height:8px; border-radius:4px; background:rgba(255,255,255,.12); overflow:hidden; }
+.mp-row .mpdl i { display:block; height:100%; background:#f5a524; transition:width .4s; }
+.mp-tag.err { border-color:rgba(248,113,113,.6); color:#f87171; }
+.mp-row .ms .e { color:#f87171; }

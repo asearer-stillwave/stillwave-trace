@@ -1,7 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -26,6 +28,30 @@ tr.pick td { background:rgba(74,222,128,.18); color:var(--signal); }
 #map { width:100%; height:420px; }
 .mapnote { position:absolute; left:8px; right:8px; bottom:30px; z-index:2; background:rgba(11,15,12,.92); border:1px solid var(--line);
   border-radius:10px; padding:.45rem .65rem; color:var(--muted); line-height:1.35; }
+/* 1.3.4: basic-map notice is a compact amber pill under the aircraft count (approved mockup 1.3.4-mapnote); clears the right-hand pills */
+.mapnote.mn-basic { left:12px; right:auto; bottom:auto; top:64px; z-index:8; display:inline-flex; align-items:center; gap:10px; max-width:calc(100% - 210px); box-sizing:border-box;
+  padding:6px 6px 6px 14px; border-radius:999px; background:rgba(11,15,12,.94); border:1px solid #f5a524; font:700 12px/1.2 var(--mono); letter-spacing:.1em;
+  text-transform:uppercase; color:var(--paper); white-space:nowrap; }
+html.kiosk .mapnote.mn-basic { top:80px; }
+.mapnote.mn-basic.hide { display:none; }
+/* 1.3.5: GET MAP downloads the LA street map right here (approved mockups 1.3.5-maps): progress, cancel, retry, auto-reload */
+.mapnote.mn-dl { left:12px; right:auto; bottom:auto; top:64px; z-index:8; box-sizing:border-box; width:min(560px, calc(100% - 24px)); padding:12px 14px; border-radius:14px;
+  background:rgba(11,15,12,.95); border:1px solid #f5a524; font:700 12px/1.3 var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--paper); }
+html.kiosk .mapnote.mn-dl { top:80px; }
+.mapnote.mn-dl .r { display:flex; align-items:center; gap:10px; } .mapnote.mn-dl .t { flex:1; min-width:0; }
+.mapnote.mn-dl b { color:#f5a524; } .mapnote.mn-dl.ok { border-color:#4ade80; } .mapnote.mn-dl.ok b { color:#4ade80; } .mapnote.mn-dl.err { border-color:#f87171; } .mapnote.mn-dl.err b { color:#f87171; }
+.mapnote.mn-dl .go { flex:none; color:var(--night); background:#f5a524; border:0; border-radius:999px; padding:12px 16px; font:inherit; min-height:44px; white-space:nowrap; cursor:pointer; text-decoration:none; }
+.mapnote.mn-dl .gh { flex:none; background:transparent; color:var(--paper); border:1px solid rgba(255,255,255,.35); border-radius:999px; padding:12px 16px; font:inherit; min-height:44px; white-space:nowrap; cursor:pointer; text-decoration:none; }
+.mapnote.mn-dl .bar { height:10px; border-radius:5px; background:rgba(255,255,255,.12); margin:10px 0 6px; overflow:hidden; } .mapnote.mn-dl .bar i { display:block; height:100%; background:#f5a524; transition:width .4s; }
+.mapnote.mn-dl .s { font-weight:400; letter-spacing:.04em; text-transform:none; color:var(--static); font-size:12px; margin-top:4px; }
+.mapnote.mn-dl .x { flex:none; background:transparent; border:0; color:var(--static); font-size:16px; padding:6px 8px; min-height:0; cursor:pointer; }
+.maptoast { position:absolute; left:50%; transform:translateX(-50%); top:64px; z-index:9; padding:12px 20px; border-radius:999px; background:rgba(11,15,12,.95); border:1px solid #4ade80;
+  color:#4ade80; font:700 13px var(--mono); letter-spacing:.12em; white-space:nowrap; pointer-events:none; transition:opacity .6s; }
+html.kiosk .maptoast { top:80px; }
+
+.mapnote.mn-basic b { color:#f5a524; } .mapnote.mn-basic .t { overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.mapnote.mn-basic a { flex:none; color:var(--night); background:#f5a524; border-radius:999px; padding:9px 12px; text-decoration:none; }
+.mapnote.mn-basic .x { flex:none; background:transparent; border:0; color:var(--static); font-size:16px; padding:6px 8px; min-height:0; cursor:pointer; }
 .mapctl { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:.45rem; margin:.45rem 0 0; }
 .mapctl button { padding:.4rem .3rem; line-height:1.15; min-height:48px; }
 .ahead { display:flex; align-items:center; gap:.5rem; }
@@ -169,7 +195,7 @@ html.kiosk .rseg button, html.kiosk .rshead button { min-height:var(--tap-touch)
 // 1.2.1: loaded inside boot() (dynamic import) so a missing/broken map library cannot take the whole page down
 let AircraftMap, webglOK;
 const $ = id => document.getElementById(id);
-function setMsg(t, k){ const el = $('msg'); el.className = 'status ' + (k || ''); el.textContent = t || ''; }
+function setMsg(t, k){ const el = $('msg'); el.className = 'status ' + (k || ''); el.textContent = (window.traceErr ? traceErr.clean(t) : t) || ''; }
 const v = (x, d) => (x === null || x === undefined || x === '') ? '' : (typeof x === 'number' ? x.toFixed(d || 0) : String(x));
 const fmt = n => n.toLocaleString('en-US');
 let map = null, last = null, timer = null, busy = false, on = false, receiver = null;
@@ -238,7 +264,7 @@ function renderTable(j){
   if (!j.aircraft.length) tb.innerHTML = '<tr><td colspan="9" class="note">No aircraft yet. Give it a minute, and check the antenna.</td></tr>';
 }
 function render(j){
-  if (!j.ok) { $('summary').textContent = j.error || 'ADS-B is not running'; $('planes').innerHTML = ''; return; }
+  if (!j.ok) { $('summary').textContent = (window.traceErr ? traceErr.clean(j.error, 'ADS-B is not running') : j.error) || 'ADS-B is not running'; $('planes').innerHTML = ''; return; }
   const onMap = map ? map.onMapCount() : j.with_pos;
   $('summary').textContent = j.count + ' aircraft · ' + onMap + ' on map' + (j.running ? '' : ' · decoder output is stale');
   if (view === 'list') renderTable(j);
@@ -378,6 +404,66 @@ $('rSave').onclick = () => {
 };
 $('rLax').onclick = () => saveReceiver({ clear: true });
 
+
+// ---- 1.3.5 GET MAP banner states: idle -> downloading (progress, cancel) -> done (auto-reload) | error (retry, Wi-Fi)
+const MB1 = n => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n / 1e6)) + ' MB';
+const escH = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+let bnT = null;
+function mapToast(t){ const d = document.createElement('div'); d.className = 'maptoast'; d.textContent = t; ($('map').parentElement || document.body).appendChild(d); setTimeout(() => { d.style.opacity = '0'; }, 2600); setTimeout(() => d.remove(), 3400); }
+function bnPaint(j){
+  const n = $('mapnote'); n.classList.remove('mn-basic', 'hide', 'ok', 'err'); n.classList.add('mn-dl'); n.title = '';
+  const st = j && j.state;
+  if (st === 'running' || st === 'retrying' || st === 'checking') {
+    const tot = j.total || 58e6, have = Math.min(j.have || 0, tot), pct = Math.min(100, Math.floor(have / tot * 100));
+    const eta = j.eta == null ? '' : 'about ' + (j.eta > 90 ? Math.round(j.eta / 60) + ' min' : j.eta + ' s') + ' left';
+    n.innerHTML = '<div class="r"><span class="t"><b>Downloading</b> · LA street map</span><button type="button" class="gh" data-b="cancel">Cancel</button></div>' +
+      '<div class="bar"><i style="width:' + pct + '%"></i></div><div class="r s"><span class="t">' + (st === 'retrying' ? 'Connection lost, retrying…' : MB1(have) + ' of ' + MB1(tot) + ' · ' + pct + '%') + '</span><span>' + eta + '</span></div>' +
+      '<div class="s">Keep Wi‑Fi on. You can keep using Trace.</div>';
+  } else if (st === 'done') {
+    n.classList.add('ok');
+    n.innerHTML = '<div class="r"><span class="t"><b>Street map installed</b> · Los Angeles metro</span></div><div class="s">' + MB1(j.total || j.have || 0) + ' · reloading the map…</div>';
+  } else if (st === 'failed') {
+    n.classList.add('err');
+    const off = j.reason === 'offline', ns = j.reason === 'nospace';
+    n.innerHTML = '<div class="r"><span class="t"><b>Download stopped</b> · ' + (off ? 'no internet' : ns ? 'not enough space' : 'try again') + '</span>' +
+      (ns ? '<a class="gh" href="/maps">Maps ›</a>' : '<button type="button" class="go" data-b="start">Retry</button>' + (off ? '<a class="gh" href="/network">Wi‑Fi ›</a>' : '')) + '</div>' +
+      '<div class="s">' + escH(off ? 'Connect to Wi‑Fi with internet, then tap Retry.' : (j.message || 'Tap Retry.')) + '</div>';
+  } else {
+    n.classList.remove('mn-dl'); n.classList.add('mn-basic');
+    n.innerHTML = '<span class="t"><b>Basic map</b> · street map not installed</span><button type="button" class="go" data-b="start" style="padding:9px 12px;min-height:0">Get map ›</button><button type="button" class="x" aria-label="Dismiss">✕</button>';
+    n.querySelector('.x').onclick = () => { n.classList.add('hide'); clearTimeout(bnT); try { sessionStorage.setItem('traceBasicMapNote', 'x'); } catch (e) {} };
+  }
+  n.querySelectorAll('[data-b]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    const r = await fetch('/api/maps/job', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: b.dataset.b, id: 'la' }) }).then(r => r.json()).catch(() => null);
+    if (r && r.job) bnPaint(r.job); else if (r && r.ok === false) bnPaint({ state: 'failed', reason: r.reason, message: r.error });
+    bnPoll(600);
+  });
+}
+async function bnPoll(ms){
+  clearTimeout(bnT);
+  bnT = setTimeout(async () => {
+    let s = null; try { s = await (await fetch('/api/maps/job', { cache: 'no-store' })).json(); } catch (e) {}
+    const j = s && s.jobs && s.jobs.la;
+    if (s && s.la && s.la.street && j && j.state === 'done') {
+      bnPaint(j); try { sessionStorage.setItem('traceMapReady', '1'); sessionStorage.removeItem('traceBasicMapNote'); } catch (e) {}
+      setTimeout(() => location.reload(), 1800); return;            // auto-reload with the new map (toast after)
+    }
+    if (s && s.la && s.la.street) { location.reload(); return; }
+    if (j && j.state === 'cancelled') { bnPaint(null); return; }
+    if (j) bnPaint(j);
+    bnPoll(j && /^(running|retrying|checking)$/.test(j.state) ? 1000 : 5000);
+  }, ms);
+}
+function mapBanner(){
+  let gone = false; try { gone = sessionStorage.getItem('traceBasicMapNote') === 'x'; } catch (e) {}
+  fetch('/api/maps/job', { cache: 'no-store' }).then(r => r.json()).then(s => {
+    const j = s && s.jobs && s.jobs.la, live = j && /^(running|retrying|checking|failed)$/.test(j.state);
+    if (gone && !live) return;
+    bnPaint(live ? j : null); if (live) bnPoll(1000);
+  }).catch(() => { if (!gone) bnPaint(null); });
+}
+
 async function boot(){
   setView(view);
   let info = null;
@@ -390,10 +476,10 @@ async function boot(){
     $('mapnote').textContent = 'This browser cannot draw the map (no WebGL). The List view still works.';
     $('mapnote').classList.remove('hide'); setView('list'); return;
   }
-  if (!info || !info.installed) {
-    $('mapnote').textContent = 'Basic map only: the detailed offline map is not installed. Re-run install.sh from the package, or run: sudo sdr-maps fetch (needs internet once).';
-    $('mapnote').classList.remove('hide');
-  }
+  // 1.3.5: no street map (LA or USA) -> GET MAP banner that downloads the LA street map on the box (no keyboard / SSH)
+  const hasUSA = info && (info.packs || []).some(p => p.id === 'usa');
+  if (!info || !(info.street || hasUSA)) mapBanner();
+  try { if (sessionStorage.getItem('traceMapReady') === '1') { sessionStorage.removeItem('traceMapReady'); mapToast('\u2713 Street map ready'); } } catch (e) {}
   try {
     map = await new AircraftMap($('map'), { receiver: receiver, rings: ringPrefs(), onSelect: p => { if (p) showBoat(null); showCard(p); }, onBoat: b => { if (b) showCard(null); showBoat(b); }, onFollow: setFollowBtn }).start(info);
     paintRings(); map.map.on('zoomend', () => { if (!$('ringset').classList.contains('hide')) paintRings(); });
@@ -417,5 +503,6 @@ try { const s0 = window.sdrMode && window.sdrMode.get(); if (s0) document.dispat
 </script>
 <script src="/map108.js"></script>
 <script src="/airmap.js"></script>
+<script src="/towers.js"></script>
 </body>
 </html>

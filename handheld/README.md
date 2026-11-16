@@ -23,19 +23,25 @@ This folder is the full deployable export. `install.sh` copies the scripts, page
 
 From a Mac (or any computer) on the same network as the Pi:
 
+1.3.7: ONE package for both editions, `trace-1.3.7.zip`. The installer asks which edition:
+`1) Handheld (5" touch display)` or `2) Desktop (HDMI)` (it asks before it moves into the background, so it works over SSH).
+
 ```bash
-scp sdr-station-deploy.zip neo@SDRpi.local:~
+scp trace-1.3.7.zip neo@SDRpi.local:/home/neo/trace-1.3.7.zip
 ssh neo@SDRpi.local
 ```
 
-Then on the Pi:
+Then on the Pi (user `neo` here; use your own user name in the paths):
 
 ```bash
-rm -rf ~/sdr-station
-unzip -o ~/sdr-station-deploy.zip -d ~     # or: python3 -m zipfile -e ~/sdr-station-deploy.zip ~
-cd ~/sdr-station
-sudo bash install.sh                       # add --display to also set up the 5" Touch Display kiosk
+rm -rf /home/neo/trace-1.3.7
+unzip /home/neo/trace-1.3.7.zip -d /home/neo/trace-1.3.7   # or: python3 -m zipfile -e /home/neo/trace-1.3.7.zip /home/neo/trace-1.3.7
+sudo bash /home/neo/trace-1.3.7/install.sh                  # asks: 1) Handheld (5" touch display)  2) Desktop (HDMI)
 ```
+
+No question (scripts, SD-card image builds): `sudo bash /home/neo/trace-1.3.7/install.sh --display dsi` (handheld) or
+`sudo bash /home/neo/trace-1.3.7/install.sh --display hdmi` (desktop). Updating a box from the zip:
+`sudo bash /home/neo/trace-1.3.7/install.sh --upgrade` keeps the box's edition (`/usr/local/lib/sdr-station/EDITION`).
 
 The installer does not switch networks: if the Pi is on Wi-Fi it stays on Wi-Fi, and it records that (`MODE=wifi`) so the next reboot does too.
 
@@ -472,34 +478,25 @@ Keeps the offline map in `/var/lib/sdr/maps/` (not copied again when unchanged),
 
 ```bash
 # on the Mac
-scp sdr-station-deploy.zip neo@SDRpi.local:~
+scp trace-1.3.7.zip neo@SDRpi.local:/home/neo/trace-1.3.7.zip
 ssh neo@SDRpi.local
 # on the Pi
-sudo systemctl stop sdr-fm sdr-spectrum sdr-detect sdr-adsb sdr-web || true
-rm -rf ~/sdr-station
-unzip -o ~/sdr-station-deploy.zip -d ~
-cd ~/sdr-station
-sudo bash install.sh
+rm -rf /home/neo/trace-1.3.7
+unzip /home/neo/trace-1.3.7.zip -d /home/neo/trace-1.3.7
+sudo bash /home/neo/trace-1.3.7/install.sh --upgrade      # keeps this box's edition; no question
+bash /usr/local/sbin/sdr-verify
 ```
 
-The full zip is about 55 MB larger because it carries the offline map. For updates when the Pi already has the map, use the small **`sdr-station-app.zip`** instead. It is the same package without `maps/la.pmtiles`. `install.sh` then prints "keeping the installed /var/lib/sdr/maps/la.pmtiles" and leaves the map alone:
-
-```bash
-# on the Mac
-scp sdr-station-app.zip neo@SDRpi.local:~
-ssh neo@SDRpi.local
-# on the Pi
-sudo systemctl stop sdr-fm sdr-spectrum sdr-detect sdr-adsb sdr-web || true
-rm -rf ~/sdr-station
-unzip -o ~/sdr-station-app.zip -d ~
-cd ~/sdr-station
-sudo bash install.sh
-bash verify.sh
-```
+The zip carries no map tiles: an installed `/var/lib/sdr/maps/la.pmtiles` is kept as it is ("keeping the installed
+/var/lib/sdr/maps/la.pmtiles"); a fresh install with internet downloads the LA map (or tap GET MAP on the Map page).
 
 ## Updates (over the air)
 
 Every station function works offline. **Updates are the only part of Trace that ever uses the internet, and only when you tap Check or Install.** Trace never checks by itself and makes no background network calls.
+
+**1.3.6** (2026-11-05 PT): installer audit (`verify.sh` "installed files"), Debian 13 apt fix, map download status fix, full-screen kiosk, sharp boot console, HDMI 720p / 1080p (desktop), boot splash On | Off, one-row SDR chips, FM towers on the map, FRS / GMRS listen tab. See CHANGELOG.md.
+
+**1.3.7** (2026-11-12 PT): one package for both editions (`trace-1.3.7.zip`, the installer asks Handheld or Desktop), boot splash fix on Debian 13 (Theme= first in plymouthd.conf), Settings > Screen > Reboot now opens the confirm sheet, map stops at zoom 10 (LA basin view; LA street level removed).
 
 The installed version is in `/usr/local/lib/sdr-station/VERSION`. You can see it on **More → Updates**, in `bash verify.sh`, and with `sdr-update version`.
 

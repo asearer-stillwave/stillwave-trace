@@ -6,7 +6,7 @@
   const wrap = $('mapwrap');
   const pill = (txt, id, cls) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'm-pill' + (cls ? ' ' + cls : ''); if (id) b.id = id; b.innerHTML = txt; return b; };
   const tl = document.createElement('div'); tl.className = 'm-ov m-tl';
-  const cnt = document.createElement('div'); cnt.className = 'm-pill m-count'; cnt.innerHTML = '<span class="d"></span><span id="mCnt">— aircraft</span>'; tl.appendChild(cnt);
+  const cnt = document.createElement('div'); cnt.className = 'm-pill m-count'; cnt.innerHTML = '<span class="d"></span><span id="mCnt">— aircraft</span>'; tl.appendChild(cnt); const cntT0 = Date.now();   // 1.3.4: count pill empty state timer
   const tr = document.createElement('div'); tr.className = 'm-ov m-tr';
   const seg = document.createElement('div'); seg.className = 'm-seg';
   const pm = pill('Map', 'mMap', 'on'), pl = pill('List', 'mList'); seg.append(pm, pl);
@@ -47,12 +47,17 @@
   gainCall(null);
   wrap.append(tl, tr, r, gb, leg);
   function sync() {
-    const s = $('summary').textContent, m = s.match(/(\d+) aircraft/); $('mCnt').textContent = m ? m[1] + ' aircraft' + (innerWidth > 600 ? ' · ' + (s.match(/(\d+) on map/) || [0, '?'])[1] + ' on map' : '') : s;
+    const s = $('summary').textContent, m = s.match(/(\d+) aircraft/);
+    // 1.3.4: green Loading… for the first 10 s, then amber NO AIRCRAFT DATA until a count arrives
+    const nodata = !m && Date.now() - cntT0 > 10000; cnt.classList.toggle('m-nodata', nodata);
+    if (nodata) $('mCnt').innerHTML = '<b>No aircraft data</b> · check SDR 1';
+    else $('mCnt').textContent = m ? m[1] + ' aircraft' + (innerWidth > 600 ? ' · ' + (s.match(/(\d+) on map/) || [0, '?'])[1] + ' on map' : '') : 'Loading…';
     ['tRings', 'tLabels'].forEach(id => $('m' + id).classList.toggle('on', $(id).classList.contains('on')));
     $('mRingsV').textContent = $('tRingsV').textContent;
     const lv = !$('listview').classList.contains('hide'); pm.classList.toggle('on', !lv); pl.classList.toggle('on', lv);
     H.classList.toggle('m108', !lv);
   }
+  setTimeout(sync, 10100);
   new MutationObserver(sync).observe($('summary'), { childList: true, characterData: true, subtree: true });
   function layout() {
     const st = $('qstrip'), tb = $('qtabs'), side = tb && getComputedStyle(tb).flexDirection === 'column', vis = e => e && getComputedStyle(e).display !== 'none';

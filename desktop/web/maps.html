@@ -1,7 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <title>Stillwave Trace · Download maps</title>
@@ -19,6 +21,8 @@
   <div id="job"></div>
   <h2 class="mgrp">My maps</h2>
   <div class="mp-list" id="mine"></div>
+  <h2 class="mgrp">USA</h2>
+  <div class="mp-list" id="usa"></div>
   <h2 class="mgrp" id="brH">Get more maps</h2>
   <div id="crumb"></div>
   <div id="browse"></div>
@@ -27,7 +31,7 @@
     <div class="mp-src"><input id="srcIn" placeholder="http://192.168.1.60:8080/" autocomplete="off" spellcheck="false"><button type="button" id="srcSave">Save</button></div>
   </details>
   <p class="status mp-msg" id="msg"></p>
-  <p class="note">Map data © OpenStreetMap contributors (ODbL 1.0) · Protomaps basemap. The built-in Los Angeles map can't be deleted; it is the fallback when nothing else covers an area.</p>
+  <p class="note">Map data © OpenStreetMap contributors (ODbL 1.0) · Protomaps basemap. The Los Angeles map can't be deleted; it is the fallback when nothing else covers an area.</p>
 </div>
 <script src="/mode.js"></script>
 <script src="/kbd.js"></script>
@@ -38,7 +42,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;
 const MB = n => n >= 1e9 ? (n/1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n/1e6)) + ' MB';
 const DETAIL = {street:'Streets', towns:'Towns', overview:'Overview'};
 let ST = null, CAT = null, path = [], armed = null, lastErr = null;
-function msg(t, k){ const m = $('msg'); m.className = 'status mp-msg ' + (k || ''); m.textContent = t || ''; }
+function msg(t, k){ const m = $('msg'); m.className = 'status mp-msg ' + (k || ''); m.textContent = (window.traceErr ? traceErr.clean(t) : t) || ''; }
 async function J(url, opt){ const r = await fetch(url, Object.assign({cache:'no-store'}, opt || {})); const d = await r.json().catch(() => ({})); if (!r.ok || d.ok === false) { const e = new Error(d.error || d.message || ('HTTP ' + r.status)); e.d = d; throw e; } return d; }
 const post = (u, b) => J(u, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b || {})});
 const row = (t, s, sz, end, attrs) => `<div class="mp-row${attrs ? ' click' : ''}" ${attrs || ''}><span class="mt">${t}<span class="ms">${s}</span></span><span class="mp-sz">${sz || ''}</span>${end == null ? '<span class="chev">›</span>' : end}</div>`;
@@ -71,9 +75,62 @@ function renderJob(){
   }
   $('job').innerHTML = h;
 }
+// 1.3.5: LA + USA street maps download right here (sdr-maps job); MJ = /api/maps/job
+let MJ = null;
+const left = s => s == null ? '' : ' · about ' + (s > 90 ? Math.round(s / 60) + ' min' : s + ' s') + ' left';
+const busy = j => j && /^(running|retrying|checking)$/.test(j.state);
+function dlRow(title, j, fallbackTotal, id){
+  const tot = j.total || fallbackTotal, have = Math.min(j.have || 0, tot), pct = Math.min(100, Math.floor(have / tot * 100));
+  const sub = j.state === 'checking' ? esc(j.message || 'Checking the map…') : j.state === 'retrying' ? esc(j.message || 'Connection lost, retrying…')
+    : 'Downloading · ' + MB(have) + ' of ' + MB(tot) + ' · ' + pct + '%' + left(j.eta) + (id === 'usa' ? '<br>Resumes by itself if Wi‑Fi drops' : '');
+  return `<div class="mp-row dlr"><span class="mt">${title}<span class="ms">${sub}</span></span><button type="button" class="sm" data-a="mjcancel" data-id="${id}"${j.state === 'checking' ? ' disabled' : ''}>Cancel</button><div class="mpdl"><i style="width:${pct}%"></i></div></div>`;
+}
+function errRow(title, j, sz, id){
+  const ns = j.reason === 'nospace', off = j.reason === 'offline';
+  const btn = ns ? '<span class="mp-tag err">No space</span>' : `<span class="mp-btns"><button type="button" class="sm primary" data-a="mjstart" data-id="${id}">Retry</button>${off ? '<a class="btn sm" href="/network">Wi‑Fi ›</a>' : ''}</span>`;
+  const m = String(j.message || '').replace(/^(No internet|Not enough space)[.:]\s*/i, '');
+  const why = ns ? esc(m.replace(/^./, c => c.toUpperCase())) + ' Delete a city map or use a bigger SD card.' : off ? esc(m || 'Connect to Wi‑Fi with internet, then tap Retry.') : esc(m || 'Tap Retry.');
+  return row(title, `<span class="e">${ns ? 'Not enough space' : off ? 'Download stopped · no internet' : 'Download stopped'}</span> · ${why}`, sz, btn);
+}
+function laRows(){
+  const la = (MJ && MJ.la) || {street: (ST.builtin_bytes || 0) >= 1e7, bytes: ST.builtin_bytes || 0}, j = MJ && MJ.jobs && MJ.jobs.la;
+  if (la.street && !busy(j)) return row('Los Angeles metro', 'Street map installed' + (la.build ? ' · build ' + esc(la.build) : ''), MB(la.bytes), '<span class="mp-tag">Installed</span>');
+  let h = row('Los Angeles metro', 'Outline only · street map not installed', MB(la.bytes || 1e6), '<span class="mp-tag warn">Outline only</span>');
+  const est = (la && la.estimate) || 58e6;
+  if (busy(j)) h += dlRow('Los Angeles street map', j, est, 'la');
+  else if (j && j.state === 'failed') h += errRow('Los Angeles street map', j, MB(est), 'la');
+  else h += row('Los Angeles street map', 'Streets, airports, labels', MB(est), '<button type="button" class="sm primary" data-a="mjstart" data-id="la">Get street map</button>');
+  return h;
+}
+function renderUSA(){
+  const el = $('usa'); if (!el) return;
+  if (!MJ || !MJ.usa) { el.innerHTML = row('USA street map', 'Checking…', '', ''); return; }
+  const u = MJ.usa, j = MJ.jobs && MJ.jobs.usa, T = 'USA street map', GB = n => (n / 1e9).toFixed(1) + ' GB';
+  if (busy(j)) { el.innerHTML = dlRow(T, j, u.estimate, 'usa'); return; }
+  if (u.installed) {
+    const del = armed === 'usa' ? 'Tap again' : 'Delete';
+    el.innerHTML = row(T, 'Lower 48 · street detail' + (u.build ? ' · build ' + esc(u.build.replace(/(\d{4})(\d\d)(\d\d)/, '$1-$2-$3')) : ''), GB(u.bytes),
+      `<span class="mp-btns"><span class="mp-tag">Installed</span><button type="button" class="sm v-warn" data-a="mjdelete" data-id="usa">${del}</button></span>`); return;
+  }
+  if (j && j.state === 'failed') { el.innerHTML = errRow(T, j, GB(u.estimate), 'usa'); return; }
+  const kept = u.pieces_done ? ' · ' + GB(u.kept_bytes) + ' already downloaded' : '';
+  el.innerHTML = row(T, 'Lower 48 · street detail · needs ~' + GB(u.need) + ' free' + kept, GB(u.estimate),
+    `<button type="button" class="sm primary" data-a="mjstart" data-id="usa">${u.pieces_done ? 'Resume' : 'Download'}</button>`);
+}
+let mjWas = {};
+async function mjStatus(){
+  try { MJ = await J('/api/maps/job'); } catch (e) { MJ = MJ || null; }
+  const js = (MJ && MJ.jobs) || {};
+  for (const id of ['la', 'usa']) {
+    const s = js[id] && js[id].state;
+    if (mjWas[id] && busy({state: mjWas[id]}) && s === 'done') { msg((id === 'la' ? 'Los Angeles' : 'USA') + ' street map installed. The map reloads with it.', 'ok'); try { sessionStorage.setItem('traceMapReady', '1'); localStorage.setItem('traceMapsChanged', String(Date.now())); } catch (e) {} }
+    mjWas[id] = s;
+  }
+  if (ST) { renderMine(); renderUSA(); }
+}
 function renderMine(){
-  let h = row('Los Angeles metro', 'Built in · street detail', MB(ST.builtin_bytes || 0), '<span class="mp-tag">Built in</span>');
-  for (const p of ST.packs) {
+  let h = laRows();
+  for (const p of ST.packs.filter(p => p.id !== 'usa')) {
     const del = armed === p.id ? 'Tap again' : 'Delete';
     h += row(esc(p.name), esc(DETAIL[p.detail] || 'Map'), MB(p.bytes),
       `<span class="mp-btns"><button type="button" class="sm" data-a="view" data-id="${esc(p.id)}">View</button><button type="button" class="sm v-warn" data-a="delete" data-id="${esc(p.id)}">${del}</button></span>`);
@@ -107,16 +164,17 @@ function renderBrowse(){
   if (tooBig.length) h += `<div class="mp-warn"><b>Won't fit.</b> ${tooBig.length === 1 ? esc(tooBig[0].name) + ' needs ' + MB(tooBig[0].bytes) + '; ' + MB(room) + ' is free.' : tooBig.length + ' maps here are bigger than the ' + MB(room) + ' free.'} Delete a map above to make room.</div>`;
   if (ps.length) h += `<div class="mp-list">${ps.map(p => row(esc(p.name), esc((p.sub ? p.sub + ' · ' : '') + (DETAIL[p.detail] || '')), (p.estimate ? '~' : '') + MB(p.bytes),
       have.has(p.id) ? '<span class="mp-tag">On SD</span>' : q.has(p.id) ? '<span class="mp-tag">Queued</span>' : p.bytes > room ? '<span class="mp-tag warn">Too big</span>' : `<button type="button" class="sm primary" data-a="get" data-id="${esc(p.id)}"${canGet ? '' : ' disabled'}>Download</button>`)).join('')}</div>`;
-  // 1.3.2: z14 street level for the whole USA is not ready; listed so it is not a surprise
-  if (!cur || /^(us|usa|north-america|na)$/i.test(cur || '')) h += `<div class="mp-list mp-soon">${row('USA street level', 'z14 · ~8.8 GB · coming soon', '', '<button type="button" class="sm" disabled aria-disabled="true">Soon</button>')}</div>`;
   const ks = kids(cur);
   if (ks.length) h += (ps.length ? '<h2 class="mgrp">Areas inside</h2>' : '') + `<div class="mp-list">${ks.map(r => { const n = countPacks(r.id); return row(esc(r.name), esc(r.sub || (n + (n === 1 ? ' map' : ' maps'))), '', null, `data-a="open" data-id="${esc(r.id)}" role="button" tabindex="0"`); }).join('')}</div>`;
   if (!ps.length && !ks.length) h += '<p class="note">Nothing to download here yet.</p>';
   b.innerHTML = h;
 }
-function render(){ renderStore(); renderJob(); renderMine(); renderBrowse(); }
+function render(){ if (!ST) return; renderStore(); renderJob(); renderMine(); renderUSA(); renderBrowse(); }   // 1.3.4: nothing to draw until storage is read
+// 1.3.4: storage could not be read -> one clean card instead of a half-drawn page
+function storeFail(raw){ traceErr.show($('store'), 'map storage', 'The map service didn\u2019t answer. Your installed maps still work on the Map page.', raw, () => { $('store').innerHTML = '<div class="st-h"><span>SD card</span><span id="stH">\u2014</span></div><div class="mp-bar" id="stBar"></div><p class="note" style="margin:0" id="stN">Checking\u2026</p>'; return status(); });
+  ['job','mine','usa','crumb','browse'].forEach(id => { const el = $(id); if (el) el.innerHTML = ''; }); document.querySelectorAll('h2.mgrp').forEach(h => h.classList.add('hide')); }
 let packSig = null;
-async function status(){ try { ST = await J('/api/content'); const sig = ST.packs.map(p => p.id + p.sha256).join(); if (packSig !== null && sig !== packSig) { try { localStorage.setItem('traceMapsChanged', String(Date.now())); } catch (e) {} } packSig = sig; if (document.activeElement !== $('srcIn')) $('srcIn').value = ST.content_url || ''; render(); } catch (e) { msg('Could not read map status: ' + e.message, 'err'); } }
+async function status(){ try { ST = await J('/api/content'); const sig = ST.packs.map(p => p.id + p.sha256).join(); if (packSig !== null && sig !== packSig) { try { localStorage.setItem('traceMapsChanged', String(Date.now())); } catch (e) {} } packSig = sig; if (document.activeElement !== $('srcIn')) $('srcIn').value = ST.content_url || ''; document.querySelectorAll('h2.mgrp').forEach(h => h.classList.remove('hide')); render(); } catch (e) { if (!ST) storeFail(e.message); else msg(traceErr.clean('Could not read map status: ' + e.message, 'Could not read map status right now.'), 'err'); } }
 async function catalog(){ try { CAT = await J('/api/content/catalog'); lastErr = null; } catch (e) { CAT = null; lastErr = {reason: (e.d || {}).reason, message: e.message}; } render(); }
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-a]'); if (!el) return;
@@ -124,11 +182,20 @@ document.addEventListener('click', async e => {
   try {
     if (a === 'open') { path.push(id); renderBrowse(); window.scrollTo(0, $('brH').offsetTop - 10); return; }
     if (a === 'up') { path = path.slice(0, +el.dataset.i); renderBrowse(); return; }
+    if (a === 'rstatus') { $('store').innerHTML = '<div class="st-h"><span>SD card</span><span id="stH">\u2014</span></div><div class="mp-bar" id="stBar"></div><p class="note" style="margin:0" id="stN">Checking\u2026</p>'; await status(); return; }
     if (a === 'retry') { msg('Checking…'); await catalog(); msg(''); return; }
     if (a === 'view') { const p = ST.packs.find(x => x.id === id); if (p) { const b = p.bbox, c = p.center || [(b[0]+b[2])/2, (b[1]+b[3])/2]; localStorage.setItem('traceMapGoto', JSON.stringify({center: c, zoom: p.detail === 'street' ? 10 : 6})); location.href = '/adsb'; } return; }
     if (a === 'delete') {
       if (armed !== id) { armed = id; renderMine(); setTimeout(() => { if (armed === id) { armed = null; renderMine(); } }, 3500); return; }
       armed = null; await post('/api/content/delete', {id}); msg('Deleted. The map page reloads its regions next time you open it.', 'ok'); await status(); return;
+    }
+    if (a === 'mjstart' || a === 'mjcancel' || a === 'mjdelete') {
+      if (a === 'mjdelete' && armed !== id) { armed = id; renderUSA(); setTimeout(() => { if (armed === id) { armed = null; renderUSA(); } }, 3500); return; }
+      armed = null; el.disabled = true; msg('');
+      const r = await fetch('/api/maps/job', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action: a.slice(2), id})}).then(r => r.json()).catch(() => ({ok:false, error:'The map helper did not answer.'}));
+      if (!r.ok && r.reason !== 'nospace' && r.reason !== 'offline') msg(r.error || 'Could not start the download.', 'err');
+      if (a === 'mjstart' && r.ok) { MJ = MJ || {jobs:{}}; MJ.jobs = MJ.jobs || {}; MJ.jobs[id] = Object.assign({state:'running', phase:'starting', have:0}, r.job || {}); if (ST) { renderMine(); renderUSA(); } }   // 1.3.6: straight to the progress row (dlRow)
+      await mjStatus(); await status(); return;
     }
     if (a === 'get') { el.disabled = true; msg(''); await post('/api/content/download', {id}); await status(); return; }
     if (a === 'pause' || a === 'resume') { await post('/api/content/' + a); await status(); return; }
@@ -143,7 +210,7 @@ document.addEventListener('click', async e => {
 $('srcSave').onclick = async () => { try { const d = await post('/api/content/url', {url: $('srcIn').value}); $('srcIn').value = d.content_url || ''; msg(d.content_url ? 'Content source saved.' : 'Content source cleared.', 'ok'); await status(); await catalog(); } catch (e) { msg(e.message, 'err'); } };
 document.addEventListener('click', e => { if (e.target.closest('[data-a="mine"]')) { $('warn').innerHTML = ''; $('mine').scrollIntoView(); } });
 let t = null;
-async function loop(){ await status(); clearTimeout(t); t = setTimeout(loop, (ST && ST.queue && ST.queue.length) ? 1000 : 5000); }
+async function loop(){ await mjStatus(); await status(); const mb = MJ && MJ.jobs && (busy(MJ.jobs.la) || busy(MJ.jobs.usa)); clearTimeout(t); t = setTimeout(loop, (mb || (ST && ST.queue && ST.queue.length)) ? 1000 : 5000); }
 loop().then(catalog);
 })();
 </script>

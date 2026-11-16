@@ -1,8 +1,8 @@
 [Unit]
-Description=Stillwave Trace: 5 s shutdown screen at power-off (SAFE TO UNPLUG WHEN DARK); never touches the display chip
+Description=Stillwave Trace: keeps the branded shutdown / reboot splash up for its first 5 s (no other padding); never touches the display chip
 DefaultDependencies=no
 # Started after (so stopped BEFORE) sdr-screen-final, and before (so stopped AFTER) the kiosk, the web app and sdr-screen.
-# Power-off order: kiosk/web stop (console lines on the splash) -> this 5 s countdown -> sdr-screen-final -> off.
+# Power-off / reboot order: kiosk/web stop -> this (waits out what is left of the 5 s splash) -> sdr-screen-final -> off.
 After=local-fs.target sdr-screen-final.service
 Before=sdr-screen.service sdr-web.service nginx.service fieldnote-kiosk.service shutdown.target
 Conflicts=shutdown.target

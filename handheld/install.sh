@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Stillwave Trace installer.
+# Stillwave Trace installer (1.3.7; the version comes from ./VERSION). Handheld edition tree of trace-1.3.7.zip:
+# normally started by the package's top-level install.sh (edition question / --display dsi), which passes --display.
 #   sudo bash install.sh                 install / update the station (keeps /etc/sdr settings)
 #   sudo bash install.sh --display       same, then set up the 5" Touch Display 2 kiosk
 #   sudo bash install.sh --display-only  only the display/kiosk part (fieldnote-display-setup, alias trace-display-setup)
@@ -31,7 +32,7 @@ for arg in "$@"; do
     --upgrade) UPGRADE=1 ;;
     --resume) RESUME=1 ;;
     --no-os-upgrade) NO_OS_UPGRADE=1 ;;
-    -h|--help) sed -n '2,8p' "$0"; echo '#   --no-os-upgrade                      fresh install without apt full-upgrade (1.2.8)'; exit 0 ;;
+    -h|--help) sed -n '2,9p' "$0"; echo '#   --no-os-upgrade                      fresh install without apt full-upgrade (1.2.8)'; exit 0 ;;
     *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -61,7 +62,7 @@ if [[ "$HERE_ED" == desktop ]]; then
     else
       echo "(To convert this box on purpose:" >&2
     fi
-    echo " sudo bash install.sh --display --force-edition   (Pi 5 with the ribbon in DISP0: add --dsi-port 0))" >&2
+    echo " sudo bash install.sh --display dsi --force-edition   (Pi 5 with the ribbon in DISP0: add --dsi-port 0))" >&2
     exit 1
   fi
   CONVERTING=1
@@ -71,7 +72,17 @@ fi
 # ---- 1.0.8: SSH-safe. A full install over SSH re-runs itself as a detached systemd unit (log: /var/log/trace-install.log),
 # so a dropped SSH session or Ctrl-C only stops the log view, never the install. ----
 ILOG=/var/log/trace-install.log
-if [[ $UPGRADE -eq 0 && -n "${SSH_CONNECTION:-}${SSH_TTY:-}" && -z "${SDR_INSTALL_DETACHED:-}" && -z "${SDR_INSTALL_FOREGROUND:-}" ]]; then
+# 1.3.3: sudo drops SSH_CONNECTION/SSH_TTY, so also walk the parent processes looking for sshd
+over_ssh() {
+  [[ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]] && return 0
+  local p=$$ c i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"; [[ -z "$p" || "$p" -le 1 ]] && return 1
+    c="$(ps -o comm= -p "$p" 2>/dev/null)"; [[ "$c" == sshd* ]] && return 0
+  done
+  return 1
+}
+if [[ $UPGRADE -eq 0 ]] && over_ssh && [[ -z "${SDR_INSTALL_DETACHED:-}" && -z "${SDR_INSTALL_FOREGROUND:-}" ]]; then
   : >"$ILOG"; chmod 644 "$ILOG"
   UNIT="trace-install-$(date +%s)"
   echo "Over SSH: the install runs in the background as $UNIT, so it survives a dropped session or Ctrl-C."
@@ -306,6 +317,23 @@ elif [[ $RESUME -eq 1 ]] && step_done packages; then
 else
 echo "icecast2 icecast2/icecast-setup boolean false" | debconf-set-selections || true
 apt-get update -y
+# ---- 1.3.6: heal a half-configured dpkg / broken dependencies BEFORE installing anything (Debian 13 / trixie).
+# 1.3.5 could leave libxkbcommon0 downgraded and cage/wlroots unconfigured; apt refuses every install after that. ----
+heal_apt() {
+  DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+  DEBIAN_FRONTEND=noninteractive apt-get -f install -y || true
+  apt-get check >/dev/null 2>&1
+}
+if ! heal_apt; then
+  echo "apt reports broken dependencies; refreshing package lists and retrying once ..."
+  sleep 5; apt-get update -y || true
+  if ! heal_apt; then
+    echo "ERROR: apt still reports broken dependencies (see 'sudo apt-get check')."
+    echo "       Fix with: sudo dpkg --configure -a && sudo apt-get -f install -y"
+    echo "       then resume with: sudo bash $SRC/install.sh --resume"
+    exit 1
+  fi
+fi
 # ---- 1.2.8: bring a FRESH system up to date first (never during --upgrade / OTA; skip with --no-os-upgrade).
 # Non-interactive, keeps existing config files. A new kernel/firmware is NOT rebooted into mid-install: it takes
 # effect at the reboot the installer asks for at the end (no half-finished install after a reboot). ----
@@ -485,7 +513,7 @@ else
 fi
 chmod 644 /etc/sdr/screen.env
 install -m 644 "$SRC/README.md" /usr/local/lib/sdr-station/README.md
-install -m 644 "$SRC/web/radio_control.py" /usr/local/lib/sdr-station/web/radio_control.py
+for f in "$SRC"/web/*.py; do install -m 644 "$f" /usr/local/lib/sdr-station/web/; done   # 1.3.6: all Python modules (radio_control, airports, bank, stationnames, sdr_scope)
 for f in "$SRC"/web/*.html "$SRC"/web/*.js "$SRC"/web/*.css; do install -m 644 "$f" /usr/local/lib/sdr-station/web/; done   # 1.0.8: every page
 rm -f /usr/local/lib/sdr-station/web/advanced.html   # 1.2.8: Tuner page removed (/advanced redirects to Listen)
 rm -f /usr/local/lib/sdr-station/web/dashboard.html   # 1.0.8: desktop dashboard removed
@@ -505,16 +533,20 @@ for f in anton-latin.woff2 jetbrainsmono-latin.woff2 OFL-Anton.txt OFL-JetBrains
 done
 rm -f /usr/local/lib/sdr-station/web/fonts/inter-latin.woff2 /usr/local/lib/sdr-station/web/fonts/OFL-Inter.txt
 install -d -m 755 /usr/local/lib/sdr-station/web/img   # kiosk shutdown art (same picture as the boot splash)
-install -m 644 "$SRC/web/img/trace-art.png" /usr/local/lib/sdr-station/web/img/trace-art.png
+for f in "$SRC"/web/img/*.png; do install -m 644 "$f" /usr/local/lib/sdr-station/web/img/; done   # 1.3.6: trace-art + app icons
 # boot + shutdown splash: Plymouth theme files + sdr-splash (turned on at the end of this script)
 install -d -m 755 /usr/local/lib/sdr-station/plymouth/stillwave-trace
-for f in stillwave-trace.plymouth stillwave-trace.script bg.png bg-shutdown.png sweep.png hub.png bg-stillwave.png ok.png cd0.png cd1.png cd2.png cd3.png cd4.png cd5.png g0.png g1.png g2.png g3.png g4.png g5.png g6.png g7.png g8.png g9.png g10.png g11.png g12.png g13.png g14.png g15.png g16.png g17.png g18.png g19.png g20.png g21.png g22.png g23.png g24.png g25.png g26.png g27.png g28.png g29.png g30.png g31.png g32.png g33.png g34.png g35.png g36.png g37.png g38.png g39.png g40.png g41.png g42.png g43.png g44.png g45.png g46.png g47.png g48.png g49.png g50.png g51.png g52.png g53.png g54.png g55.png g56.png g57.png g58.png g59.png g60.png g61.png g62.png g63.png g64.png g65.png g66.png g67.png g68.png g69.png g70.png g71.png g72.png g73.png g74.png g75.png g76.png g77.png g78.png g79.png g80.png g81.png g82.png g83.png g84.png g85.png g86.png g87.png g88.png g89.png g90.png g91.png g92.png; do
+for f in stillwave-trace.plymouth stillwave-trace.script bg-reboot.png cursor.png bg.png bg-shutdown.png sweep.png hub.png bg-stillwave.png ok.png cd0.png cd1.png cd2.png cd3.png cd4.png cd5.png g0.png g1.png g2.png g3.png g4.png g5.png g6.png g7.png g8.png g9.png g10.png g11.png g12.png g13.png g14.png g15.png g16.png g17.png g18.png g19.png g20.png g21.png g22.png g23.png g24.png g25.png g26.png g27.png g28.png g29.png g30.png g31.png g32.png g33.png g34.png g35.png g36.png g37.png g38.png g39.png g40.png g41.png g42.png g43.png g44.png g45.png g46.png g47.png g48.png g49.png g50.png g51.png g52.png g53.png g54.png g55.png g56.png g57.png g58.png g59.png g60.png g61.png g62.png g63.png g64.png g65.png g66.png g67.png g68.png g69.png g70.png g71.png g72.png g73.png g74.png g75.png g76.png g77.png g78.png g79.png g80.png g81.png g82.png g83.png g84.png g85.png g86.png g87.png g88.png g89.png g90.png g91.png g92.png s0.png s1.png s2.png s3.png s4.png s5.png s6.png s7.png s8.png s9.png s10.png s11.png s12.png s13.png s14.png s15.png s16.png s17.png s18.png s19.png s20.png s21.png s22.png s23.png s24.png s25.png s26.png s27.png s28.png s29.png s30.png s31.png s32.png s33.png s34.png s35.png s36.png s37.png s38.png s39.png s40.png s41.png s42.png s43.png s44.png s45.png s46.png s47.png s48.png s49.png s50.png s51.png s52.png s53.png s54.png s55.png s56.png s57.png s58.png s59.png s60.png s61.png s62.png s63.png s64.png s65.png s66.png s67.png s68.png s69.png s70.png s71.png s72.png s73.png s74.png s75.png s76.png s77.png s78.png s79.png s80.png s81.png s82.png s83.png s84.png s85.png s86.png s87.png s88.png s89.png s90.png s91.png s92.png ok8.png cursor8.png; do
   install -m 644 "$SRC/plymouth/stillwave-trace/$f" "/usr/local/lib/sdr-station/plymouth/stillwave-trace/$f"
 done
 install -m 755 "$SRC/bin/sdr-splash" /usr/local/lib/sdr-station/bin/sdr-splash
+# 1.3.6: manifest of every web/ + boot-theme file this package ships; sdr-verify checks each one is installed
+(cd "$SRC" && find web plymouth/stillwave-trace -type f ! -name '*.pre-*' ! -name '*.pyc' ! -path '*/__pycache__/*' | LC_ALL=C sort) \
+  > /usr/local/lib/sdr-station/MANIFEST || true
 # 1.3.1: offline plymouth packages for Raspberry Pi OS trixie (sdr-splash installs them only if plymouth is missing)
 if compgen -G "$SRC/vendor/plymouth/*.deb" >/dev/null; then
   install -d -m 755 /usr/local/lib/sdr-station/vendor/plymouth
+  rm -f /usr/local/lib/sdr-station/vendor/plymouth/*.deb   # 1.3.6: drop stale 1.3.5 libxkbcommon0/xkb-data debs
   install -m 644 "$SRC"/vendor/plymouth/*.deb "$SRC/vendor/plymouth/SHA256SUMS" "$SRC/vendor/plymouth/README.txt" /usr/local/lib/sdr-station/vendor/plymouth/
 fi
 ln -sfn /usr/local/lib/sdr-station/bin/sdr-boot-setup /usr/local/sbin/sdr-boot-setup
@@ -533,6 +565,8 @@ install -d -m 755 /var/lib/sdr-update /var/lib/sdr-update/releases
 touch /var/log/sdr-update.log && chmod 644 /var/log/sdr-update.log
 # ---- ADS-B map: vendored MapLibre/pmtiles/fonts/sprites + offline LA tiles (works with no internet) ----
 install -m 755 "$SRC/bin/sdr-maps" /usr/local/sbin/sdr-maps
+install -d -m 755 /usr/local/lib/sdr-station/bin
+install -m 755 "$SRC/bin/sdr-mapjob" /usr/local/lib/sdr-station/bin/sdr-mapjob   # 1.3.5: on-screen LA / USA map downloads
 rm -rf /usr/local/lib/sdr-station/web/maplib.new
 cp -r "$SRC/web/maplib" /usr/local/lib/sdr-station/web/maplib.new
 find /usr/local/lib/sdr-station/web/maplib.new -type d -exec chmod 755 {} +
@@ -546,8 +580,13 @@ if [[ -s "$SRC/maps/la.pmtiles" ]]; then
   /usr/local/sbin/sdr-maps install-local "$SRC/maps/la.pmtiles" || echo "WARNING: map tiles not installed; the ADS-B map falls back to a basic outline"
 elif [[ -s /var/lib/sdr/maps/la.pmtiles ]]; then
   echo "Map tiles: this package has none (app-only zip); keeping the installed /var/lib/sdr/maps/la.pmtiles"
+elif [[ "$(curl -sI -o /dev/null -w '%{http_code}' --max-time 8 https://build.protomaps.com/ 2>/dev/null)" =~ ^[1-5][0-9][0-9]$ ]]; then
+  # 1.3.5: any HTTP answer = online. build.protomaps.com/ answers 404, so 1.3.4's `curl -f` check always said "No internet"
+  # 1.3.4: fresh install with internet -> pull the LA city/street map now so it works out of the box
+  echo "Downloading the LA street map (a few minutes)..."
+  /usr/local/sbin/sdr-maps fetch || echo "WARNING: map download failed; the ADS-B map shows a basic outline. Tap GET MAP on the Map page (or Settings > Download maps) once it is online"
 else
-  echo "No map tiles in this package: the ADS-B map shows a basic outline until you run (with internet, once): sudo sdr-maps fetch"
+  echo "No internet: the ADS-B map shows a basic outline. Tap GET MAP on the Map page once the box is on Wi-Fi"
 fi
 if [[ ! -f /etc/sdr/stations.conf ]]; then
   install -m 644 "$SRC/stations.conf" /etc/sdr/stations.conf
@@ -635,7 +674,7 @@ sed -e "s/FIELDNOTE_UID/${AUDIO_UID:-0}/g" "$SRC/systemd/sdr-bt-reconnect.servic
 [[ -n "$AUDIO_UID" ]] || sed -i 's/ user@0.service//' /etc/systemd/system/sdr-bt-reconnect.service
 
 cat >/etc/sudoers.d/sdr-station <<EOF
-${RUN_USER} ALL=(root) NOPASSWD: /usr/local/sbin/sdr-select-station, /usr/local/sbin/sdr-tune-freq, /usr/local/sbin/sdr-add-station, /usr/local/sbin/sdr-apply-settings, /usr/local/sbin/sdr-save-preset, /usr/local/sbin/sdr-delete-preset, /usr/local/sbin/sdr-net-mode, /usr/local/sbin/sdr-svc, /usr/local/sbin/sdr-mode, /usr/local/sbin/sdr-bt, /usr/local/sbin/sdr-maps, /usr/local/sbin/sdr-update, /usr/local/sbin/sdr-screen, /usr/local/sbin/sdr-listen, /usr/local/sbin/sdr-usb-reset, /usr/local/sbin/sdr-dongles, /usr/local/sbin/sdr-aircraft-db, /usr/local/sbin/sdr-content, /usr/local/sbin/sdr-shot, /usr/local/sbin/sdr-power reboot, /usr/local/sbin/sdr-power poweroff
+${RUN_USER} ALL=(root) NOPASSWD: /usr/local/sbin/sdr-select-station, /usr/local/sbin/sdr-tune-freq, /usr/local/sbin/sdr-add-station, /usr/local/sbin/sdr-apply-settings, /usr/local/sbin/sdr-save-preset, /usr/local/sbin/sdr-delete-preset, /usr/local/sbin/sdr-net-mode, /usr/local/sbin/sdr-svc, /usr/local/sbin/sdr-mode, /usr/local/sbin/sdr-bt, /usr/local/sbin/sdr-maps, /usr/local/sbin/sdr-update, /usr/local/sbin/sdr-screen, /usr/local/sbin/sdr-listen, /usr/local/sbin/sdr-usb-reset, /usr/local/sbin/sdr-dongles, /usr/local/sbin/sdr-aircraft-db, /usr/local/sbin/sdr-content, /usr/local/sbin/sdr-shot, /usr/local/sbin/sdr-boot-setup, /usr/local/sbin/sdr-power reboot, /usr/local/sbin/sdr-power poweroff
 EOF
 chmod 440 /etc/sudoers.d/sdr-station
 
@@ -796,6 +835,8 @@ if [[ $UPGRADE -eq 1 ]]; then
   # over-the-air upgrade: never rewrite the display setup / kiosk unit (it may be hand-fixed). Only the
   # hidden-pointer drop-in (1.0.6: also covers snap Chromium's own pointer). Applied once even if the pointer
   # had been set to shown, then that choice is kept again. Takes effect at the next reboot.
+  # 1.3.6: always refresh the kiosk launcher (full-screen geometry, 1:1 scale, black background); the unit is untouched
+  [[ -x /usr/local/bin/fieldnote-kiosk ]] && { /usr/local/sbin/fieldnote-display-setup --refresh-launcher || echo "WARNING: could not refresh the kiosk launcher"; }
   if [[ -f /etc/systemd/system/fieldnote-kiosk.service ]]; then
     if ! grep -qx 'CURSOR_FIX=106' /etc/sdr/display.env 2>/dev/null || ! grep -qx 'CURSOR=shown' /etc/sdr/display.env 2>/dev/null; then
       /usr/local/sbin/fieldnote-display-setup --hide-cursor --no-restart || echo "WARNING: could not hide the kiosk mouse pointer (see above)."
@@ -815,8 +856,13 @@ elif [[ -f /etc/systemd/system/fieldnote-kiosk.service ]]; then
     /usr/local/sbin/fieldnote-display-setup --hide-cursor || echo "WARNING: could not hide the kiosk mouse pointer (see above)."
   fi
 elif ls /sys/class/drm/card*-DSI-* >/dev/null 2>&1 && [[ ! -f /etc/sdr/display.env ]]; then
-  echo "A DSI display is connected. For the full-screen Trace kiosk run:"
-  echo "  sudo trace-display-setup     (same as fieldnote-display-setup; then sudo reboot)"
+  if [[ $UPGRADE -eq 0 ]]; then   # 1.3.3: fresh install + screen attached -> set up the kiosk now (it also lets the splash step run)
+    echo "A DSI display is connected: setting up the full-screen Trace kiosk"
+    /usr/local/sbin/fieldnote-display-setup --user "$RUN_USER" && mark_step display || echo "WARNING: display setup reported a problem. Run: sudo trace-display-setup"
+  else
+    echo "A DSI display is connected. For the full-screen Trace kiosk run:"
+    echo "  sudo trace-display-setup     (same as fieldnote-display-setup; then sudo reboot)"
+  fi
 fi
 
 install_pi5_helpers || echo "WARNING: Pi 5 helper step reported a problem (see above)"

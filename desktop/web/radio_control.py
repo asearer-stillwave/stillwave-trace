@@ -258,6 +258,11 @@ def airmap_js():
     return send_from_directory(WEBDIR, "airmap.js", mimetype="application/javascript", max_age=0)
 
 
+@app.get("/towers.js")
+def towers_js():   # 1.3.6: FM towers layer on the Map page
+    return send_from_directory(WEBDIR, "towers.js", mimetype="application/javascript", max_age=0)
+
+
 @app.get("/shots")
 @app.get("/shots.html")
 def shots_page():
@@ -424,6 +429,14 @@ def ui_img(name):
 @app.get("/fieldnote.css")
 def fieldnote_css():
     path = WEBDIR / "fieldnote.css"
+    body = path.read_text(encoding="utf-8") if path.is_file() else ""
+    return Response(body, content_type="text/css; charset=utf-8")
+
+
+@app.get("/content.css")
+def content_css():
+    """1.3.4: Maps, Stations and Presets pages load /content.css; without this route it was a 404 (labels ran together)."""
+    path = WEBDIR / "content.css"
     body = path.read_text(encoding="utf-8") if path.is_file() else ""
     return Response(body, content_type="text/css; charset=utf-8")
 
@@ -597,7 +610,7 @@ def listen_state():
     except Exception:
         bands = {}
     e = env()
-    return jsonify(ok=True, airband=pre.get("airband", []), noaa=pre.get("noaa", []), band=e.get("BAND") or "fm",
+    return jsonify(ok=True, airband=pre.get("airband", []), noaa=pre.get("noaa", []), frs=pre.get("frs", []), band=e.get("BAND") or "fm",
                    demod=e.get("DEMOD") or "wfm", squelch=e.get("SQUELCH") or "0", current=current_station(), bands=bands)
 
 
@@ -606,8 +619,8 @@ def listen_band():
     """1.0.9: per-band gain / squelch (FM, airband, NOAA), saved separately (sdr-listen band -> sdr-fm-env)."""
     d = request.get_json(silent=True) or {}
     band = str(d.get("band") or "")
-    if band not in ("fm", "airband", "noaa"):
-        return jsonify(error="band must be fm, airband or noaa"), 400
+    if band not in ("fm", "airband", "noaa", "frs"):
+        return jsonify(error="band must be fm, airband, noaa or frs"), 400
     args = [LISTEN, "band", band]
     if d.get("gain") is not None:
         args.append("gain=" + str(d.get("gain"))[:8])
@@ -636,7 +649,7 @@ def listen_tune():
     if demod not in ("wfm", "am", "nfm"):
         return jsonify(error="demod must be wfm, am or nfm"), 400
     sq = str(int(d.get("squelch") or 0)) if str(d.get("squelch") or "0").isdigit() else "0"
-    args = [LISTEN, "tune", "%g" % mhz, demod, sq, str(d.get("name") or "")[:40]]
+    args = [LISTEN, "tune", ("%.4f" % mhz).rstrip("0").rstrip("."), demod, sq, str(d.get("name") or "")[:40]]
     if d.get("band"):
         args.append(str(d.get("band")))
     try:
@@ -759,7 +772,7 @@ def listen_level():
     """Map listen strip: what SDR 2 is playing + QUIET / TALKING (sdr-level meter, airband / NOAA only)."""
     e = env()
     band = e.get("BAND") or ("fm" if (e.get("DEMOD") or "wfm") == "wfm" else "other")
-    sq = e.get({"airband": "AIRBAND_SQUELCH", "noaa": "NOAA_SQUELCH"}.get(band, "SQUELCH")) or e.get("SQUELCH") or "0"
+    sq = e.get({"airband": "AIRBAND_SQUELCH", "noaa": "NOAA_SQUELCH", "frs": "FRS_SQUELCH"}.get(band, "SQUELCH")) or e.get("SQUELCH") or "0"
     try:
         lv = json.loads(LEVEL_FILE.read_text())
         fresh = time.time() - float(lv.get("t", 0)) < 3
@@ -771,7 +784,8 @@ def listen_level():
         state = "squelch_off" if str(sq) in ("", "0") else ("talking" if lv.get("talking") else "quiet")
     resp = jsonify(ok=True, band=band, name=st.get("name") or "", frequency=st.get("frequency") or e.get("FREQ") or "",
                    demod=e.get("DEMOD") or "wfm", squelch=int(sq) if str(sq).isdigit() else 0, state=state,
-                   db=lv.get("db") if fresh else None, live=fresh)
+                   db=lv.get("db") if fresh else None, live=fresh,
+                   air_gain=e.get("AIRBAND_GAIN") or "40")   # 1.3.4: Quick Tune GAIN chip (sdr-listen default 40)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -807,6 +821,24 @@ def airports():
         app.logger.warning("airports: %s", exc)
         try: res = json.loads(AIRPORTS_FILE.read_text())
         except (OSError, ValueError): res = {"ok": False, "airports": []}
+    resp = jsonify(res); resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/fm/towers")
+def fm_towers():
+    # 1.3.6: FM transmitter sites for the map's Towers layer (web/fmtowers.py); a missing bank -> empty list
+    import sys as _sys
+    if str(WEBDIR) not in _sys.path:
+        _sys.path.insert(0, str(WEBDIR))
+    import fmtowers as _ft
+    try:
+        res = _ft.towers(request.args.to_dict(), BANK_DB)
+    except (ValueError, TypeError) as exc:
+        return jsonify(ok=False, error="bad request: %s" % exc, towers=[]), 400
+    except Exception as exc:
+        app.logger.warning("fm towers: %s", exc)
+        res = {"ok": True, "towers": [], "count": 0}
     resp = jsonify(res); resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -1486,9 +1518,112 @@ def maps_status():
     except (OSError, ValueError):
         manifest = None
     installed = tiles.is_file() and tiles.stat().st_size > 0
-    return jsonify(ok=True, installed=installed, url="/maps/la.pmtiles" if installed else None,
+    # 1.3.5: "street" = the real LA street map (an outline / placeholder file under 10 MB still gets the GET MAP banner)
+    street = installed and tiles.stat().st_size >= 10 * 1000 * 1000
+    return jsonify(ok=True, installed=installed, street=street, url="/maps/la.pmtiles" if installed else None,
                    bytes=tiles.stat().st_size if installed else 0, manifest=manifest, packs=_map_packs(),
                    fallback="/maplib/fallback/la-lowzoom.geojson", receiver=_receiver(), rings=_adsb_rings())
+
+
+# ---- 1.3.5 on-screen map downloads (LA street map, USA street map): sdr-maps job -> sdr-mapjob (background worker)
+@app.get("/api/maps/job")
+def maps_job_status():
+    try:
+        r = subprocess.run([MAPS_BIN, "job", "status"], text=True, capture_output=True, timeout=15)
+        d = json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception as exc:
+        d = {"ok": False, "error": "map status unavailable (%s)" % str(exc)[:80]}
+    resp = jsonify(d); resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/maps/job")
+def maps_job_action():
+    d = request.get_json(silent=True) or {}
+    action, mid = str(d.get("action") or ""), str(d.get("id") or "")
+    if action not in ("start", "cancel", "delete") or mid not in ("la", "usa"):
+        return jsonify(ok=False, error="action must be start, cancel or delete and id la or usa"), 400
+    if action == "delete" and mid != "usa":
+        return jsonify(ok=False, error="only the USA map can be deleted"), 400
+    try:
+        r = _sudo([MAPS_BIN, "job", action, mid], timeout=40)
+    except subprocess.TimeoutExpired:
+        return jsonify(ok=False, error="the map helper timed out"), 504
+    try:
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception:
+        out = {"ok": False, "reason": "error", "error": traceErr_clean(r.stderr or r.stdout or "map helper failed")}
+    if action in ("delete",) and out.get("ok"):
+        ui_bump("map deleted")
+    return jsonify(out), 200
+
+
+def traceErr_clean(m):
+    m = str(m or "").strip()
+    return "The map helper on this box did not answer." if re.search(r"sudo:|command not found|Traceback|No such file|Permission denied", m) else m[-200:]
+
+
+# ---- 1.3.5 kiosk auto-reload: the kiosk shell polls /api/ui/epoch and reloads when it changes (web UI restart after an
+# update, a map install, Settings > System > Reload screen)
+_UI = {"start": int(time.time()), "bump": 0}
+
+
+def ui_bump(why=""):
+    _UI["bump"] += 1
+    app.logger.info("ui reload: %s", why)
+
+
+def _ui_epoch():
+    m = 0
+    for f in [MAPS_DIR / "la.json", MAPS_DIR / "packs"]:
+        try: m = max(m, int(f.stat().st_mtime))
+        except OSError: pass
+    try:
+        for f in (MAPS_DIR / "packs").glob("*.json"):
+            m = max(m, int(f.stat().st_mtime))
+    except OSError:
+        pass
+    return "%d.%d.%d" % (_UI["start"], _UI["bump"], m)
+
+
+@app.get("/api/ui/epoch")
+def ui_epoch():
+    resp = jsonify(ok=True, epoch=_ui_epoch()); resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ui/reload")
+def ui_reload():
+    ui_bump("Reload screen button")
+    return jsonify(ok=True, epoch=_ui_epoch())
+
+
+# ---- 1.3.5 Settings > Screen > Boot splash (sdr-boot-setup --splash on|off|status)
+BOOT_SETUP = os.environ.get("SDR_BOOT_SETUP_BIN", "/usr/local/sbin/sdr-boot-setup")
+
+
+@app.route("/api/screen/splash", methods=["GET", "POST"])
+def screen_splash():
+    if request.method == "POST":
+        on = (request.get_json(silent=True) or {}).get("on")
+        if on not in (True, False):
+            return jsonify(ok=False, error="on must be true or false"), 400
+        try:   # "on" rebuilds the initramfs: about a minute on a Pi 5
+            r = _sudo([BOOT_SETUP, "--splash", "on" if on else "off"], timeout=300)
+        except subprocess.TimeoutExpired:
+            return jsonify(ok=False, error="Turning the splash " + ("on" if on else "off") + " took too long. Try again."), 504
+        if r.returncode != 0:
+            last = ((r.stderr or r.stdout or "").strip().splitlines() or ["could not change the splash"])[-1]
+            return jsonify(ok=False, error=traceErr_clean(last)), 500
+    try:
+        r = _sudo([BOOT_SETUP, "--splash", "status"], timeout=20)
+    except subprocess.TimeoutExpired:
+        return jsonify(ok=False, error="splash status timed out"), 504
+    out = r.stdout or ""
+    m = re.search(r"^splash:\s*(on|off)", out, re.M)
+    if not m:
+        return jsonify(ok=False, error="Couldn't read the splash setting."), 500
+    return jsonify(ok=True, on=m.group(1) == "on", plymouth="plymouth: installed" in out)
 
 
 @app.post("/api/adsb/rings")
@@ -1778,12 +1913,13 @@ DISPLAY_RES = os.environ.get("SDR_DISPLAY_RES_BIN", "/usr/local/sbin/sdr-display
 
 @app.route("/api/display/resolution", methods=["GET", "POST"])
 def display_resolution():
-    """Desktop edition: HDMI output is fixed at 720p (1280x720, landscape); applies at the next reboot."""
+    """Desktop edition: HDMI output 720p (default) or 1080p, landscape; applies at the next reboot (1.3.6).
+    Answers active_resolution (this boot), saved_resolution (next boot) and reboot_needed."""
     if EDITION != "desktop":
-        return jsonify(ok=False, error="desktop edition only"), 404
+        return jsonify(ok=False, edition=EDITION, error="desktop edition only"), 200   # 1.3.6: 200, so the handheld console stays clean
     want = "status" if request.method == "GET" else str((request.get_json(silent=True) or {}).get("resolution") or "")
-    if want not in ("status", "720p"):
-        return jsonify(ok=False, error="only 720p is supported on the desktop edition"), 400
+    if want not in ("status", "720p", "1080p"):
+        return jsonify(ok=False, error="resolution must be 720p or 1080p"), 400
     try:
         r = _sudo([DISPLAY_RES, want], timeout=15)
         return jsonify(json.loads(r.stdout.strip().splitlines()[-1]))
@@ -1928,7 +2064,7 @@ def _strip_metric(mode, scope):
             mhz = None
         e = env()
         band = e.get("BAND") or "fm"
-        return {"kind": "fm", "mhz": mhz, "name": st.get("name") or "", "band": band if band in ("airband", "noaa", "other") else "fm",
+        return {"kind": "fm", "mhz": mhz, "name": st.get("name") or "", "band": band if band in ("airband", "noaa", "frs", "other") else "fm",
                 "demod": e.get("DEMOD") or "wfm"}
     if mode == "adsb":
         try:
@@ -1998,6 +2134,12 @@ def strip_live(mode, audio, radios, metric):
         return _LIVE["data"]
     fm_on = mode == "fm" and _unit_active("sdr-fm")
     stream = fm_on and _stream_bytes()
+    # 1.3.4: Pi-speaker-only has no Icecast stream; count it live while the demod is running
+    if fm_on and not stream and (audio or {}).get("output") == "speaker":
+        try:
+            stream = subprocess.run(["pgrep", "-x", "rtl_fm"], capture_output=True, timeout=2).returncode == 0
+        except Exception:
+            pass
     since = now - _TUNE["t"]
     state = "off"
     if fm_on:

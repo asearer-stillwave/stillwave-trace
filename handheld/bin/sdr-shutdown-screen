@@ -1,12 +1,19 @@
 #!/bin/sh
-# Stillwave Trace 1.3: the shutdown screen. Runs as the ExecStop of sdr-shutdown-screen.service, after the kiosk and the
-# web app have stopped (the console lines show on the splash) and BEFORE sdr-screen-final. Only on a real power-off:
-# tells the Plymouth theme to show "SAFE TO UNPLUG WHEN DARK" with a 5 s countdown, then waits those 5 s.
-# It never touches the display, its microcontroller (0x45) or the backlight. A reboot skips it.
+# Stillwave Trace 1.3.6: the shutdown / reboot splash. Runs as the ExecStop of sdr-shutdown-screen.service, after the
+# kiosk and the web app have stopped and BEFORE sdr-screen-final. The Plymouth theme types the shutdown log from its
+# first frame (about 2-3 s). This holds power-off until plymouthd has been up 5 s so the screen + log are seen; at most 5 s
+# (10 x 0.5 s), never longer. It never touches the display, its microcontroller (0x45) or the backlight.
 command -v systemctl >/dev/null 2>&1 || exit 0
-systemctl list-jobs --no-legend --no-pager 2>/dev/null | grep -Eq '(^|[[:space:]])(poweroff|halt)\.target' || exit 0
+systemctl list-jobs --no-legend --no-pager 2>/dev/null | grep -Eq '(^|[[:space:]])(poweroff|halt|reboot)\.target' || exit 0
 command -v plymouth >/dev/null 2>&1 || exit 0
-plymouth --ping 2>/dev/null || exit 0          # no splash on screen: nothing to count down on
-plymouth display-message --text=TRACE-COUNTDOWN 2>/dev/null || true
-sleep 5
+plymouth --ping 2>/dev/null || exit 0          # no splash on screen: nothing to wait for
+p="$(pidof plymouthd 2>/dev/null | awk '{print $1}')"
+[ -n "$p" ] || exit 0
+i=0
+while [ "$i" -lt 10 ]; do
+  e="$(ps -o etimes= -p "$p" 2>/dev/null | tr -d ' ')"
+  case "$e" in ''|*[!0-9]*) exit 0 ;; esac
+  [ "$e" -ge 5 ] && exit 0
+  sleep 0.5; i=$((i + 1))
+done
 exit 0

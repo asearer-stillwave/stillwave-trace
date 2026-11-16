@@ -1,0 +1,400 @@
+#!/usr/bin/env python3
+"""Stillwave Trace 1.3.5: on-screen map downloads (no keyboard / SSH). Called through `sudo sdr-maps job ...`.
+
+  sdr-mapjob status                 JSON: LA + USA state, running job, free space, what the USA map needs
+  sdr-mapjob start la|usa           checks Wi-Fi + free space, then runs the download in the background
+  sdr-mapjob cancel la|usa          stops it (USA: finished pieces are deleted too, to free the space)
+  sdr-mapjob delete usa             removes the installed USA map (and any kept pieces)
+  sdr-mapjob run la|usa             the background worker (started by `start`)
+
+LA street map: the same cut as `sdr-maps fetch` (SoCal z0-11 + LA basin z12-14), run by sdr-maps itself.
+USA street map: lower 48, zoom 0-13, cut from the public Protomaps build in 9 pieces (one z0-9 overview + 8 z10-13 boxes on
+z10 tile edges, so the pieces never share a tile and `pmtiles merge` accepts them). Each piece is retried on its own and kept
+when done, so a Wi-Fi drop or a reboot only repeats the piece that was running. Then merge + verify -> maps/packs/usa.pmtiles,
+which the map draws like any other pack (LA's own z12-14 detail stays where it exists).
+"""
+import json, math, os, re, shutil, signal, subprocess, sys, time
+
+MAPS = os.environ.get("SDR_MAPS_DIR", "/var/lib/sdr/maps")
+PACKS = os.path.join(MAPS, "packs")
+JOBS = os.path.join(MAPS, ".jobs")
+WORK = os.path.join(MAPS, ".usa-work")
+SDR_MAPS = os.environ.get("SDR_MAPS_BIN") or ("/usr/local/sbin/sdr-maps" if os.path.exists("/usr/local/sbin/sdr-maps")
+                                               else os.path.join(os.path.dirname(os.path.realpath(__file__)), "sdr-maps"))
+BUILD_BASE = os.environ.get("SDR_MAPS_BUILD_BASE", "https://build.protomaps.com")
+GB, MB = 10 ** 9, 10 ** 6         # decimal, like pmtiles and the size on the screen
+SPARE = 1 * GB                     # always leave 1 GB free on the SD card (same rule as sdr-content)
+LA_MIN_STREET = 10 * MB              # la.pmtiles below this is not the street map (outline / placeholder)
+LA_EST = 58 * MB                     # dry run, build 20261024: outer 5.6 MB + core 52 MB
+USA_BBOX = tuple(float(v) for v in os.environ.get("SDR_MAPJOB_BBOX", "-125.0,24.4,-66.9,49.4").split(","))   # env: tests only
+USA_MAXZ, SPLIT_Z = int(os.environ.get("SDR_MAPJOB_MAXZ", 13)), int(os.environ.get("SDR_MAPJOB_SPLITZ", 10))
+# dry-run sizes (build 20261024) for progress + the space check; the base piece is z0-9 for the whole box
+USA_EST = [157, 464, 253, 323, 345, 759, 697, 957, 280]          # MB, same order as plan()
+USA_TOTAL = sum(USA_EST) * MB                                       # ~4.2 GB
+RETRY_OFFLINE_S = 30 * 60            # keep retrying a dropped connection this long before giving up (pieces are kept)
+
+
+def now(): return int(time.time())
+def rj(p, d=None):
+    try:
+        with open(p) as f: return json.load(f)
+    except (OSError, ValueError): return d
+def wj(p, o):
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    t = p + ".tmp"
+    with open(t, "w") as f: json.dump(o, f)
+    os.chmod(t, 0o644); os.replace(t, p)
+def free(): return shutil.disk_usage(MAPS if os.path.isdir(MAPS) else "/").free
+def size(p):
+    try: return os.path.getsize(p)
+    except OSError: return 0
+def unit_active(i):
+    """1.3.6: the worker runs as transient unit sdr-mapjob-<id>; the web UI (non-root) can always ask systemd"""
+    if not i or not shutil.which("systemctl") or not os.path.isdir("/run/systemd/system"): return False
+    try: return subprocess.run(["systemctl", "is-active", "--quiet", "sdr-mapjob-" + i], timeout=5).returncode == 0
+    except Exception: return False
+def alive(pid, i=None):
+    if unit_active(i): return True
+    try: pid = int(pid)
+    except (TypeError, ValueError): return False
+    if pid <= 0: return False
+    if os.path.isdir("/proc/%d" % pid): return True
+    try: os.kill(pid, 0); return True
+    except PermissionError: return True        # 1.3.5 bug: a root worker looked dead to the non-root web UI
+    except OSError: return False
+GRACE = 30                                       # seconds a fresh job may have no pid yet (worker still starting)
+def jpath(i): return os.path.join(JOBS, i + ".json")
+def online():
+    # any HTTP answer means online: build.protomaps.com/ itself answers 404 (so `curl -f` always looked offline)
+    try:
+        r = subprocess.run(["curl", "-sI", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "8", BUILD_BASE + "/"],
+                           capture_output=True, text=True, timeout=12)
+        return r.stdout.strip() not in ("", "000")
+    except Exception: return False
+
+
+def plan():
+    """z0-9 overview of the whole box + 8 boxes for z10-13 cut on z10 tile edges (disjoint tiles)."""
+    W, S, E, N = USA_BBOX; z = SPLIT_Z; e = 1e-7
+    lon = lambda x: x / 2 ** z * 360 - 180
+    lat = lambda y: math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / 2 ** z))))
+    xt = lambda lo: (lo + 180) / 360 * 2 ** z
+    yt = lambda la: (1 - math.asinh(math.tan(math.radians(la))) / math.pi) / 2 * 2 ** z
+    x0, x1, y0, y1 = int(xt(W)), int(xt(E)), int(yt(N)), int(yt(S))
+    xs = [x0 + round((x1 + 1 - x0) * i / 4) for i in range(5)]
+    ys = [y0 + round((y1 + 1 - y0) * j / 2) for j in range(3)]
+    out = [{"bbox": [W, S, E, N], "minz": 0, "maxz": SPLIT_Z - 1}]
+    for i in range(4):
+        for j in range(2):
+            b = [max(W, lon(xs[i]) + e), max(S, lat(ys[j + 1]) + e), min(E, lon(xs[i + 1]) - e), min(N, lat(ys[j]) - e)]
+            if b[0] < b[2] and b[1] < b[3]: out.append({"bbox": [round(v, 7) for v in b], "minz": SPLIT_Z, "maxz": USA_MAXZ})
+    for k, p in enumerate(out): p["est"] = USA_EST[k] * MB if k < len(USA_EST) else 500 * MB
+    return out
+
+
+def la_info():
+    t = os.path.join(MAPS, "la.pmtiles"); m = rj(os.path.join(MAPS, "la.json"), {}) or {}
+    b = size(t)
+    return {"installed": b > 0, "street": b >= LA_MIN_STREET, "bytes": b, "build": m.get("build"), "estimate": LA_EST}
+
+
+def usa_kept():
+    p = rj(os.path.join(WORK, "plan.json"), {}) or {}
+    done = [k for k in range(len(p.get("pieces", []))) if os.path.isfile(os.path.join(WORK, "p%d.pmtiles" % k))]
+    return p, done, sum(size(os.path.join(WORK, "p%d.pmtiles" % k)) for k in done)
+
+
+def usa_need():
+    """bytes that must be free to finish: the pieces still to fetch + the merged file + the 1 GB spare"""
+    p, done, kept = usa_kept()
+    left = sum(x["est"] for k, x in enumerate(p.get("pieces") or plan()) if k not in done)
+    return left + USA_TOTAL + SPARE     # pieces already on the card are counted in free(); merge writes the full file beside them
+
+
+def usa_info():
+    t = os.path.join(PACKS, "usa.pmtiles"); m = rj(os.path.join(PACKS, "usa.json"), {}) or {}
+    p, done, kept = usa_kept()
+    return {"installed": os.path.isfile(t) and bool(m), "bytes": size(t), "build": m.get("build"), "estimate": USA_TOTAL,
+            "maxzoom": USA_MAXZ, "need": usa_need(), "pieces": len(p.get("pieces") or plan()), "pieces_done": len(done), "kept_bytes": kept}
+
+
+def job(i):
+    j = rj(jpath(i))
+    if j and j.get("state") in ("running", "retrying", "checking") and not alive(j.get("pid"), i):
+        if j.get("pid") is None and now() - int(j.get("updated") or 0) < GRACE: return j
+        j.update(state="failed", reason="stopped", message="The download stopped (the box restarted?). Tap Retry to continue.")
+        if os.geteuid() == 0:                    # 1.3.6: only root (the worker / sudo CLI) writes; the web UI just reports it
+            try: wj(jpath(i), j)
+            except OSError: pass
+    return j
+
+
+def cmd_status():
+    print(json.dumps({"ok": True, "la": la_info(), "usa": usa_info(), "jobs": {"la": job("la"), "usa": job("usa")},
+                      "free": free(), "spare": SPARE, "online": None}))
+
+
+def say(i, **kw):
+    j = rj(jpath(i), {}) or {}
+    j.update(kw); j["id"] = i; j["updated"] = now()
+    wj(jpath(i), j)
+    return j
+
+
+def fail(i, reason, msg, **kw):
+    say(i, state="failed", reason=reason, message=msg, pid=None, **kw)
+    print(json.dumps({"ok": False, "reason": reason, "error": msg, **kw})); sys.exit(1)
+
+
+def cmd_start(i):
+    if i not in ("la", "usa"): fail(i, "error", "unknown map")
+    j = job(i)
+    if j and j.get("state") in ("running", "retrying", "checking") and (alive(j.get("pid"), i)
+                                                                      or (j.get("pid") is None and now() - int(j.get("updated") or 0) < GRACE)):
+        print(json.dumps({"ok": True, "already": True, "job": j})); return
+    os.makedirs(MAPS, exist_ok=True)
+    if not online():
+        fail(i, "offline", "No internet. Connect to Wi-Fi with internet, then tap Retry.")
+    need = usa_need() if i == "usa" else 2 * LA_EST + 300 * MB
+    if free() < need:
+        fail(i, "nospace", "Not enough space: needs about %.1f GB free, %.1f GB free now." % (need / GB, free() / GB), need=need, free=free())
+    total = USA_TOTAL if i == "usa" else LA_EST
+    say(i, state="running", phase="starting", have=usa_kept()[2] if i == "usa" else 0, total=total, eta=None, reason=None,
+        message="", started=now(), pid=None, cancel=False)
+    log = open(os.path.join(JOBS, i + ".log"), "ab")
+    cmd = [sys.executable, os.path.realpath(__file__), "run", i]
+    unit = "sdr-mapjob-" + i
+    # own systemd unit when there is one, so restarting the web UI never kills a 20-minute download
+    if shutil.which("systemd-run") and os.path.isdir("/run/systemd/system") and not os.environ.get("SDR_MAPJOB_NO_SYSTEMD"):
+        subprocess.run(["systemctl", "reset-failed", unit], capture_output=True)
+        r = subprocess.run(["systemd-run", "--unit=" + unit, "--collect", "--quiet", "-p", "Nice=10", "-p", "IOSchedulingClass=idle",
+                            "--setenv=SDR_MAPS_DIR=" + MAPS, *cmd], capture_output=True, text=True)
+        if r.returncode != 0: fail(i, "error", "could not start the download (%s)" % (r.stderr.strip()[:120] or "systemd-run"))
+    else:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True, close_fds=True)
+    for _ in range(20):                  # wait for the worker to report its pid
+        time.sleep(0.1)
+        if (rj(jpath(i), {}) or {}).get("pid"): break
+    print(json.dumps({"ok": True, "job": rj(jpath(i))}))
+
+
+def cmd_cancel(i):
+    j = rj(jpath(i), {}) or {}
+    pid = j.get("pid")
+    say(i, cancel=True)
+    if pid and alive(pid, i):
+        try: os.killpg(int(pid), signal.SIGTERM)
+        except OSError:
+            try: os.kill(int(pid), signal.SIGTERM)
+            except OSError: pass
+        for _ in range(30):
+            if not alive(pid): break
+            time.sleep(0.1)
+    subprocess.run(["systemctl", "stop", "sdr-mapjob-" + i], capture_output=True) if shutil.which("systemctl") else None
+    if i == "usa": shutil.rmtree(WORK, ignore_errors=True)
+    else:
+        for f in os.listdir(MAPS):
+            if f.startswith(".fetch."): shutil.rmtree(os.path.join(MAPS, f), ignore_errors=True)
+    say(i, state="cancelled", pid=None, message="", reason=None)
+    print(json.dumps({"ok": True}))
+
+
+def cmd_delete(i):
+    if i != "usa": print(json.dumps({"ok": False, "error": "only the USA map can be deleted here"})); sys.exit(2)
+    j = job(i)
+    if j and j.get("state") in ("running", "retrying", "checking"): cmd_cancel(i); return
+    for ext in (".pmtiles", ".json"):
+        try: os.unlink(os.path.join(PACKS, "usa" + ext))
+        except OSError: pass
+    shutil.rmtree(WORK, ignore_errors=True)
+    try: os.unlink(jpath(i))
+    except OSError: pass
+    print(json.dumps({"ok": True}))
+
+
+UNIT = {"": 1, "B": 1, "kB": 1e3, "KB": 1e3, "MB": 1e6, "GB": 1e9, "KiB": 1024, "MiB": 1 << 20, "GiB": 1 << 30}
+BAR = re.compile(r"\(([\d.]+)\s*([kKMG]?i?B)?\s*/\s*([\d.]+)\s*([kKMG]?i?B)")
+
+
+def stream(cmd, on_bytes, env=None):
+    """run cmd, call on_bytes(done, total) from the pmtiles progress bar '(46/253 MB, 30 MB/s)'; returns (rc, tail of output)"""
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    buf, tail, last = b"", "", 0
+    try:
+        return _pump(p, on_bytes)
+    except BaseException:
+        p.kill(); p.wait(); raise
+
+
+def _pump(p, on_bytes):
+    buf, tail, last = b"", "", 0
+    while True:
+        c = p.stdout.read(256)
+        if not c: break
+        buf += c
+        parts = re.split(rb"[\r\n]", buf); buf = parts.pop()
+        for ln in parts:
+            s = ln.decode("utf-8", "replace")
+            if s.strip(): tail = (tail + "\n" + s)[-600:]
+            m = BAR.search(s)
+            if m and "fetching chunks" in s and time.time() - last > 0.5:
+                u2 = UNIT.get(m.group(4), 1); u1 = UNIT.get(m.group(2) or m.group(4), 1)
+                on_bytes(float(m.group(1)) * u1, float(m.group(3)) * u2); last = time.time()
+    return p.wait(), tail
+
+
+class Cancelled(Exception): pass
+
+
+def run_la():
+    i = "la"; t0 = time.time()
+    def prog(d, t):
+        j = rj(jpath(i), {}) or {}
+        if j.get("cancel"): raise Cancelled()
+        have = min(LA_EST, (6 * MB + d) if t >= 20 * MB else d)   # outer (~6 MB) first, then the LA core (~52 MB)
+        el = time.time() - t0; rate = have / el if el > 2 else 0
+        say(i, state="running", phase="download", have=int(have), total=LA_EST, eta=int((LA_EST - have) / rate) if rate > 0 else None)
+    env = dict(os.environ, SDR_MAPS_QUIET="")
+    for attempt in range(3):
+        rc, tail = stream([SDR_MAPS, "fetch", "--force"], prog, env)
+        if rc == 0: break
+        if (rj(jpath(i), {}) or {}).get("cancel"): raise Cancelled()
+        if not online():
+            say(i, state="retrying", message="Connection lost, retrying…")
+            if not wait_online(i, 10 * 60):
+                return fail(i, "offline", "No internet. Connect to Wi-Fi with internet, then tap Retry.")
+        else: time.sleep(10)
+    else:
+        return fail(i, "error", "The map download failed. Tap Retry. (" + (tail.strip().splitlines() or [""])[-1][-120:] + ")")
+    say(i, state="done", have=la_info()["bytes"], total=la_info()["bytes"], eta=0, pid=None, finished=now(), message="")
+
+
+def wait_online(i, limit):
+    t = time.time()
+    while time.time() - t < limit:
+        if (rj(jpath(i), {}) or {}).get("cancel"): raise Cancelled()
+        if online(): return True
+        time.sleep(15)
+    return False
+
+
+def pmtiles():
+    r = subprocess.run([SDR_MAPS, "pmtiles-path"], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip(): raise RuntimeError("could not get the pmtiles tool (is the box online?)")
+    return r.stdout.strip().splitlines()[-1]
+
+
+def run_usa():
+    i = "usa"; os.makedirs(WORK, exist_ok=True)
+    pt = pmtiles()
+    p = rj(os.path.join(WORK, "plan.json"), {}) or {}
+    if not p.get("build"):
+        r = subprocess.run([SDR_MAPS, "latest-build"], capture_output=True, text=True)
+        b = (r.stdout.strip().splitlines() or [""])[-1]
+        if not re.fullmatch(r"\d{8}", b): return fail(i, "offline", "Could not reach the map server. Connect to Wi-Fi with internet, then tap Retry.")
+        p = {"build": b, "bbox": list(USA_BBOX), "maxzoom": USA_MAXZ, "pieces": plan(), "created": now()}
+        wj(os.path.join(WORK, "plan.json"), p)
+    url = "%s/%s.pmtiles" % (BUILD_BASE, p["build"]); pieces = p["pieces"]
+    t0 = time.time(); start_have = usa_kept()[2]
+    def kept(): return sum(size(os.path.join(WORK, "p%d.pmtiles" % k)) for k in range(len(pieces)) if os.path.isfile(os.path.join(WORK, "p%d.pmtiles" % k)))
+    for k, pc in enumerate(pieces):
+        out = os.path.join(WORK, "p%d.pmtiles" % k)
+        if os.path.isfile(out): continue
+        part = os.path.join(WORK, "p%d.part.pmtiles" % k)
+        offline_since = None; errors = 0
+        while True:
+            left = sum(x["est"] for kk, x in enumerate(pieces) if not os.path.isfile(os.path.join(WORK, "p%d.pmtiles" % kk)))
+            need = left + USA_TOTAL + SPARE
+            if free() < need:
+                return fail(i, "nospace", "Not enough space: needs about %.1f GB free, %.1f GB free now." % (need / GB, free() / GB), need=need, free=free())
+            base = kept()
+            def prog(d, t, base=base):
+                j = rj(jpath(i), {}) or {}
+                if j.get("cancel"): raise Cancelled()
+                have = min(USA_TOTAL, base + d)
+                el = time.time() - t0; rate = (have - start_have) / el if el > 3 else 0
+                say(i, state="running", phase="piece", piece=k + 1, pieces=len(pieces), have=int(have), total=USA_TOTAL,
+                    eta=int((USA_TOTAL - have) / rate) if rate > 0 else None, message="")
+            try: os.unlink(part)
+            except OSError: pass
+            say(i, state="running", phase="piece", piece=k + 1, pieces=len(pieces), have=base, total=USA_TOTAL, message="")
+            rc, tail = stream([pt, "extract", url, part, "--bbox=" + ",".join("%.7f" % v for v in pc["bbox"]),
+                               "--minzoom=%d" % pc["minz"], "--maxzoom=%d" % pc["maxz"], "--download-threads=4"], prog)
+            if rc == 0 and subprocess.run([pt, "verify", part], capture_output=True).returncode == 0:
+                os.replace(part, out); break
+            if (rj(jpath(i), {}) or {}).get("cancel"): raise Cancelled()
+            if re.search(r"\b404\b|not found", tail, re.I) and online():
+                # the build we started from was removed from the server: start over on the current build
+                shutil.rmtree(WORK, ignore_errors=True)
+                return fail(i, "error", "The map server replaced its map build. Tap Retry to start again.")
+            if not online():
+                offline_since = offline_since or time.time()
+                say(i, state="retrying", message="Connection lost, retrying… (finished pieces are kept)")
+                if not wait_online(i, max(60, RETRY_OFFLINE_S - (time.time() - offline_since))):
+                    return fail(i, "offline", "No internet. Connect to Wi-Fi with internet, then tap Retry. It picks up where it stopped.",
+                                have=kept(), total=USA_TOTAL)
+                continue
+            errors += 1
+            if errors >= 4:
+                return fail(i, "error", "The map download failed. Tap Retry; finished pieces are kept. (" + (tail.strip().splitlines() or [""])[-1][-120:] + ")",
+                            have=kept(), total=USA_TOTAL)
+            time.sleep(10 * errors)
+    say(i, state="checking", phase="merge", have=USA_TOTAL, total=USA_TOTAL, eta=None, message="Putting the map together…")
+    os.makedirs(PACKS, exist_ok=True)
+    merged = os.path.join(WORK, "usa.merged.pmtiles")
+    try: os.unlink(merged)
+    except OSError: pass
+    files = [os.path.join(WORK, "p%d.pmtiles" % k) for k in range(len(pieces))]
+    r = subprocess.run([pt, "merge", *files, merged], capture_output=True, text=True)
+    if r.returncode != 0:
+        why = [l for l in re.split(r"[\r\n]", r.stdout + r.stderr) if "ail" in l] or [""]
+        shutil.rmtree(WORK, ignore_errors=True)   # pieces that will not merge are no use: the next Retry starts clean
+        return fail(i, "error", "Putting the map together failed. Tap Retry. (" + why[-1][-120:] + ")")
+    say(i, message="Checking the map…")
+    if subprocess.run([pt, "verify", merged], capture_output=True).returncode != 0:
+        try: os.unlink(merged)
+        except OSError: pass
+        return fail(i, "error", "The finished map did not pass its check. Tap Retry.")
+    os.chmod(merged, 0o644)
+    W, S, E, N = USA_BBOX
+    meta = {"id": "usa", "name": "USA street map", "detail": "streets", "bbox": [W, S, E, N], "minzoom": 0, "maxzoom": USA_MAXZ,
+            "center": [-98.5, 39.5], "bytes": size(merged), "build": p["build"], "source": url, "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "attribution": "© OpenStreetMap contributors (ODbL) · Protomaps"}
+    os.replace(merged, os.path.join(PACKS, "usa.pmtiles"))
+    wj(os.path.join(PACKS, "usa.json"), meta)
+    shutil.rmtree(WORK, ignore_errors=True)
+    say(i, state="done", have=meta["bytes"], total=meta["bytes"], eta=0, pid=None, finished=now(), message="")
+
+
+def cmd_run(i):
+    try: os.setpgrp()                    # own process group, so cancel stops pmtiles too
+    except OSError: pass
+    say(i, pid=os.getpid(), state="running")
+    def term(*_): raise Cancelled()
+    signal.signal(signal.SIGTERM, term)
+    try:
+        (run_usa if i == "usa" else run_la)()
+    except Cancelled:
+        if (rj(jpath(i), {}) or {}).get("cancel"):        # the Cancel button: throw the pieces away
+            if i == "usa": shutil.rmtree(WORK, ignore_errors=True)
+            say(i, state="cancelled", pid=None)
+        else:                                             # shutdown / reboot (SIGTERM): keep the finished pieces
+            say(i, state="failed", reason="stopped", pid=None,
+                message="The download paused when the box shut down. Tap Retry to continue where it stopped.")
+    except SystemExit: raise
+    except Exception as exc:
+        say(i, state="failed", reason="error", message="The map download failed: %s. Tap Retry." % str(exc)[:160], pid=None)
+
+
+def main(a):
+    c = a[0] if a else "status"; i = a[1] if len(a) > 1 else ""
+    if c == "status": return cmd_status()
+    if os.geteuid() != 0 and not os.environ.get("SDR_MAPS_ALLOW_USER"):
+        print(json.dumps({"ok": False, "error": "run with sudo"})); sys.exit(1)
+    os.makedirs(JOBS, exist_ok=True); os.chmod(JOBS, 0o755)
+    if i not in ("la", "usa"): print(json.dumps({"ok": False, "error": "map must be la or usa"})); sys.exit(2)
+    {"start": cmd_start, "cancel": cmd_cancel, "delete": cmd_delete, "run": cmd_run}.get(c, lambda _: (print(__doc__), sys.exit(2)))(i)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

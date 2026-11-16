@@ -60,6 +60,14 @@ if [[ "${1:-}" == "--health" ]]; then
   done
   echo "HEALTH FAILED after $((SECONDS - T0))s: $why"; exit 1
 fi
+echo "==== installed files (1.3.7 manifest) ===="
+if [[ -s /usr/local/lib/sdr-station/MANIFEST ]]; then
+  miss=0; total=0
+  while IFS= read -r f; do total=$((total + 1)); [[ -e "/usr/local/lib/sdr-station/$f" ]] || { miss=$((miss + 1)); echo "MISSING: /usr/local/lib/sdr-station/$f"; }; done < /usr/local/lib/sdr-station/MANIFEST
+  echo "files: $((total - miss))/$total installed$([[ $miss -gt 0 ]] && echo " - re-run: sudo bash install.sh --upgrade")"
+else
+  echo "no manifest (installed before 1.3.6)"
+fi
 echo "==== Stillwave Trace verify ($(hostname), $(date '+%Y-%m-%d %H:%M %Z')) ===="
 echo "version: $(cat /usr/local/lib/sdr-station/VERSION 2>/dev/null || echo 'unknown (installed before versioning)')"
 echo "==== boot splash ===="

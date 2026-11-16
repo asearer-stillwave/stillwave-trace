@@ -10,14 +10,17 @@
   const HP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/></svg>';
   const WARN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3 2 21h20z"/><path d="M12 10v5M12 18v.5"/></svg>';
   const SQ = [['0', 'Off'], ['20', 'Low'], ['50', 'High']];
-  let R = null, LV = null, AP = [], focus = null, group = 'tower', picker = false, busy = false, sqAir = '0';
+  const GN = [['20', '20'], ['30', '30'], ['40', '40'], ['49.6', 'Max']];   // 1.3.4: airband gain steps, same as the Listen page
+  let R = null, LV = null, AP = [], focus = null, group = 'tower', picker = false, busy = false, sqAir = '0', gnAir = '40', openRow = null;   // 1.3.4: openRow = 'g' | 's' (GAIN / SQ chip expanded)
   const wrap = () => $('mapwrap');
   const el = (tag, cls, html) => { const d = document.createElement(tag); if (cls) d.className = cls; if (html != null) d.innerHTML = html; return d; };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   const f3 = m => (+m).toFixed(3);
 
   // ---------- DOM ----------
-  let strip, sheet, apf, dgn, apx, apn, kp;
+  let strip, sheet, apf, dgn, apx, apn, kp, qtn, qtnT = null;
+  // 1.3.4: one radio (or roles not set): tapping the airport shows this for 8 s (degraded already has its own notice)
+  function twoRadios() { if (!qtn || degraded()) return; qtn.classList.remove('hide'); clearTimeout(qtnT); qtnT = setTimeout(() => qtn.classList.add('hide'), 8000); }
   function build() {
     const w = wrap(); if (!w || strip) return;
     strip = el('div', 'ls hide'); strip.setAttribute('role', 'group'); strip.setAttribute('aria-label', 'Airband listen (SDR 2)');
@@ -29,6 +32,8 @@
     sheet = el('div', 'lsp hide'); sheet.setAttribute('role', 'dialog'); sheet.setAttribute('aria-label', 'Quick tune');
     w.appendChild(sheet);
     apf = el('div', 'apf hide'); w.appendChild(apf);
+    qtn = el('div', 'qtn hide', '<span><b>Set up two radios for quick tune</b><br>One radio runs the map, the other listens to the tower.</span><a class="m-pill on" href="/dongles">Radio roles ›</a>');
+    qtn.setAttribute('role', 'status'); w.appendChild(qtn);
     dgn = el('div', 'dgn hide'); dgn.setAttribute('role', 'status'); w.appendChild(dgn);
     apx = el('div', 'm-ov apx hide', '<button type="button" class="m-pill on" id="apX">✕ Exit <span id="apXn">KLAX</span></button>'); w.appendChild(apx);
     apn = el('div', 'm-pill apn hide', '<span class="d"></span><span id="apnT">0 on approach</span>'); w.appendChild(apn);
@@ -38,6 +43,8 @@
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.mhz) tune(+b.dataset.mhz, b.dataset.name);
       else if (b.dataset.sq != null) setSq(b.dataset.sq);
+      else if (b.dataset.gn != null) setGain(b.dataset.gn);
+      else if (b.dataset.row) { openRow = openRow === b.dataset.row ? null : b.dataset.row; render(); }
       else if (b.dataset.g) { group = b.dataset.g; render(); }
     };
     apf.onclick = e => { const b = e.target.closest('button'); if (!b || !b.dataset.g) return; group = b.dataset.g; const g = grp(); if (g && g.freqs[0]) tune(g.freqs[0].mhz, g.freqs[0].name); render(); };
@@ -84,6 +91,7 @@
   function centerCur() {
     const a = AP[0], m = M(); if (!a || !m || !m.map) return;
     if (dual() && a.groups && a.groups.length) return focusOn(a);
+    if (!dual()) twoRadios();   // 1.3.4: say why there is no Quick Tune instead of doing nothing
     m.follow = false; m.map.easeTo({ center: [a.lon, a.lat], zoom: Math.max(m.map.getZoom(), a.zoom ? a.zoom - 1.5 : 9.5), duration: 600 });
   }
   function followMap() {
@@ -110,7 +118,7 @@
   }
   async function pollLevel() {
     if (!dual()) { LV = null; return; }
-    try { LV = await j('/api/listen/level'); if (LV.band === 'airband') sqAir = String(LV.squelch); } catch (e) { LV = null; }
+    try { LV = await j('/api/listen/level'); if (LV.band === 'airband') sqAir = String(LV.squelch); if (LV.air_gain != null && !busyGain) gnAir = String(parseFloat(LV.air_gain)); } catch (e) { LV = null; }
     render();
   }
   async function tune(mhz, name) {
@@ -121,8 +129,14 @@
     } catch (e) { flash(e.message); }
     busy = false; pollLevel(); render();
   }
+  let busyGain = false;
+  async function setGain(v) {   // 1.3.4: Quick Tune GAIN chip, applies live (same API as the Listen gear)
+    gnAir = v; openRow = null; busyGain = true; render();
+    try { await j('/api/listen/band', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ band: 'airband', gain: +v }) }); } catch (e) { flash(e.message); }
+    busyGain = false; pollLevel();
+  }
   async function setSq(v) {
-    sqAir = v; render();
+    sqAir = v; openRow = null; render();
     try { await j('/api/listen/band', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ band: 'airband', squelch: +v }) }); } catch (e) { flash(e.message); }
     pollLevel();
   }
@@ -183,7 +197,10 @@
     H.classList.toggle('picker', picker);
     if (picker && a) {
       const cur = air ? mhz : null, gg = grp();
-      const hd = '<div class="lsp-h"><span><b>// Quick tune</b> · ' + (focus ? 'map stays live' : 'follows the map') + '</span><button type="button" class="m-pill on lsp-ap" id="lspAp" aria-label="Nearby airports">' + esc(a.icao) + ' ▾</button></div>';
+      const sqT = (SQ.find(([v]) => v === sqAir) || [0, sqAir])[1], gnT = (GN.find(([v]) => v === gnAir) || [0, gnAir])[1];
+      const chip = (k, lab, val) => '<button type="button" class="m-pill qchip' + (openRow === k ? ' on' : '') + '" data-row="' + k + '" aria-expanded="' + (openRow === k) + '">' + lab + ' <b>' + esc(val) + '</b> ' + (openRow === k ? '▴' : '▾') + '</button>';
+      const hd = '<div class="lsp-h"><span class="lsp-t"><b>// Quick tune</b> · ' + (focus ? 'map stays live' : 'follows the map') + '</span><span class="qrow">' +
+        (gg ? chip('g', 'Gain', gnT) + chip('s', 'SQ', sqT) : '') + '<button type="button" class="m-pill on lsp-ap" id="lspAp" aria-label="Nearby airports">' + esc(a.icao) + ' ▾</button></span></div>';
       if (!gg) {   // 1.3.2: no published frequencies -> no Quick Tune (never invented)
         sheet.innerHTML = hd + '<p class="lsp-n lsp-none">No published tower, ground, approach or ATIS frequencies for ' + esc(a.icao) + ' in the station bank. Quick Tune is off here.</p>';
         $('lspAp').onclick = e => { e.stopPropagation(); ddAnchor = $('lspAp'); ddOpen = !ddOpen; paintDD(); };
@@ -192,7 +209,8 @@
       sheet.innerHTML = hd +
         '<div class="m-seg lsp-tabs">' + a.groups.map(x => '<button type="button" class="m-pill' + (x.id === gg.id ? ' on' : '') + '" data-g="' + esc(x.id) + '">' + esc(SHORT[x.id] || x.label) + '</button>').join('') + '</div>' +
         '<div class="lsp-g">' + gg.freqs.map(f => '<button type="button" data-mhz="' + f.mhz + '" data-name="' + esc(f.name) + '" class="' + (cur && Math.abs(cur - f.mhz) < 0.002 ? 'on' : '') + '"><b>' + f3(f.mhz) + '</b><span>' + esc(f.tag || f.name.replace(new RegExp('^(' + a.icao + '|' + a.icao.replace(/^K/, '') + ') '), '')) + '</span></button>').join('') + '</div>' +
-        '<div class="lsp-sq"><span>Squelch</span><span class="m-seg">' + SQ.map(([v, t]) => '<button type="button" class="m-pill' + (v === sqAir ? ' on' : '') + '" data-sq="' + v + '">' + t + '</button>').join('') + '</span></div>' +
+        (openRow === 'g' ? '<div class="lsp-sq"><span>Gain</span><span class="m-seg">' + GN.map(([v, t]) => '<button type="button" class="m-pill' + (v === gnAir ? ' on' : '') + '" data-gn="' + v + '">' + t + '</button>').join('') + '</span></div>' : '') +
+        (openRow === 's' ? '<div class="lsp-sq"><span>Squelch</span><span class="m-seg">' + SQ.map(([v, t]) => '<button type="button" class="m-pill' + (v === sqAir ? ' on' : '') + '" data-sq="' + v + '">' + t + '</button>').join('') + '</span></div>' : '') +
         '<p class="lsp-n">' + esc(a.name) + ' · ' + (focus ? 'focused' : 'follows the map') + ' · ' + (a.source === 'ourairports' ? 'OurAirports' : 'FAA') + '</p>';
       $('lspAp').onclick = e => { e.stopPropagation(); ddAnchor = $('lspAp'); ddOpen = !ddOpen; paintDD(); };
     }
@@ -239,7 +257,7 @@
     const m = M(); if (!m || !m.map || !m.ready) return setTimeout(hookMap, 500);
     const up = m.update.bind(m);
     m.update = function (list, now) { const r = up(list, now); try { if (focus) markApproach(); } catch (e) {} return r; };
-    m.map.on('click', 'lax', () => { if (dual()) load('KLAX').then(a => a && focusOn(a)); });
+    m.map.on('click', 'lax', () => { if (dual()) load('KLAX').then(a => a && focusOn(a)); else twoRadios(); });
     m.map.on('mouseenter', 'lax', () => { if (dual()) m.map.getCanvas().style.cursor = 'pointer'; });
     m.map.on('mouseleave', 'lax', () => { m.map.getCanvas().style.cursor = ''; });
     addAirportPill(); m.map.on('moveend', followMap); followMap(); render();

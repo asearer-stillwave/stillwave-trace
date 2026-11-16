@@ -114,7 +114,8 @@ echo "Starting ${STATION_NAME} at ${FREQ} gain=${GAIN} -> ${TARGET}" >&2
 case "$DEMOD" in
   wfm) EFF_GAIN="${FM_GAIN:-$GAIN}"; EFF_SQ=0 ;;
   am)  EFF_GAIN="${AIRBAND_GAIN:-40}"; EFF_SQ="${AIRBAND_SQUELCH:-0}" ;;
-  nfm) EFF_GAIN="${NOAA_GAIN:-40}"; EFF_SQ="${NOAA_SQUELCH:-0}" ;;
+  nfm) if [[ "${BAND:-}" == frs ]]; then EFF_GAIN="${FRS_GAIN:-40}"; EFF_SQ="${FRS_SQUELCH:-20}"   # 1.3.6 FRS / GMRS
+       else EFF_GAIN="${NOAA_GAIN:-40}"; EFF_SQ="${NOAA_SQUELCH:-0}"; fi ;;
 esac
 [[ "$EFF_GAIN" =~ ^[0-9]+(\.[0-9]+)?$ ]] || EFF_GAIN="$GAIN"
 [[ "$EFF_SQ" =~ ^[0-9]+$ ]] || EFF_SQ=0

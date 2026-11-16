@@ -1,7 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -62,6 +64,13 @@
     <p class="note" id="sBriV"></p>
   </div>
 
+  <div class="card" id="splCard">
+    <h2>Boot splash</h2>
+    <div class="seg" id="splSel" style="grid-template-columns:repeat(2,minmax(0,1fr))" role="radiogroup" aria-label="Boot splash">
+      <button type="button" data-v="on" role="radio" aria-checked="false">On</button><button type="button" data-v="off" role="radio" aria-checked="false">Off</button></div>
+    <div class="umsg" id="splN" style="margin:.2rem 0 .6rem">Checking…</div>
+    <p class="note">Shows the 10 s boot log and Stillwave radar screen on startup and shutdown. Turn off for plain Linux text boot.</p>
+  </div>
   <details class="card usrc">
     <summary>How Trace turns the screen off</summary>
     <p class="note" id="sHow">—</p>
@@ -145,14 +154,75 @@
 })();
 </script>
 <script>
-// 1.0.8.2 desktop edition: HDMI output is fixed at 720p landscape (Pi 4 limit). Read-only info card.
+// 1.3.6 desktop edition: HDMI resolution 720p | 1080p (Mockup 1). Shown only when /api/display/resolution answers
+// (the handheld answers 404, so no card there). Applies at the next reboot; "Reboot now" uses the power helper.
 (function(){
+  const RES = {'720p': '720p · 1280×720', '1080p': '1080p · 1920×1080'};
   fetch('/api/display/resolution', {cache:'no-store'}).then(r => r.ok ? r.json() : null).then(j => {
-    if(!j || !j.ok) return;
-    const c = document.createElement('div'); c.className = 'card';
-    c.innerHTML = '<h2>HDMI output</h2><div class="seg" id="resSel"><button type="button" class="big on" data-r="720p" disabled>720p &middot; 1280&times;720 landscape</button></div><p class="note" id="resN">Fixed at 720p: the smoothest the Pi 4 can drive the full-screen display.</p>';
-    (document.querySelector('.wrap') || document.body).appendChild(c);
+    if (!j || !j.ok) return;
+    const c = document.createElement('div'); c.className = 'card'; c.id = 'resCard';
+    c.innerHTML = '<h2>HDMI resolution</h2><div class="seg" id="resSel" style="grid-template-columns:repeat(2,minmax(0,1fr))" role="radiogroup" aria-label="HDMI resolution">'
+      + Object.keys(RES).map(k => '<button type="button" class="big" role="radio" data-r="' + k + '">' + RES[k] + '</button>').join('') + '</div>'
+      + '<div class="umsg" id="resM" style="display:flex;align-items:center;justify-content:space-between;gap:14px;margin:.2rem 0 .6rem"><span id="resT"></span><button type="button" class="primary hide" id="resBoot" style="flex:0 0 auto">Reboot now</button></div>'
+      + '<p class="note">720p recommended on Pi 4 · 1080p recommended on Pi 5 / CM5 · keeps 4K TVs at 60 Hz</p>';
+    const ts = document.getElementById('tsCard');
+    if (ts) ts.after(c); else (document.querySelector('.wrap') || document.body).appendChild(c);
+    const spl = document.getElementById('splCard'); if (spl) c.after(spl);
+    const paint = x => {
+      const saved = x.saved_resolution || x.resolution;
+      c.querySelectorAll('#resSel button').forEach(b => { const on = b.dataset.r === saved; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
+      const rb = !!x.reboot_needed, m = c.querySelector('#resM');
+      m.className = 'umsg ' + (rb ? 'warn' : 'ok');
+      c.querySelector('#resT').innerHTML = rb ? '<b>' + saved + ' saved.</b> Takes effect on reboot.' : saved + ' · active now';
+      c.querySelector('#resBoot').classList.toggle('hide', !rb);
+    };
+    paint(j);
+    c.querySelector('#resSel').onclick = e => { const b = e.target.closest('button'); if (!b) return;
+      c.querySelectorAll('#resSel button').forEach(x => x.disabled = true);
+      fetch('/api/display/resolution', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({resolution: b.dataset.r})})
+        .then(r => r.json()).then(x => { if (x.ok) paint(x); else c.querySelector('#resT').textContent = x.error || 'Could not save.'; })
+        .catch(() => { c.querySelector('#resT').textContent = 'The display helper did not answer.'; })
+        .finally(() => c.querySelectorAll('#resSel button').forEach(x => x.disabled = false));
+    };
+    c.querySelector('#resBoot').onclick = () => {
+      // 1.3.7: same flow as top-right Power > Reboot: open the sheet, then its confirm step (Yes, reboot)
+      const P = window.fieldnotePower;
+      if (P && P.ask) { if (P.open) P.open(); P.ask('reboot'); return; }
+      fetch('/api/power/reboot', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({confirm:'reboot'})}).catch(() => {});
+    };
   }).catch(() => {});
+})();
+</script>
+<script>
+// 1.3.6: Boot splash On | Off (was a switch). "On" rebuilds the boot image (about a minute).
+(function(){
+  const sel = document.getElementById('splSel'), n = document.getElementById('splN'); if (!sel) return;
+  let on = null, busy = false, plym = true;
+  const paint = () => {
+    sel.querySelectorAll('button').forEach(b => { const v = on !== null && (b.dataset.v === 'on') === on; b.classList.toggle('on', v); b.setAttribute('aria-checked', String(v)); b.disabled = busy || on === null || (!plym && b.dataset.v === 'on'); });
+  };
+  const say = (t, k) => { n.textContent = t; n.className = 'umsg' + (k ? ' ' + k : ''); };
+  const state = () => say((on ? 'On' : 'Off') + ' · takes effect on next boot', on ? 'ok' : '');
+  async function load(){
+    try { const j = await (await fetch('/api/screen/splash', {cache:'no-store'})).json();
+      if (!j.ok) throw new Error(j.error || '');
+      on = !!j.on; plym = j.plymouth !== false;
+      if (!plym) say('The splash needs Plymouth, which is not installed on this box.', 'warn'); else state();
+    } catch (e) { say('Couldn\u2019t read the splash setting.', 'err'); }
+    paint();
+  }
+  sel.onclick = async e => {
+    const b = e.target.closest('button'); if (!b || busy || on === null) return;
+    const want = b.dataset.v === 'on'; if (want === on) return;
+    busy = true; paint();
+    say(want ? 'Turning the splash on\u2026 this takes about a minute.' : 'Turning the splash off\u2026');
+    try { const j = await (await fetch('/api/screen/splash', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({on: want})})).json();
+      if (!j.ok) throw new Error(j.error || 'failed');
+      on = !!j.on; state();
+    } catch (e) { say('Couldn\u2019t change the splash: ' + (window.traceErr ? traceErr.clean(e.message) : e.message), 'err'); }
+    busy = false; paint();
+  };
+  load();
 })();
 </script>
 </body>

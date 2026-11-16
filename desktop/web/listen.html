@@ -1,7 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
+<style>body.page-listen{min-height:100vh;box-sizing:border-box}   /* 1.3.4: no black band under short content */</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -23,8 +26,8 @@
     <span class="v-live off" id="vLive">Off</span><b id="vWhat">—</b><span class="v-talk" id="vTalk"></span>
     <span class="v-sig" id="vSig" aria-hidden="true"></span><button type="button" class="sm v-stop" id="vStop" aria-label="Stop audio">■ Stop</button>
   </div>
-  <div class="v-sub" role="tablist" id="bands">
-    <button type="button" role="tab" data-b="fm">FM</button><button type="button" role="tab" data-b="airband">Airband</button><button type="button" role="tab" data-b="noaa">NOAA</button>
+  <div class="v-sub four" role="tablist" id="bands">
+    <button type="button" role="tab" data-b="fm">FM</button><button type="button" role="tab" data-b="airband">Airband</button><button type="button" role="tab" data-b="noaa">NOAA</button><button type="button" role="tab" data-b="frs">FRS / GMRS</button>
   </div>
 
   <section id="pfm">
@@ -76,6 +79,26 @@
     </div>
     <div class="v-h v-ph"><h2>Channels</h2></div>
     <div class="v-grid" id="nGrid"></div>
+  </section>
+
+  <!-- 1.3.6: FRS / GMRS walkie-talkie channels (narrow FM, own FRS_* settings; NOAA's are never touched) -->
+  <section id="pfrs" hidden>
+    <div class="card v-tcard">
+      <div class="v-h"><h2>// Walkie-talkie</h2><button type="button" class="sm v-gear" data-band="frs" aria-expanded="false" aria-label="Band settings: gain"><span aria-hidden="true">⚙</span> <span class="v-gv">—</span></button></div>
+      <div class="v-bandset v-gearp" data-band="frs" hidden>
+        <div class="bs-row"><span class="bs-k">Gain</span><span class="v-seg2 bs-gain"></span></div>
+      </div>
+      <div class="v-tune"><button type="button" class="v-step" id="frDn" aria-label="Previous channel">−</button>
+        <div class="v-freq" id="frF">462.5625<small id="frCh">CH 1 · NFM</small></div><button type="button" class="v-step" id="frUp" aria-label="Next channel">+</button></div>
+      <div class="v-steprow"><span class="v-stepk">Squelch</span><span class="v-seg2" id="frSq"><button type="button" data-q="0">Off</button><button type="button" data-q="20">Low</button><button type="button" data-q="50">High</button></span></div>
+      <p class="note v-hint">Same CH 1–22 as Midland, Motorola, Cobra, Rocky Talkie. Listen only · privacy codes not filtered.</p>
+    </div>
+    <div class="frs-g"><h2>CH 1–7 · Shared</h2><span class="frs-b">FRS 2 W · GMRS 5 W</span></div>
+    <div class="frs-grid" id="frG1"></div>
+    <div class="frs-g"><h2>CH 8–14 · FRS</h2><span class="frs-b lo">0.5 W · short range</span></div>
+    <div class="frs-grid" id="frG2"></div>
+    <div class="frs-g"><h2>CH 15–22 · GMRS</h2><span class="frs-b hi">50 W · repeater out</span></div>
+    <div class="frs-grid" id="frG3"></div>
   </section>
 
   <div class="v-near" id="vNear" hidden role="dialog" aria-label="Presets near here"><div class="v-nearl" id="vNearL"></div></div>
@@ -147,6 +170,8 @@ function liveShow(){
   const on = web || pi;
   lv.textContent = on ? 'Live' : (pi === false && piLive && piLive.pi_out && piLive.radio === 'off' ? 'Stopped' : (p.paused ? (userStopped ? 'Stopped' : 'Off') : 'Wait'));
   lv.className = 'v-live' + (on ? '' : ' off');
+  // 1.3.4: one source of truth: when the strip says Off / Stopped, a stale "Reconnecting…" goes away
+  if (!on && p.paused) { const m = document.getElementById('msg'); if (m && m.textContent === 'Reconnecting…') setMsg(''); }
   const stop = web || pi;
   b.textContent = stop ? '■ Stop' : '▶ Play'; b.setAttribute('aria-label', stop ? 'Stop audio' : 'Play audio');
   b.title = pi && !web ? 'Playing on the Pi speaker' : '';
@@ -167,7 +192,7 @@ function freshPlayer(){
   neu.controls = false; neu.hidden = true;   // 1.3: no play bar; playback continues, the strip shows LIVE
   neu.preload = 'none';
   old.replaceWith(neu);
-  neu.addEventListener('error', () => { if (neu.getAttribute('src')) setMsg('Reconnecting…', 'err'); liveShow(); });
+  neu.addEventListener('error', () => { if (neu.getAttribute('src') && !neu.paused && !userStopped) setMsg('Reconnecting…', 'err'); liveShow(); });
   ['playing', 'pause', 'waiting', 'ended', 'emptied'].forEach(t => neu.addEventListener(t, liveShow));
   return neu;
 }
@@ -259,8 +284,8 @@ boot();
 (function(){
   const $ = id => document.getElementById(id);
   // 1.0.9: gain / squelch are saved per band (FM, airband, NOAA) in fm.env; the Band settings card edits the visible band
-  const GAINS = {fm:[['station','Station'],['10','10'],['20','20'],['30','30'],['40','40']], airband:[['20','20'],['30','30'],['40','40'],['49.6','Max']], noaa:[['20','20'],['30','30'],['40','40'],['49.6','Max']]};
-  let L = {airband:[], noaa:[], band:'fm', bands:{}}, band = 'fm', af = 133.9, step = 0.025, edit = false, tuneTo = null;
+  const GAINS = {fm:[['station','Station'],['10','10'],['20','20'],['30','30'],['40','40']], airband:[['20','20'],['30','30'],['40','40'],['49.6','Max']], noaa:[['20','20'],['30','30'],['40','40'],['49.6','Max']], frs:[['20','20'],['30','30'],['40','40'],['49.6','Max']]};
+  let L = {airband:[], noaa:[], frs:[], band:'fm', bands:{}}, band = 'fm', af = 133.9, step = 0.025, edit = false, tuneTo = null;
   const sqOf = b => String(((L.bands||{})[b]||{}).squelch ?? 0);
   // 1.3.1 audio filters (FM: rate / high-pass / low-pass; airband: high-pass / low-pass, default 200-3400 Hz)
   const FOPT = {fm:{rate:[['24000','24k'],['32000','32k'],['44100','44.1k'],['48000','48k']], hp:[['50','50'],['60','60'],['70','70'],['80','80']], lp:[['6000','6k'],['7000','7k'],['8000','8k'],['9000','9k']]},   // 1.3.2 options, defaults 50 / 8k
@@ -306,7 +331,7 @@ boot();
       const r = await fetch('/api/listen/band', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.assign({band: b}, body))});
       const j = await r.json().catch(() => ({})); if(!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
       L.bands = j.bands || L.bands; if (pend[b]) pend[b] = {}; drawSets();
-      setMsg('Saved for ' + ({fm:'FM', airband:'airband', noaa:'NOAA'})[b] + (L.band === b ? '; the stream restarts for a second' : '') + '.', 'ok');
+      setMsg('Saved for ' + ({fm:'FM', airband:'airband', noaa:'NOAA', frs:'FRS / GMRS'})[b] + (L.band === b ? '; the stream restarts for a second' : '') + '.', 'ok');
       if(L.band === b){ if (window.fieldnoteStrip) window.fieldnoteStrip.refresh(); await waitReady(15000); await attach(true); }
     }catch(e){ setMsg(e.message, 'err'); }
   }
@@ -329,15 +354,16 @@ boot();
   function showBand(b){
     band = b; localStorage.setItem('listenBand', b);
     document.querySelectorAll('#bands button').forEach(x => { const on = x.dataset.b === b; x.classList.toggle('on', on); x.setAttribute('aria-selected', on); });
-    ['fm','airband','noaa'].forEach(k => $('p' + k).hidden = k !== b);
-    $('bandT').textContent = {fm:'FM', airband:'airband', noaa:'NOAA'}[b];
+    ['fm','airband','noaa','frs'].forEach(k => $('p' + k).hidden = k !== b);
+    $('bandT').textContent = {fm:'FM', airband:'airband', noaa:'NOAA', frs:'FRS'}[b];
     document.querySelectorAll('.v-gearp').forEach(x => x.hidden = true); document.querySelectorAll('.v-gear').forEach(x => x.setAttribute('aria-expanded', 'false'));
     nearClose(); nowLine();
   }
   // 1.3: the strip always names what is actually tuned (stays "AIRBAND · 128.500" on the FM tab), frequency once
   function nowLine(){
     const c = L.current || {}, f = parseFloat(String(c.frequency||'').replace(/[^0-9.]/g,''));
-    const bn = {fm:'FM', airband:'Airband', noaa:'NOAA'}[L.band] || 'Radio';
+    const bn = {fm:'FM', airband:'Airband', noaa:'NOAA', frs:'FRS'}[L.band] || 'Radio';
+    if (L.band === 'frs' && isFinite(f)) { const c2 = frsList().find(x => Math.abs(x.mhz - f) < 0.0004); $('vWhat').textContent = ((c2 ? 'CH ' + c2.ch + ' · ' : '') + f.toFixed(4) + ' NFM').toUpperCase(); return; }
     $('vWhat').textContent = (bn + (isFinite(f) ? ' · ' + (L.band === 'fm' ? f.toFixed(1) : fmt(f)) : '')).toUpperCase();
   }
   // 1.3: TALKING / QUIET + signal from the level meter (airband / NOAA with squelch on), polled while the page is visible
@@ -435,7 +461,34 @@ boot();
   function nStep(d){ const W = wxList(); if(!W.length) return; let i = W.findIndex(x => Math.abs(x.mhz - nf) < 0.002); i = i < 0 ? 0 : (i + d + W.length) % W.length;
     nf = +W[i].mhz; drawNoaa(); clearTimeout(tuneTo); tuneTo = setTimeout(() => tune(nf, 'nfm', W[i].name, 'noaa'), 600); }
   $('nDn').onclick = () => nStep(-1); $('nUp').onclick = () => nStep(1);
-  function renderAll(){ drawAir(); try { drawFm(); } catch (e) {} try { drawNoaa(); } catch (e) {} grid($('aGrid'), L.airband, 'airband', 'am'); grid($('nGrid'), L.noaa, 'noaa', 'nfm'); nowLine(); }
+  // 1.3.6 FRS / GMRS: big readout, − / + step CH 1 → 22, Off / Low / High squelch (FRS_SQUELCH), 3 channel groups
+  let rf = null;
+  // built-in channel plan, used when the helper's list is not there (same 22 channels as sdr-listen FRS_CHANNELS)
+  const FRS_DEF = [].concat([...Array(7)].map((_, i) => ({ch: i + 1, mhz: +(462.5625 + 0.025 * i).toFixed(4)})), [...Array(7)].map((_, i) => ({ch: i + 8, mhz: +(467.5625 + 0.025 * i).toFixed(4)})), [...Array(8)].map((_, i) => ({ch: i + 15, mhz: +(462.55 + 0.025 * i).toFixed(4)})));
+  const frsList = () => ((L.frs && L.frs.length) ? L.frs : FRS_DEF).slice().sort((a, b) => a.ch - b.ch);
+  function drawFrs(){
+    const C = frsList(); if(!C.length) return;
+    const cf = parseFloat(String((L.current||{}).frequency||'').replace(/[^0-9.]/g,'')), fb = (L.bands||{}).frs || {};
+    if(rf == null) rf = (L.band === 'frs' && isFinite(cf)) ? cf : (fb.mhz || +C[0].mhz);
+    const p = C.find(x => Math.abs(x.mhz - rf) < 0.0004);
+    $('frF').firstChild.nodeValue = rf.toFixed(4); $('frCh').textContent = (p ? 'CH ' + p.ch + ' · ' : '') + 'NFM';
+    const sq = sqOf('frs'); $('frSq').querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.q === sq));
+    [[1, 7, 'frG1'], [8, 14, 'frG2'], [15, 22, 'frG3']].forEach(([a, z, id]) => {
+      const el = $(id); el.innerHTML = '';
+      C.filter(x => x.ch >= a && x.ch <= z).forEach(x => {
+        const btn = document.createElement('button'); btn.type = 'button';
+        btn.className = 'v-pre' + (L.band === 'frs' && Math.abs(cf - x.mhz) < 0.0004 ? ' on' : '');
+        btn.innerHTML = '<b></b><span></span>'; btn.firstChild.textContent = 'CH ' + x.ch; btn.lastChild.textContent = (+x.mhz).toFixed(4);
+        btn.onclick = () => { rf = +x.mhz; tune(+x.mhz, 'nfm', 'CH ' + x.ch, 'frs'); };
+        el.appendChild(btn);
+      });
+    });
+  }
+  function frStep(d){ const C = frsList(); if(!C.length) return; let i = C.findIndex(x => Math.abs(x.mhz - rf) < 0.0004); i = i < 0 ? 0 : (i + d + C.length) % C.length;
+    rf = +C[i].mhz; drawFrs(); clearTimeout(tuneTo); tuneTo = setTimeout(() => tune(rf, 'nfm', 'CH ' + C[i].ch, 'frs'), 600); }
+  $('frDn').onclick = () => frStep(-1); $('frUp').onclick = () => frStep(1);
+  $('frSq').onclick = e => { const x = e.target.closest('button'); if (!x || x.dataset.q === sqOf('frs')) return; saveSet('frs', {squelch: +x.dataset.q}).then(drawFrs); };
+  function renderAll(){ drawAir(); try { drawFm(); } catch (e) {} try { drawNoaa(); } catch (e) {} try { drawFrs(); } catch (e) {} grid($('aGrid'), L.airband, 'airband', 'am'); grid($('nGrid'), L.noaa, 'noaa', 'nfm'); nowLine(); }
   async function load(){
     try{ const r = await fetch('/api/listen', {cache:'no-store'}); L = await r.json(); }catch(e){ }
     const cf = parseFloat(String((L.current||{}).frequency||'').replace(/[^0-9.]/g,''));
@@ -448,7 +501,7 @@ boot();
       const r = await fetch('/api/listen/tune', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({mhz, demod, squelch: demod === 'wfm' ? 0 : +sqOf(b === 'other' ? 'noaa' : b), name: name || '', band: b})});
       const j = await r.json().catch(() => ({}));
       if(!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      if(b === 'airband') af = mhz; if(b === 'fm') ff = mhz; if(b === 'noaa') nf = mhz;
+      if(b === 'airband') af = mhz; if(b === 'fm') ff = mhz; if(b === 'noaa') nf = mhz; if(b === 'frs') rf = mhz;
       await load();
       if(window.sdrMode) window.sdrMode.refresh();
       if(window.fieldnoteStrip) window.fieldnoteStrip.refresh();
@@ -477,7 +530,7 @@ boot();
     showBand(b);
     if(isFinite(qf) && q.get('tune') === '1'){        // Spectrum tap-to-listen (?f=…&tune=1): tune that frequency with the right demod
       const d = qf >= 87.5 && qf <= 108 ? 'wfm' : qf >= 118 && qf <= 137 ? 'am' : 'nfm';
-      if(d === 'wfm') tune(qf, 'wfm', '', 'fm'); else tune(qf, d, '', d === 'am' ? 'airband' : (qf >= 162.39 && qf <= 162.56 ? 'noaa' : 'other'));
+      if(d === 'wfm') tune(qf, 'wfm', '', 'fm'); else tune(qf, d, '', d === 'am' ? 'airband' : (qf >= 162.39 && qf <= 162.56 ? 'noaa' : frsList().some(x => Math.abs(x.mhz - qf) < 0.0004) ? 'frs' : 'other'));
       history.replaceState(null, '', location.pathname);
     }
   });

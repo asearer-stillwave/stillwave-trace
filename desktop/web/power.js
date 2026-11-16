@@ -81,6 +81,10 @@
     if (lastFocus && lastFocus.focus) lastFocus.focus({ preventScroll: true });
   }
   function ask(a) {
+    // 1.3.7: ask() on its own (Settings > Screen > Reboot now) left the sheet hidden; show it like open() does
+    if (ov.classList.contains('hide')) {
+      lastFocus = document.activeElement; ov.classList.remove('hide'); document.documentElement.classList.add('pwr-open');
+    }
     action = a;
     const t = TEXT[a];
     q('#pwrQ').textContent = t.q; q('#pwrQd').textContent = t.d;

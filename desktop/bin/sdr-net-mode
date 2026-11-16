@@ -989,7 +989,7 @@ print(json.dumps({
     "ap_ssid": kv.get("AP_SSID", "") or os.environ.get("AP_SSID_DEFAULT", "Trace"),
     "ap_password_set": bool(kv.get("AP_PASS")),
     "ap_band": "a" if kv.get("AP_BAND") == "a" else "bg",
-    "ap_boot": kv.get("BOOT_AP", "1") != "0",   # 1.3.1: always-hotspot boot unless switched off
+    "ap_boot": kv.get("BOOT_AP", "0") == "1",   # 1.3.4: matches boot (home Wi-Fi first unless BOOT_AP=1)
     "ap_ip": "10.42.0.1",
     "hostname": host,
     "addresses": addrs,
@@ -1150,7 +1150,8 @@ retry_home() {
 boot_restore() {
   log "boot restore begin saved_mode=$(get_kv MODE)"
   # 1.3.1: Trace ALWAYS boots into its hotspot (TRACE-XXXX), so the radio has to be on. BOOT_AP=0 in net.env opts out.
-  local always=1; [[ "$(get_kv BOOT_AP)" == 0 ]] && always=0
+  # 1.3.3 (Searer): default is now home Wi-Fi first (restore the saved mode; hotspot only as the fallback). BOOT_AP=1 restores always-hotspot.
+  local always=0; [[ "$(get_kv BOOT_AP)" == 1 ]] && always=1
   if [[ "$(get_kv WIFI)" == off ]]; then
     if [[ $always -eq 1 ]]; then nmcli radio wifi on >/dev/null 2>&1; set_kv WIFI on; log "boot: Wi-Fi radio was off; turned on for the boot hotspot"
     else nmcli radio wifi off >/dev/null 2>&1; log "boot: Wi-Fi is turned off by the user; leaving it off"; return 0; fi
@@ -1240,7 +1241,7 @@ boot_restore() {
 # (sdr-net-watch.service) brings the hotspot back after 30 s without a Wi-Fi address. Passwords are never printed:
 # they stay inside NetworkManager's profiles.
 # nmcli reports signal as 0-100 %; NetworkManager maps dBm to % as 2*(dBm+100), so dBm = %/2 - 100.
-AUTOJOIN_DBM_DEFAULT=-67
+AUTOJOIN_DBM_DEFAULT=-100   # 1.3.3: home Wi-Fi first at any signal (Searer); set AUTOJOIN_DBM to require a minimum
 autojoin_on() { [[ "$(get_kv AUTOJOIN)" != 0 ]]; }
 autojoin_dbm() { local t; t="$(get_kv AUTOJOIN_DBM)"; [[ "$t" =~ ^-[0-9]{2}$ ]] && echo "$t" || echo "$AUTOJOIN_DBM_DEFAULT"; }
 # prints "dBm<TAB>ssid" for every heard network (best reading per SSID)
@@ -1264,7 +1265,9 @@ autojoin_boot() {   # returns 0 when joined; anything else -> caller starts the 
   autojoin_on || return 1
   thr="$(autojoin_dbm)"
   ensure_nm_owns_wifi "$ifc" >/dev/null 2>&1
-  heard="$(scan_dbm "$ifc")" || return 1
+  local try; for try in 1 2 3; do   # 1.3.3: the first scan right after boot is often empty
+    heard="$(scan_dbm "$ifc")"; [[ -n "$heard" ]] && break; sleep 3
+  done
   printf '%s\n' "$heard" > /run/sdr-net-scan.tsv 2>/dev/null; chmod 600 /run/sdr-net-scan.tsv 2>/dev/null
   while IFS=$'\t' read -r uuid name ssid auto; do
     [[ -z "$ssid" ]] && continue
@@ -1272,7 +1275,11 @@ autojoin_boot() {   # returns 0 when joined; anything else -> caller starts the 
     [[ -z "$d" ]] && continue
     if (( d >= thr && d > bestd )); then bestd=$d; bestu=$uuid; bests=$ssid; fi
   done < <(list_client_profiles)
-  if [[ -z "$bestu" ]]; then log "autojoin: no saved network at ${thr} dBm or better; hotspot"; return 1; fi
+  if [[ -z "$bestu" ]]; then   # 1.3.3: nothing heard -> still try the newest saved network directly before the hotspot
+    IFS=$'\t' read -r bestu name bests auto < <(list_client_profiles | head -1)
+    [[ -z "$bestu" ]] && { log "autojoin: no saved Wi-Fi; hotspot"; return 1; }
+    bestd="?"; log "autojoin: no saved network heard at ${thr} dBm or better; trying '$bests' anyway"
+  fi
   log "autojoin: joining saved '$bests' at ${bestd} dBm (threshold ${thr})"
   hotspot_down "$ifc"
   if activate_and_confirm "$ifc" "$bestu" "${SDR_NET_AUTOJOIN_SECS:-30}"; then

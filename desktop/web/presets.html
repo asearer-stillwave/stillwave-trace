@@ -1,7 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -191,7 +193,7 @@ refresh().catch(e=>setMsg(e.message,'err'));
   const slug = n => (n.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'preset').slice(0, 24);
   async function save(){
     const name = $('npName').value.trim(), mhz = parseFloat($('npMhz').value.replace(',', '.'));
-    const m = t => { $('npMsg').className = 'status np-msg err'; $('npMsg').textContent = t; };
+    const m = t => { $('npMsg').className = 'status np-msg err'; $('npMsg').textContent = (window.traceErr ? traceErr.clean(t) : t); };
     if (!name) return m('Give it a name.');
     if (band === 'fm' && !(mhz >= 87.5 && mhz <= 108)) return m('FM is 87.5 to 108.0 MHz.');
     if (band === 'air' && !(mhz >= 118 && mhz < 137)) return m('Airband is 118.000 to 136.975 MHz.');

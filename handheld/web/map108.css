@@ -192,3 +192,42 @@ html.m108.cardopen .m-gain { visibility: hidden; }
 .m-tl { max-width: calc(100% - 36px - var(--m-tr-w, 220px)); }
 .m-tl .m-count { min-width: 0; max-width: 100%; }
 .m-tl #mCnt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* 1.3.4: Quick Tune GAIN / SQ chips in the header row (approved mockup v4); a chip opens its row under the presets */
+.lsp .lsp-h .lsp-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lsp .qrow { display: flex; gap: 6px; flex: 0 0 auto; }
+.lsp .qchip b { color: var(--signal); margin: 0 2px; } .lsp .qchip.on b { color: inherit; }
+.lsp .lsp-sq .m-seg { min-width: 62%; } .lsp .lsp-sq .m-seg .m-pill { flex: 1; justify-content: center; }
+/* 1.3.4: one radio set up -> tapping the airport says how to get Quick Tune */
+.qtn { position: absolute; z-index: 11; left: 12px; right: 12px; bottom: 12px; max-width: 680px; margin: 0 auto; box-sizing: border-box; display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; border-radius: 14px; background: rgba(11, 15, 12, .94); border: 1px solid #f5a524; font-family: var(--mono); font-size: 14px; line-height: 1.45; letter-spacing: .06em; color: var(--paper); text-transform: uppercase; }
+.qtn b { color: #f5a524; letter-spacing: .12em; } .qtn span { flex: 1; min-width: 0; } .qtn .m-pill { white-space: nowrap; text-decoration: none; }
+.qtn.hide { display: none; }
+
+/* ---------- 1.3.6 #9: FM towers (towers.js) ---------- */
+.m-pill.tw .ti { width: 14px; height: 14px; display: inline-block; vertical-align: -2px; margin-right: 4px; }
+.m-pill.tw.on { color: #fb7185; border-color: #fb7185; box-shadow: 0 0 16px rgba(251,113,133,.45); }
+html.m108 .tcard { position: absolute; left: 10px; right: 10px; bottom: 76px; z-index: 9; max-width: 640px; margin: 0 auto;
+  background: rgba(11,15,12,.86); border: 1px solid #fb7185; border-radius: 14px; padding: 10px 12px 12px; box-shadow: 0 0 14px rgba(251,113,133,.28); font-family: var(--mono); }
+.tcard .th { display: flex; align-items: center; gap: 10px; }
+.tcard .th b { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 700 17px/1.1 var(--mono); letter-spacing: .06em; color: #e7f5ec; text-transform: uppercase; white-space: nowrap; }
+.tcard .th b em { font-style: normal; color: #fb7185; }
+.tcard .th button { flex: 0 0 auto; width: 36px; height: 36px; border-radius: 8px; background: rgba(11,15,12,.7); border: 1px solid #fb7185; color: #fb7185; font: 700 13px var(--mono); }
+.tcard .ts { margin: 4px 0 8px; font-size: 11px; letter-spacing: .12em; color: rgba(163,181,169,.95); text-transform: uppercase; }
+.tcard .tco { display: flex; gap: 6px; overflow: hidden; margin: 0 0 9px; }
+.tcard .tco.all { flex-wrap: wrap; max-height: 40vh; overflow-y: auto; }
+.tcard .tco button { flex: 0 0 auto; height: 40px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(251,113,133,.35); background: rgba(20,28,23,.9);
+  color: #e7f5ec; font: 700 12px var(--mono); letter-spacing: .06em; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; }
+.tcard .tco button small { font-size: 9.5px; letter-spacing: .1em; color: rgba(163,181,169,.9); }
+.tcard .tco button.on { border-color: #fb7185; color: #fb7185; box-shadow: 0 0 10px rgba(251,113,133,.4); }
+.tcard .tco .more { color: rgba(163,181,169,.95); }
+.tcard .agrid { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1.1fr; gap: 4px 8px; margin: 0 0 10px; }
+.tcard dt { font: 600 9.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: rgba(163,181,169,.9); margin: 0; }
+.tcard dd { font: 700 13.5px var(--mono); color: #e7f5ec; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tcard .tgo { display: flex; gap: 8px; align-items: stretch; }
+.tcard .tgo button { flex: 1 1 auto; min-height: 50px; border-radius: 12px; background: var(--signal); color: #06100a; border: 0;
+  font: 800 15px var(--mono); letter-spacing: .12em; text-transform: uppercase; box-shadow: 0 0 14px rgba(74,222,128,.45); }
+.tcard .tgo button.cn { flex: 0 0 auto; padding: 0 16px; background: rgba(20,28,23,.9); color: #e7f5ec; border: 1px solid rgba(163,181,169,.5); box-shadow: none; }
+.tcard .tnote { margin: 8px 0 0; font-size: 11px; line-height: 1.45; letter-spacing: .04em; color: rgba(163,181,169,.95); }
+.tcard .tnote:empty { display: none; }
+.tcard .tnote b { color: var(--signal); }

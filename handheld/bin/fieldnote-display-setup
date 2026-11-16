@@ -79,6 +79,7 @@ while [[ $# -gt 0 ]]; do
     --hide-cursor) CURSOR_ONLY=hide ;;
     --show-cursor) CURSOR_ONLY=show ;;
     --no-restart) NO_RESTART=1 ;;
+    --refresh-launcher) CURSOR_ONLY=launcher ;;   # 1.3.6: rewrite /usr/local/bin/fieldnote-kiosk only (used by --upgrade)
     -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
@@ -471,12 +472,21 @@ fi
 mkdir -p "$PROFILE/Default"
 say "starting $BROWSER (snap=$SNAP) profile=$PROFILE url=$URL"
 
+# 1.3.6: exact panel geometry, 1:1 pixels, no white/edge gap. Portrait 720x1280 (rotation is applied by the
+# kernel/overlay before this runs). Touch kiosk: invisible pointer for Chromium too.
+W=720; H=1280
+m="$(for c in /sys/class/drm/card*-DSI-*/; do [[ "$(cat "$c/status" 2>/dev/null)" == connected ]] && head -n1 "$c/modes" 2>/dev/null && break; done)"
+[[ "$m" =~ ^([0-9]+)x([0-9]+) ]] && { W=${BASH_REMATCH[1]}; H=${BASH_REMATCH[2]}; }
+(( W > H )) && { t=$W; W=$H; H=$t; }            # handheld is portrait
+export XCURSOR_THEME=fieldnote-blank XCURSOR_SIZE=1
 # shellcheck disable=SC2054  # the comma in --disable-features is intended
 FLAGS=(--kiosk --user-data-dir="$PROFILE" --noerrdialogs --disable-infobars --no-first-run
        --disable-session-crashed-bubble --disable-features=Translate,TranslateUI
        --password-store=basic --check-for-update-interval=31536000
        --overscroll-history-navigation=0 --disable-pinch --touch-events=enabled
-       --autoplay-policy=no-user-gesture-required)
+       --autoplay-policy=no-user-gesture-required
+       --default-background-color=000000ff --force-dark-mode --blink-settings=preferredColorScheme=0
+       --start-fullscreen --window-position=0,0 --window-size="$W,$H" --force-device-scale-factor=1)  # 1.3.4: no white frame before the page paints
 [[ -n "${WAYLAND_DISPLAY:-}" ]] && FLAGS+=(--ozone-platform=wayland)
 # 1.2.0 keyboard: make sure the US keymap env reaches the browser too (see desktop K830 Shift fix; kbd.js fallback)
 export XKB_DEFAULT_RULES="${XKB_DEFAULT_RULES:-evdev}" XKB_DEFAULT_MODEL="${XKB_DEFAULT_MODEL:-pc105}" XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-us}"
@@ -614,6 +624,10 @@ UtmpMode=user
 Environment=XDG_SESSION_TYPE=wayland
 # 1.1.0: explicit US keyboard map; without it some Bluetooth keyboards (Logitech K830) lost Shift in cage
 Environment=XKB_DEFAULT_RULES=evdev XKB_DEFAULT_MODEL=pc105 XKB_DEFAULT_LAYOUT=us XKB_DEFAULT_OPTIONS=
+# 1.3.4: wait for the UI BEFORE cage takes the screen, so the boot splash stays up (plymouth quit --retain-splash)
+# instead of cage's gray background and a white browser page. Gives up after 120 s and starts anyway.
+ExecStartPre=-/bin/sh -c 'i=0; while [ \$\$i -lt 120 ]; do curl -sf --max-time 2 http://localhost/health >/dev/null 2>&1 && exit 0; i=\$\$((i+1)); sleep 1; done; exit 0'
+TimeoutStartSec=200
 ExecStart=$cage_bin -d -s -- /usr/local/bin/fieldnote-kiosk
 Restart=always
 RestartSec=3
@@ -758,7 +772,7 @@ hide_cursor() { # returns 0 if anything changed
 ExecStartPre=-/usr/local/bin/fieldnote-kiosk-cursor
 Environment=XCURSOR_PATH=/var/snap/chromium/common/fieldnote-cursor:/usr/local/share/fieldnote-cursor
 Environment=XCURSOR_THEME=fieldnote-blank
-Environment=XCURSOR_SIZE=24
+Environment=XCURSOR_SIZE=1
 EOF
   if install_if_changed "$CURSOR_DROPIN" "$tmp" 644; then changed=1; fi
   set_state CURSOR hidden
@@ -861,6 +875,10 @@ banner() {
   echo "=================================================================="
 }
 
+if [[ "$CURSOR_ONLY" == launcher ]]; then
+  [[ -f "$LAUNCHER" ]] && write_launcher || say "no kiosk launcher installed; nothing to refresh"
+  exit 0
+fi
 if [[ -n "$CURSOR_ONLY" ]]; then
   # cursor only: config.txt, the kiosk unit, the launcher and everything else stay exactly as they are
   if [[ "$CURSOR_ONLY" == hide ]]; then

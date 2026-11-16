@@ -348,7 +348,7 @@ body {
 /* -- bottom tab bar: navigation only (never changes the SDR mode) -- */
 .qtabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 900;
-  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px;
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px;   /* 1.3.4: one column per tab (Scan removed in 1.3.2 left a gap) */
   padding: 6px max(6px, env(safe-area-inset-right, 0px)) max(6px, env(safe-area-inset-bottom, 0px)) max(6px, env(safe-area-inset-left, 0px));
   background: rgba(10, 17, 27, .98); border-top: 1px solid var(--line);
   box-shadow: 0 -6px 18px rgba(0, 0, 0, .25);
@@ -1417,3 +1417,47 @@ html[data-ts=xl] .sb-dd, html[data-ts=large] .sb-dd { flex: 0 0 auto; width: 100
 .aj-bars i.g { background: var(--signal, #4ade80); } .aj-bars i.w { background: #facc15; }
 .aj-s.joined { color: var(--signal, #4ade80); } .aj-s.weak { color: #facc15; }
 @media (max-width: 430px) { .aj-row { flex-wrap: wrap; } .aj-m { order: 3; flex-basis: 100%; } }
+
+/* 1.3.4: shared error card (nav.js traceErr) */
+.ec { border: 1px solid rgba(245, 165, 36, .55); background: rgba(245, 165, 36, .06); border-radius: 14px; padding: 14px 16px; margin: .6rem 0 1rem; }
+.ec h3 { margin: 0 0 4px; color: #f5a524; font: 700 15px var(--mono, monospace); letter-spacing: .12em; text-transform: uppercase; }
+.ec p { margin: 0 0 12px; color: var(--paper); font-size: 14px; line-height: 1.45; }
+.ec .ec-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.ec details { margin-top: 12px; } .ec summary { cursor: pointer; color: var(--static); font: 700 12px var(--mono, monospace); letter-spacing: .12em; text-transform: uppercase; }
+.ec pre { white-space: pre-wrap; word-break: break-all; background: #060908; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 8px 0 0; color: var(--static); font: 12px/1.4 var(--mono, monospace); text-transform: none; }
+.m-count.m-nodata { border-color: #f5a524; color: var(--paper); } .m-count.m-nodata #mCnt { letter-spacing: .05em; } html.kiosk .m-count.m-nodata #mCnt { font-size: 12px; } .m-count.m-nodata .d { background: #f5a524; box-shadow: none; } .m-count.m-nodata b { color: #f5a524; }
+
+/* ---------- 1.3.6 #8: SDR chips stay on ONE row at every text size ---------- */
+.qs-jobs, .qs-jobs.multi { flex-wrap: nowrap; }
+.qs-jobs.multi { flex: 1 1 auto; min-width: 0; max-width: none; }
+.qs-jobs .qs-job, .qs-jobs.multi .qs-job { flex: 0 1 auto; min-width: 0; max-width: none; overflow: hidden; }
+.qs-chip .qs-txt { min-width: 0; overflow: hidden; }
+.qs-chip .qs-k, .qs-chip .qs-v, .qs-net .qs-v, .qs-aud .qs-v, .qs-net .qs-k, .qs-aud .qs-k { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.qs-net, .qs-aud { min-width: 0; overflow: hidden; }
+.qs-dot.num b { display: none; }   /* desktop: the plain status dot + full "SDR 1 · …" label */
+.qs-jobs.multi .qs-dot.num b { font: 800 12px/1 var(--mono, monospace); color: #06100a; letter-spacing: 0; }
+@media (max-width: 999px) {
+  .qs-jobs.multi .qs-job { padding: 0 8px; gap: 6px; }
+  .qs-jobs.multi .qs-dot.num { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; background: var(--green, #4ade80); }
+  .qs-jobs.multi .qs-sdr.err .qs-dot.num { background: #f87171; box-shadow: none; }
+  .qs-jobs.multi .qs-sdr.warn .qs-dot.num { background: #facc15; }
+  .qs-jobs.multi .qs-dot.num:not(.ok):not(.warn):not(.err) { background: #5f6f84; }
+  .qs-jobs.multi .qs-kn { display: none; }
+  .qs-jobs.multi .qs-dot.num b { display: inline; }
+  .qs-net { flex: 0 1 auto; max-width: 25%; }
+  .qs-net .qs-ico { display: none; }
+  .qs-aud { flex: 0 1 auto; max-width: 21%; }
+}
+
+/* ---------- 1.3.6 #10: FRS / GMRS tab (listen.html #pfrs) ---------- */
+#bands.four button { letter-spacing: .03em !important; padding-left: .2rem !important; padding-right: .2rem !important; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.frs-g { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 1rem 0 .5rem; }
+.frs-g h2 { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frs-b { flex: 0 0 auto; font-family: var(--mono); font-weight: 700; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid rgba(74,222,128,.45); color: var(--signal, #4ade80); white-space: nowrap; }
+.frs-b.lo { border-color: rgba(245,165,36,.55); color: #f5a524; } .frs-b.hi { border-color: rgba(125,211,252,.55); color: #7dd3fc; }
+.frs-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; }
+html.kiosk:not(.hdmi) .page-listen .frs-grid .v-pre { min-height: 74px; padding: .55rem .6rem; align-items: flex-start; }
+.frs-grid .v-pre b { white-space: nowrap; } .frs-grid .v-pre span { white-space: nowrap; letter-spacing: .02em !important; overflow: hidden; text-overflow: ellipsis; }
+html[data-ts=xl] .frs-grid, html[data-ts=large] .frs-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 999px) { #bands.four button { font-size: .8em; letter-spacing: 0 !important; } }

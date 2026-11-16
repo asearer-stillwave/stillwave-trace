@@ -1,11 +1,15 @@
-# Stillwave Trace boot / shutdown screen (Plymouth script plugin).
-# 1.3 sequence. Boot: console (systemd status lines) -> STILLWAVE screen -> TRACE "starting up" (until the kiosk draws).
-# Shutdown: console -> shutdown screen with "SAFE TO UNPLUG WHEN DARK" and a 5 s countdown (sdr-shutdown-screen.service
-# sends TRACE-COUNTDOWN and holds poweroff for 5 s) -> off. Nothing here touches the display chip (0x45) or the backlight.
-# Text is drawn from bundled glyph pictures (g<N>.png, JetBrains Mono): no font plugin needed in the initramfs.
-Window.SetBackgroundTopColor(0.043, 0.059, 0.047);
-Window.SetBackgroundBottomColor(0.043, 0.059, 0.047);
-
+# Stillwave Trace boot / shutdown screen (Plymouth script plugin). 1.3.4 sequence:
+# Boot:     full-screen green console log (about 10 s) -> branded splash (radar sweep, STILLWAVE / TRACE / SDR FIELD STATION).
+#           The splash stays up until plymouth quits; plymouth-quit is held until the splash has shown about 20 s in total
+#           (sdr-splash drop-in, minimum only) and --retain-splash keeps the last frame until the kiosk draws.
+# Shutdown/reboot (1.3.5): green console log from the first frame, typed fast (about 2-3 s for the whole list).
+#           sdr-shutdown-screen holds power-off until plymouthd has been up about 3 s (never longer) so it is seen.
+# The log lines are a fixed, representative Trace boot/shutdown list typed out about 0.16 s per line (systemd's own
+# plymouth status strings are not readable as text); messages sent with "plymouth display-message" are added live.
+# Text is drawn from bundled glyph pictures (s<N>.png 8x16 / g<N>.png 12x24 DejaVu Sans Mono, Trace green, 1:1): no font plugin.
+# Nothing here touches the display chip (0x45) or the backlight.
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
 W = Window.GetWidth();
 H = Window.GetHeight();
 mode = Plymouth.GetMode();
@@ -13,29 +17,21 @@ down = (mode == "shutdown" || mode == "reboot");
 # Desktop edition: landscape screens (HDMI 16:9) use the 1920x1080 art, radar center (640, 540).
 wide = (W > H);
 if (wide) {
-  art_w = 1920; art_h = 1080; rcx = 640; rcy = 540; cap_y = 760;
-  if (down) { img_a = "bg-wide-shutdown.png"; } else { img_a = "bg-wide-stillwave.png"; }
-  img_b = "bg-wide.png";
+  art_w = 1920; art_h = 1080; rcx = 640; rcy = 540;
+  if (mode == "reboot") img_a = "bg-wide-reboot.png"; else if (down) img_a = "bg-wide-shutdown.png"; else img_a = "bg-wide-stillwave.png";
 } else {
-  art_w = 720; art_h = 1280; rcx = 360; rcy = 500; cap_y = 1120;
-  if (down) { img_a = "bg-shutdown.png"; } else { img_a = "bg-stillwave.png"; }
-  img_b = "bg.png";
+  art_w = 720; art_h = 1280; rcx = 360; rcy = 500;
+  if (mode == "reboot") img_a = "bg-reboot.png"; else if (down) img_a = "bg-shutdown.png"; else img_a = "bg-stillwave.png";
 }
 fun fit(img) {
   local.s = Math.Min(W / img.GetWidth(), H / img.GetHeight());
   return img.Scale(Math.Int(img.GetWidth() * s), Math.Int(img.GetHeight() * s));
 }
-fun place(sp, img, z) {
-  sp.SetImage(img);
-  sp.SetPosition(Math.Int((W - img.GetWidth()) / 2), Math.Int((H - img.GetHeight()) / 2), z);
-  sp.SetOpacity(0);
-}
 s = Math.Min(W / art_w, H / art_h);
 bx = Math.Int((W - art_w * s) / 2);
 by = Math.Int((H - art_h * s) / 2);
-bg_a = Sprite(); place(bg_a, fit(Image(img_a)), 0);      # boot: STILLWAVE   / shutdown: the shutdown screen
-bg_b = Sprite(); place(bg_b, fit(Image(img_b)), 0);      # boot: TRACE starting up
-
+bg_img = fit(Image(img_a));
+bg_a = Sprite(bg_img); bg_a.SetPosition(Math.Int((W - bg_img.GetWidth()) / 2), Math.Int((H - bg_img.GetHeight()) / 2), 0); bg_a.SetOpacity(0);
 cx = bx + rcx * s;
 cy = by + rcy * s;
 sweep_image = Image("sweep.png");
@@ -50,98 +46,266 @@ hub_sprite = Sprite(hub_image.Scale(hw, hw));
 hub_sprite.SetPosition(Math.Int(cx - hw / 2), Math.Int(cy - hw / 2), 2);
 hub_sprite.SetOpacity(0);
 
-# countdown caption (shutdown)
-cdp = "cd"; if (wide) cdp = "cdw";
-for (i = 0; i < 6; i++) cd[i] = Image(cdp + i + ".png").Scale(Math.Int(720 * s), Math.Int(40 * s));
-cd_sprite = Sprite();
-cd_sprite.SetOpacity(0);
-
-# ---- console: glyph pictures, newest line at the bottom ----
+# ---- console: glyph pictures, scrolls up once the screen is full ----
 ALL = " !#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~";
-for (i = 0; i < 93; i++) glyph[ALL.CharAt(i)] = Image("g" + i + ".png");
-ok_image = Image("ok.png");
-gs = Math.Min(W / 720, H / 1280);
-if (W > H) gs = H / 1080;
-if (gs < 0.7) gs = 0.7;
-CW = Math.Int(14 * gs); CH = Math.Int(28 * gs);
-if (CW != 14 || CH != 28) { for (i = 0; i < 93; i++) glyph[ALL.CharAt(i)] = glyph[ALL.CharAt(i)].Scale(CW, CH); ok_image = ok_image.Scale(CW * 8, CH); }
-COLS = Math.Int((W - 2 * CW) / CW) - 8;
-ROWS = Math.Min(40, Math.Int((H - 2 * CH) / CH));
+# 1.3.6: glyphs are drawn 1:1, never scaled: 8x16 cells (s<N>.png) when the long side is under 1600 px
+# (720x1280 portrait, 1280x720 HDMI), 12x24 (g<N>.png) on 1920x1080 and larger. plymouthd DeviceScale=1 keeps it 1:1.
+big = (Math.Max(W, H) >= 1600);
+if (big) { gp = "g"; CW = 12; CH = 24; ok_image = Image("ok.png"); cursor_image = Image("cursor.png"); }
+else { gp = "s"; CW = 8; CH = 16; ok_image = Image("ok8.png"); cursor_image = Image("cursor8.png"); }
+for (i = 0; i < 93; i++) glyph[ALL.CharAt(i)] = Image(gp + i + ".png");
+COLS = Math.Min(100, Math.Int((W - 2 * CW) / CW) - 9);
+ROWS = Math.Min(60, Math.Int((H - 2 * CH) / CH));
 for (r = 0; r < ROWS; r++) {
   okspr[r] = Sprite(); okspr[r].SetPosition(CW, CH + r * CH, 10); okspr[r].SetOpacity(0);
-  for (c = 0; c < COLS; c++) { cell[r * COLS + c] = Sprite(); cell[r * COLS + c].SetPosition(CW * 9 + c * CW, CH + r * CH, 10); }
+  for (c = 0; c < COLS; c++) { cell[r * COLS + c] = Sprite(); cell[r * COLS + c].SetPosition(CW * 10 + c * CW, CH + r * CH, 10); cell[r * COLS + c].SetOpacity(0); }
 }
+cursor_sprite = Sprite(cursor_image); cursor_sprite.SetOpacity(0);
+
+boot_line[0] = "Started systemd-journald.service - Journal";
+boot_line[1] = "Mounted sys-kernel-config.mount - Kernel Config";
+boot_line[2] = "Finished systemd-modules-load.service - Modules";
+boot_line[3] = "Finished systemd-fsck-root.service - Root fsck";
+boot_line[4] = "Mounted boot-firmware.mount - /boot/firmware";
+boot_line[5] = "Finished systemd-remount-fs.service - Remount FS";
+boot_line[6] = "Started systemd-udevd.service - Device Manager";
+boot_line[7] = "Finished systemd-random-seed.service - Load Seed";
+boot_line[8] = "Reached target local-fs.target - Local FS";
+boot_line[9] = "Finished systemd-tmpfiles-setup.service";
+boot_line[10] = "Started systemd-timesyncd.service - Time Sync";
+boot_line[11] = "Reached target sysinit.target - System Init";
+boot_line[12] = "Found device TRACE001 - RTL2832U DVB-T (bus 001)";
+boot_line[13] = "Found device TRACE002 - RTL2832U DVB-T (bus 003)";
+boot_line[14] = "Found device vc4-drm - HDMI display (HDMI-A-1)";
+boot_line[15] = "Reached target sound.target - Sound Card";
+boot_line[16] = "Started dbus.service - D-Bus System Message Bus";
+boot_line[17] = "Listening on avahi-daemon.socket - Avahi Socket";
+boot_line[18] = "Started bluetooth.service - Bluetooth service";
+boot_line[19] = "Reached target bluetooth.target - Bluetooth";
+boot_line[20] = "Started wpa_supplicant.service - WPA supplicant";
+boot_line[21] = "Started NetworkManager.service - Network Manager";
+boot_line[22] = "Started systemd-logind.service - User Login";
+boot_line[23] = "Started avahi-daemon.service - mDNS/DNS-SD";
+boot_line[24] = "Started ModemManager.service - Modem Manager";
+boot_line[25] = "Started rpi-eeprom-update.service - EEPROM check";
+boot_line[26] = "Started sdr-psu.service - USB power budget";
+boot_line[27] = "Started sdr-usb-reset.service - SDR USB reset";
+boot_line[28] = "Started sdr-dongles.service - Assign SDR roles";
+boot_line[29] = "Reached target network.target - Network";
+boot_line[30] = "Started NetworkManager-wait-online.service";
+boot_line[31] = "Started sdr-net-mode.service - Home Wi-Fi/hotspot";
+boot_line[32] = "Reached target network-online.target";
+boot_line[33] = "Started ssh.service - OpenBSD Secure Shell";
+boot_line[34] = "Started cron.service - Background job daemon";
+boot_line[35] = "Started pipewire.service - PipeWire Multimedia";
+boot_line[36] = "Started wireplumber.service - Session Manager";
+boot_line[37] = "Started pipewire-pulse.service - Pulse server";
+boot_line[38] = "Started icecast2.service - Icecast streaming";
+boot_line[39] = "Started nginx.service - Web server (port 80)";
+boot_line[40] = "Started sdr-adsb.service - ADS-B decoder";
+boot_line[41] = "Started sdr-ais.service - AIS decoder";
+boot_line[42] = "Started sdr-fm.service - Radio / airband";
+boot_line[43] = "Started sdr-maps.service - Offline map tiles";
+boot_line[44] = "Started sdr-web.service - Trace web UI";
+boot_line[45] = "Started sdr-bt.service - Bluetooth audio";
+boot_line[46] = "Started sdr-level.service - Audio level meter";
+boot_line[47] = "Started sdr-power.service - Power menu";
+boot_line[48] = "Started getty@tty1.service - Getty on tty1";
+boot_line[49] = "Reached target multi-user.target";
+boot_line[50] = "Started fieldnote-kiosk.service - Trace display";
+boot_line[51] = "Reached target graphical.target";
+boot_line_n = 52;
+
+shut_line[0] = "Stopping fieldnote-kiosk.service - Trace display";
+shut_line[1] = "Stopped fieldnote-kiosk.service - Trace display";
+shut_line[2] = "Stopping sdr-power.service - Power menu";
+shut_line[3] = "Stopped sdr-power.service - Power menu";
+shut_line[4] = "Stopped sdr-level.service - Audio level meter";
+shut_line[5] = "Stopped sdr-bt.service - Bluetooth audio";
+shut_line[6] = "Stopping sdr-web.service - Trace web UI";
+shut_line[7] = "Stopped sdr-web.service - Trace web UI";
+shut_line[8] = "Stopped sdr-maps.service - Offline map tiles";
+shut_line[9] = "Stopping sdr-ais.service - AIS decoder";
+shut_line[10] = "Stopped sdr-ais.service - AIS decoder";
+shut_line[11] = "Stopping sdr-fm.service - Radio / airband";
+shut_line[12] = "Stopped sdr-fm.service - Radio / airband";
+shut_line[13] = "Stopping sdr-adsb.service - ADS-B decoder";
+shut_line[14] = "Stopped sdr-adsb.service - ADS-B decoder";
+shut_line[15] = "Released rtl-sdr TRACE001 and TRACE002";
+shut_line[16] = "Stopped icecast2.service - Icecast streaming";
+shut_line[17] = "Stopped nginx.service - Web server (port 80)";
+shut_line[18] = "Stopped pipewire-pulse.service - Pulse server";
+shut_line[19] = "Stopped wireplumber.service - Session Manager";
+shut_line[20] = "Stopped pipewire.service - PipeWire Multimedia";
+shut_line[21] = "Stopped cron.service - Background job daemon";
+shut_line[22] = "Stopped avahi-daemon.service - mDNS/DNS-SD";
+shut_line[23] = "Stopped ssh.service - OpenBSD Secure Shell";
+shut_line[24] = "Stopped sdr-net-mode.service - Home Wi-Fi/hotspot";
+shut_line[25] = "Stopped target network-online.target";
+shut_line[26] = "Stopping NetworkManager.service - Network Manager";
+shut_line[27] = "Stopped NetworkManager.service - Network Manager";
+shut_line[28] = "Stopped wpa_supplicant.service - WPA supplicant";
+shut_line[29] = "Stopped target network.target - Network";
+shut_line[30] = "Stopped bluetooth.service - Bluetooth service";
+shut_line[31] = "Stopped target bluetooth.target - Bluetooth";
+shut_line[32] = "Stopped systemd-logind.service - User Login";
+shut_line[33] = "Stopped dbus.service - D-Bus System Message Bus";
+shut_line[34] = "Stopped sdr-dongles.service - Assign SDR roles";
+shut_line[35] = "Stopped sdr-psu.service - USB power budget";
+shut_line[36] = "Stopped systemd-timesyncd.service - Time Sync";
+shut_line[37] = "Stopped target sound.target - Sound Card";
+shut_line[38] = "Stopped target sysinit.target - System Init";
+shut_line[39] = "Stopped systemd-random-seed.service - Save Seed";
+shut_line[40] = "Unmounting boot-firmware.mount - /boot/firmware";
+shut_line[41] = "Unmounted boot-firmware.mount - /boot/firmware";
+shut_line[42] = "Stopped target local-fs.target - Local FS";
+shut_line[43] = "Stopped systemd-journald.service - Journal";
+shut_line[44] = "Reached target shutdown.target - System Shutdown";
+shut_line[45] = "Reached target final.target - Late Shutdown";
+shut_line[46] = "Starting systemd-poweroff.service - Power Off";
+shut_line[47] = "Finished systemd-poweroff.service - Power Off";
+shut_line[48] = "Reached target poweroff.target - System Power Off";
+shut_line[49] = "~systemd-shutdown: Syncing filesystems and devices";
+shut_line[50] = "~systemd-shutdown: Remounting / read-only";
+shut_line[51] = "~reboot: Power down";
+shut_line_n = 52;
+
+reb_line[0] = "Stopping fieldnote-kiosk.service - Trace display";
+reb_line[1] = "Stopped fieldnote-kiosk.service - Trace display";
+reb_line[2] = "Stopping sdr-power.service - Power menu";
+reb_line[3] = "Stopped sdr-power.service - Power menu";
+reb_line[4] = "Stopped sdr-level.service - Audio level meter";
+reb_line[5] = "Stopped sdr-bt.service - Bluetooth audio";
+reb_line[6] = "Stopping sdr-web.service - Trace web UI";
+reb_line[7] = "Stopped sdr-web.service - Trace web UI";
+reb_line[8] = "Stopped sdr-maps.service - Offline map tiles";
+reb_line[9] = "Stopping sdr-ais.service - AIS decoder";
+reb_line[10] = "Stopped sdr-ais.service - AIS decoder";
+reb_line[11] = "Stopping sdr-fm.service - Radio / airband";
+reb_line[12] = "Stopped sdr-fm.service - Radio / airband";
+reb_line[13] = "Stopping sdr-adsb.service - ADS-B decoder";
+reb_line[14] = "Stopped sdr-adsb.service - ADS-B decoder";
+reb_line[15] = "Released rtl-sdr TRACE001 and TRACE002";
+reb_line[16] = "Stopped icecast2.service - Icecast streaming";
+reb_line[17] = "Stopped nginx.service - Web server (port 80)";
+reb_line[18] = "Stopped pipewire-pulse.service - Pulse server";
+reb_line[19] = "Stopped wireplumber.service - Session Manager";
+reb_line[20] = "Stopped pipewire.service - PipeWire Multimedia";
+reb_line[21] = "Stopped cron.service - Background job daemon";
+reb_line[22] = "Stopped avahi-daemon.service - mDNS/DNS-SD";
+reb_line[23] = "Stopped ssh.service - OpenBSD Secure Shell";
+reb_line[24] = "Stopped sdr-net-mode.service - Home Wi-Fi/hotspot";
+reb_line[25] = "Stopped target network-online.target";
+reb_line[26] = "Stopping NetworkManager.service - Network Manager";
+reb_line[27] = "Stopped NetworkManager.service - Network Manager";
+reb_line[28] = "Stopped wpa_supplicant.service - WPA supplicant";
+reb_line[29] = "Stopped target network.target - Network";
+reb_line[30] = "Stopped bluetooth.service - Bluetooth service";
+reb_line[31] = "Stopped target bluetooth.target - Bluetooth";
+reb_line[32] = "Stopped systemd-logind.service - User Login";
+reb_line[33] = "Stopped dbus.service - D-Bus System Message Bus";
+reb_line[34] = "Stopped sdr-dongles.service - Assign SDR roles";
+reb_line[35] = "Stopped sdr-psu.service - USB power budget";
+reb_line[36] = "Stopped systemd-timesyncd.service - Time Sync";
+reb_line[37] = "Stopped target sound.target - Sound Card";
+reb_line[38] = "Stopped target sysinit.target - System Init";
+reb_line[39] = "Stopped systemd-random-seed.service - Save Seed";
+reb_line[40] = "Unmounting boot-firmware.mount - /boot/firmware";
+reb_line[41] = "Unmounted boot-firmware.mount - /boot/firmware";
+reb_line[42] = "Stopped target local-fs.target - Local FS";
+reb_line[43] = "Stopped systemd-journald.service - Journal";
+reb_line[44] = "Reached target shutdown.target - System Shutdown";
+reb_line[45] = "Reached target final.target - Late Shutdown";
+reb_line[46] = "Starting systemd-reboot.service - System Reboot";
+reb_line[47] = "Finished systemd-reboot.service - System Reboot";
+reb_line[48] = "Reached target reboot.target - System Reboot";
+reb_line[49] = "~systemd-shutdown: Syncing filesystems and devices";
+reb_line[50] = "~systemd-shutdown: Remounting / read-only";
+reb_line[51] = "~reboot: Restarting system";
+reb_line_n = 52;
+
+# 1.3.5: "lines" must exist as a GLOBAL before add_line runs. In Plymouth's script language an undeclared name
+# assigned inside a function is created as a LOCAL of that call, so 1.3.4 lost every line (only the [ OK ] tags,
+# counted by the global nlines, and the cursor were drawn). global.* makes the scope explicit.
+global.lines[0] = "";
 nlines = 0;
-dirty = 0;
 fun add_line(text) {
-  if (nlines < ROWS) { lines[nlines] = text; nlines++; }
-  else { for (k = 0; k < ROWS - 1; k++) lines[k] = lines[k + 1]; lines[ROWS - 1] = text; }
-  dirty = 1;
+  if (nlines < ROWS) { global.lines[nlines] = text; nlines++; }
+  else { for (local.k = 0; k < ROWS - 1; k++) global.lines[k] = global.lines[k + 1]; global.lines[ROWS - 1] = text; }
+  typed = 0;
+  draw_console();
 }
-console_on = 1;
-fun draw_console() {
-  for (r = 0; r < ROWS; r++) {
-    t = lines[r];
-    if (r < nlines && console_on) { okspr[r].SetImage(ok_image); okspr[r].SetOpacity(1); } else okspr[r].SetOpacity(0);
-    ended = 0;
-    for (c = 0; c < COLS; c++) {
-      sp = cell[r * COLS + c];
-      ch = "";
-      if (r < nlines && console_on && !ended) { ch = t.CharAt(c); if (!ch) { ended = 1; ch = ""; } }
-      g = glyph[ch];
-      if (ch != "" && g) { sp.SetImage(g); sp.SetOpacity(1); } else sp.SetOpacity(0);
-    }
+# one row; "~" at the start = no [  OK  ] tag (kernel / systemd-shutdown lines). limit = characters typed so far
+fun draw_row(r, limit, alpha) {
+  local.t = global.lines[r]; local.tag = 1; local.off = 0;
+  if (r < nlines) { if (t.CharAt(0) == "~") { tag = 0; off = 1; } }
+  if (r < nlines && console_on && tag) { okspr[r].SetImage(ok_image); okspr[r].SetOpacity(alpha); } else okspr[r].SetOpacity(0);
+  local.ended = 0; local.c = 0; local.last = 0;
+  for (c = 0; c < COLS; c++) {
+    local.sp = cell[r * COLS + c];
+    local.ch = "";
+    if (r < nlines && console_on && !ended && c < limit) { ch = t.CharAt(c + off); if (!ch || ch == "") { ended = 1; ch = ""; } }
+    local.g = glyph[ch];
+    if (ch != "" && g) { sp.SetImage(g); sp.SetOpacity(alpha); last = c + 1; } else { sp.SetOpacity(0); if (ch == " ") last = c + 1; }
   }
-  dirty = 0;
+  return last;
 }
-fun status_callback(text) { if (console_on && text) add_line(text); }
-Plymouth.SetUpdateStatusFunction(status_callback);
-countdown_at = -1;
-fun message_callback(text) {
-  if (text == "TRACE-COUNTDOWN") countdown_at = tick_all;
-  else if (console_on && text) add_line(text);
+fun draw_console() {
+  for (r = 0; r < ROWS; r++) { if (r == nlines - 1) draw_row(r, typed, 1); else draw_row(r, COLS, 0.62); }
 }
+console_on = 0;
+typed = 0;
+fun type_tick() {
+  if (nlines == 0) return;
+  r = nlines - 1;
+  if (typed < COLS) { typed = typed + TYPE_STEP; end = draw_row(r, typed, 1); } else end = draw_row(r, COLS, 1);
+  cursor_sprite.SetPosition(CW * 10 + end * CW + 2, CH + r * CH, 11);
+  if (tick_all % 50 < 25) cursor_sprite.SetOpacity(1); else cursor_sprite.SetOpacity(0);
+}
+fun message_callback(text) { if (text && text != "TRACE-COUNTDOWN") add_line(text); }
 Plymouth.SetMessageFunction(message_callback);
 
-# ---- phases (refresh runs ~50 times a second) ----
+fun show_console() {
+  console_on = 1; bg_a.SetOpacity(0); sweep_sprite.SetOpacity(0); hub_sprite.SetOpacity(0); draw_console();
+}
+fun show_art() {
+  console_on = 0; draw_console(); cursor_sprite.SetOpacity(0);
+  bg_a.SetOpacity(1); sweep_sprite.SetOpacity(1); hub_sprite.SetOpacity(1);
+}
+
+# ---- phases (refresh runs about 50 times a second) ----
 tick_all = 0;
 phase = 0;
 angle = 0;
-fun show_art(sp) {
-  console_on = 0; draw_console();
-  bg_a.SetOpacity(0); bg_b.SetOpacity(0); sp.SetOpacity(1);
-  sweep_sprite.SetOpacity(1); hub_sprite.SetOpacity(1);
+fed = 0;
+LINE_TICKS = 8;
+TYPE_STEP = 7;
+BOOT_LOG_TICKS = 500;   # 10 s of boot log, then the splash
+# 1.3.5: shutdown / reboot go straight to the log (no art phase) and type fast: a line every 2 ticks, whole
+# line in about 2 ticks -> all 52 lines in about 2.1 s. sdr-shutdown-screen holds power-off up to 3 s for it.
+if (down) { LINE_TICKS = 2; TYPE_STEP = 26; }
+fun feed() {
+  if (tick_all % LINE_TICKS != 0) return;
+  if (!down && fed < boot_line_n) { add_line(boot_line[fed]); fed++; }
+  else if (down && mode == "reboot" && fed < reb_line_n) { add_line(reb_line[fed]); fed++; }
+  else if (down && mode != "reboot" && fed < shut_line_n) { add_line(shut_line[fed]); fed++; }
 }
 fun refresh_callback() {
   tick_all++;
-  if (dirty && tick_all % 5 == 0) draw_console();
   if (!down) {
-    if (phase == 0 && (tick_all > 250 || (tick_all > 150 && nlines > 0))) { phase = 1; show_art(bg_a); }       # console 3-5 s, then STILLWAVE
-    else if (phase == 1 && tick_all > phase1_end) { phase = 2; show_art(bg_b); }
-    if (phase == 0) phase1_end = tick_all + 125;                                                                # STILLWAVE for 2.5 s
+    if (phase == 0 && tick_all == 1) show_console();
+    if (phase == 0) { feed(); type_tick(); if (tick_all > BOOT_LOG_TICKS) { phase = 1; show_art(); } }
   } else {
-    if (phase == 0 && (countdown_at >= 0 || tick_all > 200)) { phase = 1; show_art(bg_a); }                      # console, then the shutdown screen
-    if (phase == 1) {
-      n = 0;
-      if (countdown_at >= 0) n = Math.Max(0, 5 - Math.Int((tick_all - countdown_at) / 50));
-      if (n != shown_n) {
-        im = cd[n];
-        cd_sprite.SetImage(im);
-        cdx = Math.Int((W - im.GetWidth()) / 2); if (wide) cdx = Math.Int(bx + 1003 * s);
-        cd_sprite.SetPosition(cdx, Math.Int(by + cap_y * s), 3);
-        cd_sprite.SetOpacity(1);
-        shown_n = n;
-      }
-    }
+    if (phase == 0 && tick_all == 1) { phase = 1; show_console(); }
+    if (phase == 1) { feed(); type_tick(); }
   }
-  if (phase > 0 && tick_all % 2 == 0) {
-    angle = angle + 0.07;
+  if (console_on == 0 && tick_all % 2 == 0) {
+    if (down) angle = angle - 0.07; else angle = angle + 0.07;
     if (angle > 6.2832) angle = angle - 6.2832;
-    r = sweep_scaled.Rotate(angle);
-    sweep_sprite.SetImage(r);
-    sweep_sprite.SetPosition(Math.Int(cx - r.GetWidth() / 2), Math.Int(cy - r.GetHeight() / 2), 1);
+    if (angle < 0) angle = angle + 6.2832;
+    rs = sweep_scaled.Rotate(angle);
+    sweep_sprite.SetImage(rs);
+    sweep_sprite.SetPosition(Math.Int(cx - rs.GetWidth() / 2), Math.Int(cy - rs.GetHeight() / 2), 1);
   }
 }
-shown_n = -1;
-phase1_end = 125;
 Plymouth.SetRefreshFunction(refresh_callback);

@@ -3,6 +3,8 @@
 import * as maplibregl from '/maplib/maplibre-gl.mjs';
 
 const LAX = [-118.4081, 33.9425];
+// 1.3.7: closest zoom = the LA basin view (city names, major roads). Was 15.5 (LA street level from the pmc layers).
+export const MAX_ZOOM = 10;
 const TRAIL_SECS = 120, TRAIL_MAX = 150, STALE_FADE = 15, STALE_DROP = 60;
 const NM = 1852;
 const ALT_COLORS = ['#5f7a68', '#1c6b3c', '#26904f', '#33b866', '#4ade80', '#97f0b8', '#c8f8d9', '#f4fff7', '#6b6f6d']; // GND (grey-green) · <1k · 1-3k · 3-6k · 6-10k (Signal) · 10-20k · 20-30k · 30k+ (white) · unknown (neutral grey, drawn at 60%)
@@ -40,13 +42,11 @@ function basemapLayers(source, zoomPart) {
   const out = [];
   for (const l of window.basemaps.layers(source, flavor, { lang: 'en' })) {
     if (DROP.has(l.id)) continue;
-    if ((zoomPart === 'core' || zoomPart === 'pack') && l.id === 'background') continue;
+    if (zoomPart === 'pack' && l.id === 'background') continue;
     const L = Object.assign({}, l, { id: source + ':' + l.id });
     if (l.id === 'pois') L.filter = ['all', l.filter, ['==', ['get', 'kind'], 'aerodrome']];  // only airports
     if (l.id === 'roads_runway') L.paint = Object.assign({}, l.paint, {
       'line-color': FIELDNOTE.runway, 'line-width': ['interpolate', ['exponential', 1.6], ['zoom'], 8, 0.8, 11, 2.5, 14, 12, 17, 40] });
-    if (zoomPart === 'outer' && l.type === 'symbol') L.maxzoom = 12;    // core takes over labels at 12+
-    if (zoomPart === 'core') L.minzoom = Math.max(12, l.minzoom || 0);
     out.push(L);
   }
   return out;
@@ -58,8 +58,11 @@ function packSources(packs) {
   const src = {}, layers = [];
   (packs || []).forEach((p, i) => {
     const id = 'pk' + i;
-    src[id] = { type: 'vector', tiles: ['pmtiles://' + location.origin + p.url + '/{z}/{x}/{y}'], minzoom: p.minzoom || 0,
-                maxzoom: Math.min(15, p.maxzoom || 14), bounds: p.bbox };
+    // 1.3.7: the whole map stops at zoom 10, so packs are read up to zoom 10 at most (pack files are unchanged)
+    const mx = Math.min(MAX_ZOOM, p.maxzoom || 14);
+    src[id] = { type: 'vector', tiles: ['pmtiles://' + location.origin + p.url + '/{z}/{x}/{y}'], minzoom: Math.min(p.minzoom || 0, mx),
+                maxzoom: mx, bounds: p.bbox };
+    if (p.attribution) src[id].attribution = p.attribution;
     for (const l of basemapLayers(id, 'pack')) layers.push(l);
   });
   return { src, layers };
@@ -67,7 +70,6 @@ function packSources(packs) {
 
 function pmtilesStyle(url, manifest, packs) {
   const abs = location.origin + url + '/{z}/{x}/{y}';
-  const core = (manifest && manifest.bbox_core) || [-118.75, 33.55, -117.90, 34.30];
   // 1.2.1: on the kiosk the credit is plain text (tapping the link navigated the kiosk away and blanked the page);
   // browsers on other devices keep the links
   const kioskPage = document.documentElement.classList.contains('kiosk');
@@ -77,14 +79,15 @@ function pmtilesStyle(url, manifest, packs) {
     version: 8,
     glyphs: location.origin + '/maplib/fonts/{fontstack}/{range}.pbf',
     sprite: location.origin + '/maplib/sprites/dark',
-    sources: {
-      // one file: the SoCal overview (zoom 0-11, overzoomed outside the LA core) ...
+    sources: url ? {
+      // the SoCal overview (zoom 0-11 in the file; the map stops at 10). 1.3.7: the LA street-level layers (pmc, zoom
+      // 12-14 of the same file) are no longer drawn; la.pmtiles itself is unchanged.
       pmo: { type: 'vector', tiles: ['pmtiles://' + abs], minzoom: 0, maxzoom: 11, attribution: att },
-      // ... and the LA basin detail (zoom 12-14)
-      pmc: { type: 'vector', tiles: ['pmtiles://' + abs], minzoom: 12, maxzoom: 14, bounds: core },
-    },
-    layers: [...basemapLayers('pmo', 'outer'), ...basemapLayers('pmc', 'core')],
+    } : {},
+    // 1.3.5: no LA file but a pack (the USA street map) -> draw the packs alone (1.3.7: also capped at zoom 10)
+    layers: url ? basemapLayers('pmo', 'outer') : [{ id: 'bg', type: 'background', paint: { 'background-color': '#0b0f0c' } }],
   };
+  if (!url && packs && packs[0]) packs[0] = Object.assign({}, packs[0], { attribution: att });
   const pk = packSources(packs);
   if (pk.layers.length) {
     // interleave by basemap layer (all earth, then all water, ... roads, labels) so overlapping files merge cleanly:
@@ -230,9 +233,10 @@ export class AircraftMap {
   async start(mapInfo) {
     const proto = new window.pmtiles.Protocol();
     maplibregl.addProtocol('pmtiles', proto.tile);
-    const detailed = mapInfo && mapInfo.installed;
     const packs = (mapInfo && mapInfo.packs) || [];
-    const style = detailed ? pmtilesStyle(mapInfo.url, mapInfo.manifest, packs) : fallbackStyle(mapInfo ? mapInfo.fallback : '/maplib/fallback/la-lowzoom.geojson');
+    const detailed = mapInfo && (mapInfo.installed || packs.length > 0);   // 1.3.5: the USA map alone is a full street map
+
+    const style = detailed ? pmtilesStyle(mapInfo.installed ? mapInfo.url : null, mapInfo.manifest, packs) : fallbackStyle(mapInfo ? mapInfo.fallback : '/maplib/fallback/la-lowzoom.geojson');
     // 1.2.6: the pan limit grows to cover every downloaded region (LA box only when there are none)
     let bounds = [[-121.5, 32.3], [-115.5, 35.8]];
     for (const p of packs) {
@@ -243,7 +247,7 @@ export class AircraftMap {
     const wide = packs.some(p => (p.bbox[2] - p.bbox[0]) > 20);
     this.detailed = detailed;
     const m = this.map = new maplibregl.Map({
-      container: this.el, style, center: LAX, zoom: (this.defaultZoom = this.el.clientWidth < 500 ? 8.9 : 9.4), minZoom: wide ? 2 : (packs.length ? 4 : 6), maxZoom: 15.5,
+      container: this.el, style, center: LAX, zoom: (this.defaultZoom = this.el.clientWidth < 500 ? 8.9 : 9.4), minZoom: wide ? 2 : (packs.length ? 4 : 6), maxZoom: MAX_ZOOM,
       maxBounds: bounds, attributionControl: false,
       dragRotate: false, pitchWithRotate: false, touchPitch: false, maxPitch: 0,
       fadeDuration: 0, antialias: false, renderWorldCopies: false,

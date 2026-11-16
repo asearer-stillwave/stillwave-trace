@@ -10,6 +10,9 @@
 #   sdr-maps region BBOX MINZ MAXZ OUT [--build YYYYMMDD]
 #                                   1.3.1: cut ANY region (W,S,E,N) from the public Protomaps build into OUT (a .pmtiles
 #                                   path); used by sdr-content for the Settings > Maps region list. Prints JSON.
+#   sdr-maps job start la|usa | cancel la|usa | delete usa | status
+#                                   1.3.5: on-screen map downloads (background job, see sdr-mapjob); status is JSON
+#   sdr-maps latest-build | pmtiles-path   1.3.5 helpers for sdr-mapjob
 #   sdr-maps receiver LAT LON       save the receiver position (ADSB_LAT/ADSB_LON in /etc/sdr/adsb.env)
 #   sdr-maps receiver --clear       back to the default (LAX) for map centering and distances
 #   sdr-maps gain DB|auto           ADS-B decoder gain (ADSB_GAIN), restarts the decoder if running (1.2.0)
@@ -35,6 +38,9 @@ BBOX_CORE="-118.75,33.55,-117.90,34.30"    # LA basin around LAX; zoom 12-14
 OUTER_MAX=11
 CORE_MIN=12
 CORE_MAX=14
+Q="${SDR_MAPS_QUIET--q}"   # 1.3.5: sdr-mapjob sets SDR_MAPS_QUIET= to read the progress bar
+MAPJOB="${SDR_MAPJOB_BIN:-$(dirname "$(readlink -f "$0")")/sdr-mapjob}"
+[[ -x "$MAPJOB" ]] || MAPJOB=/usr/local/lib/sdr-station/bin/sdr-mapjob
 
 say() { echo "[maps] $*" >&2; }
 die() { say "ERROR: $*"; exit 1; }
@@ -175,10 +181,10 @@ cmd_fetch() {
   mkdir -p "$w"
   trap 'rm -rf "${FETCH_TMP:-/nonexistent}"' EXIT
   say "build $build: outer box zoom 0-$OUTER_MAX"
-  "$bin" extract "$url" "$w/outer.pmtiles" --bbox="$BBOX_OUTER" --maxzoom="$OUTER_MAX" --download-threads=4 -q \
+  "$bin" extract "$url" "$w/outer.pmtiles" --bbox="$BBOX_OUTER" --maxzoom="$OUTER_MAX" --download-threads=4 $Q \
     || die "extract (outer) failed"
   say "build $build: LA core zoom $CORE_MIN-$CORE_MAX (about 50 MB)"
-  "$bin" extract "$url" "$w/core.pmtiles" --bbox="$BBOX_CORE" --minzoom="$CORE_MIN" --maxzoom="$CORE_MAX" --download-threads=4 -q \
+  "$bin" extract "$url" "$w/core.pmtiles" --bbox="$BBOX_CORE" --minzoom="$CORE_MIN" --maxzoom="$CORE_MAX" --download-threads=4 $Q \
     || die "extract (core) failed"
   "$bin" merge "$w/outer.pmtiles" "$w/core.pmtiles" "$w/la.pmtiles" >/dev/null 2>&1 || die "merge failed"
   "$bin" verify "$w/la.pmtiles" >/dev/null 2>&1 || die "verify failed"
@@ -264,7 +270,8 @@ cmd_region() {   # 1.3.1
 ACTION="${1:-status}"; shift || true
 case "$ACTION" in
   status) cmd_status "$@"; exit $? ;;
-  help|-h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  job) [[ "${1:-status}" == status ]] && exec python3 "$MAPJOB" status ;;
+  help|-h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 if [[ "$(id -u)" != 0 && -z "${SDR_MAPS_ALLOW_USER:-}" ]]; then echo "sdr-maps: run with sudo" >&2; exit 1; fi
 case "$ACTION" in
@@ -275,5 +282,8 @@ case "$ACTION" in
   receiver) cmd_receiver "$@" ;;
   rings) cmd_rings "$@" ;;
   gain) cmd_gain "$@" ;;
+  job) exec python3 "$MAPJOB" "$@" ;;
+  latest-build) b="$(latest_build)"; [[ "$b" =~ ^[0-9]{8}$ ]] || die "could not find the current Protomaps build (is the Pi online?)"; echo "$b" ;;
+  pmtiles-path) pmtiles_bin ;;
   *) echo "usage: sdr-maps status [--verify] | verify | install-local FILE | fetch [--build YYYYMMDD] [--force] | receiver LAT LON | receiver --clear | rings COUNT SPACING | gain DB|auto" >&2; exit 2 ;;
 esac

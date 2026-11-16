@@ -1,5 +1,5 @@
 {
- "_source": "LAX airband: FAA Chart Supplement (eff. 1 Oct 2026; via aopa.org) and airnav.com/airport/KLAX, checked 2026-10-11: D-ATIS ARR 133.8, D-ATIS DEP 135.65, TWR 133.9 (N) / 120.95 (S) / 119.8 (heli), GND 121.65 / 121.75 / 121.4, CLNC 120.35. NOAA: NWS NOAA Weather Radio channels WX1-WX7.",
+ "_source": "LAX airband: FAA Chart Supplement (eff. 1 Oct 2026; via aopa.org) and airnav.com/airport/KLAX, checked 2026-10-11: D-ATIS ARR 133.8, D-ATIS DEP 135.65, TWR 133.9 (N) / 120.95 (S) / 119.8 (heli), GND 121.65 / 121.75 / 121.4, CLNC 120.35. NOAA: NWS NOAA Weather Radio channels WX1-WX7. FRS/GMRS: FCC 47 CFR 95.563 / 95.1763 channel plan (22 channels, narrow FM).",
  "airband": [
   {
    "mhz": 133.9,
@@ -78,6 +78,118 @@
   {
    "mhz": 162.55,
    "name": "WX1 162.550"
+  }
+ ],
+ "frs": [
+  {
+   "ch": 1,
+   "mhz": 462.5625,
+   "name": "CH 1"
+  },
+  {
+   "ch": 2,
+   "mhz": 462.5875,
+   "name": "CH 2"
+  },
+  {
+   "ch": 3,
+   "mhz": 462.6125,
+   "name": "CH 3"
+  },
+  {
+   "ch": 4,
+   "mhz": 462.6375,
+   "name": "CH 4"
+  },
+  {
+   "ch": 5,
+   "mhz": 462.6625,
+   "name": "CH 5"
+  },
+  {
+   "ch": 6,
+   "mhz": 462.6875,
+   "name": "CH 6"
+  },
+  {
+   "ch": 7,
+   "mhz": 462.7125,
+   "name": "CH 7"
+  },
+  {
+   "ch": 8,
+   "mhz": 467.5625,
+   "name": "CH 8"
+  },
+  {
+   "ch": 9,
+   "mhz": 467.5875,
+   "name": "CH 9"
+  },
+  {
+   "ch": 10,
+   "mhz": 467.6125,
+   "name": "CH 10"
+  },
+  {
+   "ch": 11,
+   "mhz": 467.6375,
+   "name": "CH 11"
+  },
+  {
+   "ch": 12,
+   "mhz": 467.6625,
+   "name": "CH 12"
+  },
+  {
+   "ch": 13,
+   "mhz": 467.6875,
+   "name": "CH 13"
+  },
+  {
+   "ch": 14,
+   "mhz": 467.7125,
+   "name": "CH 14"
+  },
+  {
+   "ch": 15,
+   "mhz": 462.55,
+   "name": "CH 15"
+  },
+  {
+   "ch": 16,
+   "mhz": 462.575,
+   "name": "CH 16"
+  },
+  {
+   "ch": 17,
+   "mhz": 462.6,
+   "name": "CH 17"
+  },
+  {
+   "ch": 18,
+   "mhz": 462.625,
+   "name": "CH 18"
+  },
+  {
+   "ch": 19,
+   "mhz": 462.65,
+   "name": "CH 19"
+  },
+  {
+   "ch": 20,
+   "mhz": 462.675,
+   "name": "CH 20"
+  },
+  {
+   "ch": 21,
+   "mhz": 462.7,
+   "name": "CH 21"
+  },
+  {
+   "ch": 22,
+   "mhz": 462.725,
+   "name": "CH 22"
   }
  ]
 }
