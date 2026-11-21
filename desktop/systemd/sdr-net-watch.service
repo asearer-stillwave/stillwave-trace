@@ -1,0 +1,13 @@
+[Unit]
+Description=Stillwave Trace 1.3.2: hotspot comes back after 30 s without Wi-Fi (only while auto-joined)
+Documentation=file:///usr/local/sbin/sdr-net-mode
+After=sdr-net.service NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/sdr-net-mode watch
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

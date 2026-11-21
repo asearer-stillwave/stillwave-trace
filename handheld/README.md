@@ -1,8 +1,5 @@
 # Stillwave Trace (station package)
 
-> Licensed under the Apache License 2.0 (see `LICENSE` and `NOTICE` at the repository root). 1.2.1 (unreleased) removes the per-unit license system.
-> The offline map file `maps/la.pmtiles` is not stored in this repository (it is a 55 MB build artifact). Create it on the Pi with `sudo sdr-maps fetch` (needs internet once); until then the ADS-B map uses its built-in outline.
-
 Trace is the Stillwave desk / station radio: a Raspberry Pi 4 with an RTL-SDR (Nooelec NESDR v5) that tunes FM to Icecast, shows a live spectrum + waterfall, runs RF detection, or shows ADS-B aircraft on an offline live map. Only one of those owns the dongle at a time (see **Dongle modes**).
 
 > **Names.** Stillwave Trace was called Quietline Fieldnote. Only the user-facing name changed. Commands, services and files keep their `sdr-*` and `fieldnote-*` names so an installed Pi upgrades in place: `fieldnote-display-setup` (now also `trace-display-setup`), `fieldnote-kiosk.service`, the Chromium profile `~/snap/chromium/common/fieldnote-kiosk`, `fieldnote.css`, `80-fieldnote-headless.*`.
@@ -26,25 +23,31 @@ This folder is the full deployable export. `install.sh` copies the scripts, page
 
 From a Mac (or any computer) on the same network as the Pi:
 
+1.3.7: ONE package for both editions, `trace-1.3.8.zip`. The installer asks which edition:
+`1) Handheld (5" touch display)` or `2) Desktop (HDMI)` (it asks before it moves into the background, so it works over SSH).
+
 ```bash
-scp sdr-station-deploy.zip neo@SDRpi.local:~
+scp trace-1.3.8.zip neo@SDRpi.local:/home/neo/trace-1.3.8.zip
 ssh neo@SDRpi.local
 ```
 
-Then on the Pi:
+Then on the Pi (user `neo` here; use your own user name in the paths):
 
 ```bash
-rm -rf ~/sdr-station
-unzip -o ~/sdr-station-deploy.zip -d ~     # or: python3 -m zipfile -e ~/sdr-station-deploy.zip ~
-cd ~/sdr-station
-sudo bash install.sh                       # add --display to also set up the 5" Touch Display kiosk
+rm -rf /home/neo/trace-1.3.8
+unzip /home/neo/trace-1.3.8.zip -d /home/neo/trace-1.3.8   # or: python3 -m zipfile -e /home/neo/trace-1.3.8.zip /home/neo/trace-1.3.8
+sudo bash /home/neo/trace-1.3.8/install.sh                  # asks: 1) Handheld (5" touch display)  2) Desktop (HDMI)
 ```
+
+No question (scripts, SD-card image builds): `sudo bash /home/neo/trace-1.3.8/install.sh --display dsi` (handheld) or
+`sudo bash /home/neo/trace-1.3.8/install.sh --display hdmi` (desktop). Updating a box from the zip:
+`sudo bash /home/neo/trace-1.3.8/install.sh --upgrade` keeps the box's edition (`/usr/local/lib/sdr-station/EDITION`).
 
 The installer does not switch networks: if the Pi is on Wi-Fi it stays on Wi-Fi, and it records that (`MODE=wifi`) so the next reboot does too.
 
 The installer:
 
-1. Installs `rtl-sdr`, `sox`, `ffmpeg`, Icecast2, Flask, `python3-numpy`, nginx, NetworkManager, `hostapd`, and `dnsmasq`. Then tries an ADS-B decoder: `readsb` (newer Ubuntu/Debian), else `dump1090-mutability` (Ubuntu 24.04 / many Pi images), both with `--no-install-recommends` so `lighttpd` never lands on port 80. If neither installs, ADS-B mode is just greyed out.
+1. Installs `rtl-sdr`, `sox`, `ffmpeg`, Icecast2, Flask, `python3-numpy`, nginx, NetworkManager, `hostapd`, and `dnsmasq`. Then tries an ADS-B decoder: `readsb` (newer Ubuntu/Debian), else `dump1090-mutability` (Ubuntu 24.04), both with `--no-install-recommends` so `lighttpd` never lands on port 80. **1.2.8:** the installer then checks the decoder really supports RTL-SDR (`sdr-adsb-fix`). Raspberry Pi OS's `readsb` is built without it, so `sdr-adsb-fix` builds upstream readsb v3.16.18 with `RTLSDR=yes` into `/usr/local/bin` (a few minutes, internet needed once). If that fails too, ADS-B mode is just greyed out. Fix it later with `sudo sdr-adsb-fix`.
 2. Blacklists the DVB kernel modules that steal the RTL dongle.
 3. Installs helpers under `/usr/local/sbin` and the web app under `/usr/local/lib/sdr-station`.
 4. Writes `/etc/sdr/fm.env`, `/etc/sdr/stations.conf`, `/etc/sdr/mode.env`, and `/etc/sdr/adsb.env` **only if they are not already there**. A reinstall keeps your station list, gain, Icecast source password, last dongle mode, ADS-B settings, and network mode.
@@ -65,7 +68,6 @@ Replace `HOST` with `SDRpi.local` (the Pi's hostname + `.local`), the address pr
 | Spectrum + waterfall | `http://HOST/spectrum` |
 | RF detect | `http://HOST/detect` |
 | ADS-B aircraft | `http://HOST/adsb` |
-| Tuner / find FM stations | `http://HOST/advanced` |
 | Presets | `http://HOST/presets` |
 | Network and services | `http://HOST/network` |
 | Audio output / Bluetooth speaker | `http://HOST/audio` |
@@ -106,6 +108,24 @@ tail /var/log/sdr-power.log # who asked, when, from where
 
 `/usr/local/sbin/sdr-power` accepts exactly `reboot` or `poweroff`. The web user may run only those two commands through sudo, the same way it runs `sdr-net-mode`.
 
+## Download maps, US station bank, new presets (1.2.6)
+- **CONTENT_URL** (More › Download maps › Content source, or `sudo sdr-content set-url http://IP:8080/`): where map packs, the station bank and (if `UPDATE_URL` is empty) updates come from. Layout and the home-Pi / Cloudflare R2 kit: `tools/content/server/README.md`.
+- `sudo sdr-content status|catalog|download ID|pause|resume|cancel ID|delete ID|bank-update` (JSON with `--json`). Packs live in `/var/lib/sdr/maps/packs/`, the bank in `/var/lib/sdr/bank/stations.sqlite`. 1 GB is always kept free.
+- Everything downloaded is checked against the Stillwave Ed25519 signature and sha256 before use. Station data: FCC (FM), FAA NASR (airband, 28-day cycle), US Census (ZIP). Receive only, not for navigation.
+
+## Two radios, map listen strip, aircraft models (1.2.5)
+- **Radio roles** (More › Radio roles): with two RTL-SDR dongles, pick Map · 1090 (SDR 1), Airband (SDR 2) or Spare for each serial, then Save. The map then runs full time on SDR 1 while SDR 2 plays airband. SSH: `sudo sdr-dongles list`, `sudo sdr-dongles assign SERIAL=adsb SERIAL=radio`, `sudo sdr-dongles swap`. Each dongle needs its own serial (`rtl_eeprom -d 0 -s TRACE001`, one dongle plugged in at a time). One dongle: everything works as before.
+- **Map listen strip / airport focus:** only with two radios. Squelch Low or High gives QUIET / TALKING. Tap LAX (or the KLAX pill) for Tower / Ground / Approach / ATIS. Frequencies: `config/airports.json`.
+- **Aircraft models:** `sudo sdr-aircraft-db status|fetch`. Data: Mictronics aircraft database (ODC-By 1.0) via tar1090-db; credit on More › About & licenses.
+
+## Power supply warning (1.2.4)
+A Pi on a weak battery or cable browns out (the SDR drops, the panel flickers, the box can reset). Trace now watches the Pi's own power flags and tells you.
+- **What it reads** (every 5 s, in the web service; nothing else): `vcgencmd get_throttled` bit 0 (under-voltage now) and bit 16 (under-voltage has happened since boot), and/or the kernel's `rpi_volt` hwmon alarm (`/sys/class/hwmon/*/in0_lcrit_alarm`). Works on a Pi 4 and a Pi 5; when neither tool exists (not a Pi), the row says so and no banner shows. **No I2C access**: the display chip (0x45) is never read or written.
+- **Banner** (all main pages, under the status strip): **Power supply too weak.** Use a stronger battery (5 V, 3 A or more). It pushes the page down instead of covering it. ✕ hides it until the next *new* weak-power event (saved per device; a reboot starts over).
+- **More › This box › Power supply** (first row): green **Power OK**, or orange **Weak supply seen at HH:MM** (local time of the last event this boot; **Weak supply now** while it is happening).
+- **Log:** `journalctl -u sdr-web | grep '\[power\]'` (one line per event with the local date and time). The last event of this boot is in `/run/sdr-power/psu.json` (survives a web restart, cleared by a reboot). `sdr-psu status` prints the raw flags; `GET /api/power/supply` returns `state` = `ok` / `weak_now` / `weak_seen` / `unknown`, `seen_at` (HH:MM), `event` (count this boot).
+- **Raspberry Pi 5 only:** the installer (fresh install and every over-the-air upgrade) adds `usb_max_current_enable=1` to `config.txt` in Trace's own marked block (`# >>> stillwave-trace-power >>>` … `# <<< stillwave-trace-power <<<`), so the USB ports are not capped at 600 mA in total on a 3 A power bank (a Pi 5 only lifts that cap by itself on a 5 A USB-PD supply). **It takes effect after one reboot.** Idempotent; a `usb_max_current_enable` line you set yourself is respected and left alone. Undo: `sudo sdr-psu config undo` (`sudo fieldnote-display-setup --undo` removes it too). A Pi 4 `config.txt` is never touched.
+
 ## Kiosk screen (screen off, timeout, wake on touch)
 
 The 5″ Touch Display 2 can go dark by itself or on request; the radio, map, network and speaker keep running.
@@ -136,7 +156,7 @@ journalctl -u sdr-screen -b     # what it did
 
 To force a method, set `SCREEN_METHOD=backlight|wlopm|wlr-randr|overlay` (and `SCREEN_BACKLIGHT=` / `SCREEN_TOUCH=` to pick devices) in `/etc/sdr/screen.env`, then `sudo systemctl restart sdr-screen`.
 
-**Shutdown screen:** when the box shuts down (Power menu or `sudo systemctl poweroff`), the kiosk wakes the screen and shows **Shutting down… Safe to unplug when this screen goes dark.** for about 4 s (`sdr-screen notice`, run as `sdr-screen.service` stops). Late in the shutdown, `sdr-screen-final.service` turns the backlight off as its last act. On a **reboot** it leaves the backlight on (and `sdr-screen` restores the saved brightness at every boot), so a reboot never leaves a dark screen. Only the backlight method can truly go dark at the end; with the overlay method the message simply stays until the display loses power.
+**Shutdown screen:** when the box shuts down (Power menu or `sudo systemctl poweroff`), the kiosk wakes the screen and shows **Shutting down… Safe to unplug when this screen goes dark.** for about 4 s (`sdr-screen notice`, run as `sdr-screen.service` stops). Late in the shutdown, `sdr-screen-final.service` turns the backlight off as its last act, **on a power-off only**. On a **reboot** it (and every other part of `sdr-screen`) leaves the backlight alone (1.2.3: no write at all; on a Touch Display 2 a backlight write is an I2C write to the display's microcontroller, and one just before the warm reset left the panel blank). A screen that was asleep stays dark through a reboot and comes back when the new boot starts (`sdr-screen` turns the backlight on at every boot, at the saved brightness). Only the backlight method can truly go dark at the end; with the overlay method the message simply stays until the display loses power.
 
 ## Boot and shutdown screen (1.0.5)
 
@@ -196,7 +216,7 @@ cat /etc/sdr/mode.env          # MODE=... restored at boot
 - Switching stops the current owner first, then starts the new one (about 1–3 seconds).
 - The units also have `Conflicts=` on each other, so anything that starts FM (a station button, Listen, Save preset, **Restart radio stream**) automatically takes the dongle back to FM.
 - The last mode is saved in `/etc/sdr/mode.env` and `sdr-mode.service` restores it at boot. A fresh install is `MODE=fm`.
-- **Find stations 88–108 MHz** on the Tuner page borrows the dongle and puts the previous mode back afterwards.
+- (1.2.8: the Tuner page was removed; find stations in More › Stations or with Scan.)
 - **Restart all** on the Network page restarts whatever mode is active instead of forcing FM.
 - The spectrum/detect pages do not grab the dongle just by opening them; they show a **Start** button unless you use `?auto=1`.
 
@@ -402,6 +422,17 @@ sudo reboot                       # only if it says config.txt changed
 
 If the screen stays dark: check both cable ends and the GPIO pins, then `sudo apt update && sudo apt full-upgrade` (older kernels lack the Touch Display 2 driver) and reboot. `grep -n 'vc4\|ili9881\|display_auto' /boot/firmware/config.txt` should show one active `dtoverlay=vc4-kms-v3d…` and one `dtoverlay=vc4-kms-dsi-ili9881-5inch` line under the last `[all]` (in the `fieldnote-display` block, or where you put them by hand).
 
+### Raspberry Pi 5 (Ubuntu 24.04) with the Touch Display 2 (1.2.2, warm-reboot fix 1.2.3)
+
+Tested on a Pi 5, Ubuntu 24.04 (linux-raspi 6.8), 5-inch Touch Display 2 in the **DISP0** connector. Needs the 22-way (Pi 5) to 15-way (display) ribbon.
+
+- **Which connector.** The Pi 5 has two DSI ports and the overlay's default is DISP1. Software cannot tell where the ribbon is: if the panel stays dark with the default, run `sudo bash install.sh --display --dsi-port 0` (or `sudo fieldnote-display-setup --dsi-port 0`), which writes `dtoverlay=vc4-kms-dsi-ili9881-5inch,dsi0`. `--dsi-port 1` goes back to the default. Re-running without the option keeps whatever port is already set. Pi 4 ignores the option (with a warning). `--undo` still restores `config.txt` byte for byte.
+- **Touch** (`sdr-touch-reload.service`, installed only on a Pi 5 with the panel set up). The touch chip is reset by the display's own microcontroller and can miss the driver's first look at boot (`Goodix-TS 10-005d ... -121` in `dmesg`, no touch). The unit waits for the chip, and only if no Goodix input device exists it reloads `goodix_ts` (up to 4 tries). Manual run: `sudo sdr-touch-reload`; state: `sdr-touch-reload --check`. A hand-made `goodix-reload.service` is moved to `/var/lib/sdr-station/`.
+- **Warm reboot (fixed in 1.2.3).** On the Pi 5 the panel used to stay blank (backlight on, no picture, no touch) after a warm reboot; only unplugging the power brought it back. Cause, found by switching units off one at a time on a real Pi 5: `sdr-screen-final.service` wrote the backlight register of the display's microcontroller (I2C 0x45) about a second before the reboot, and the warm reset then left that chip hung (every I2C access timed out, the panel never bound). 1.2.3 removes every shutdown-time write: `sdr-screen final` does nothing on a reboot (it still turns the backlight off at a real power-off), `sdr-screen` does not touch the backlight while the box reboots, and the 1.2.2 `sdr-panel-off.service` (which also wrote to that chip) is deleted by the installer. Still blank after a warm reboot? `sudo sdr-panel-diag --save bad` over SSH, then send the file.
+- `sdr-panel-diag` (read-only report of display, backlight, touch, I2C, kiosk and services) is installed everywhere.
+- `sudo fieldnote-display-setup --undo` also removes `sdr-touch-reload.service` (and a leftover 1.2.2 `sdr-panel-off.service`) and `/etc/modules-load.d/sdr-i2c-dev.conf`.
+- A box that runs **Trace Desktop** is not converted by accident: `install.sh` refuses unless you add `--force-edition` (full install with internet, never an `--upgrade`). Handheld installs now write `handheld` to `/usr/local/lib/sdr-station/EDITION`.
+
 If the kiosk does not start (cage):
 
 - `journalctl -u fieldnote-kiosk -b` with `libseat`, `Could not take control of session`, `Permission denied` on `/dev/dri/card*` or input devices: the session did not become a proper seat session. Check `id neo` lists `video render input` (log out/reboot after a group change), `/etc/pam.d/fieldnote-kiosk` exists, `getty@tty1` is not running (`systemctl status getty@tty1`), and `loginctl` shows a `seat0` session on `tty1` for `neo`.
@@ -447,34 +478,27 @@ Keeps the offline map in `/var/lib/sdr/maps/` (not copied again when unchanged),
 
 ```bash
 # on the Mac
-scp sdr-station-deploy.zip neo@SDRpi.local:~
+scp trace-1.3.8.zip neo@SDRpi.local:/home/neo/trace-1.3.8.zip
 ssh neo@SDRpi.local
 # on the Pi
-sudo systemctl stop sdr-fm sdr-spectrum sdr-detect sdr-adsb sdr-web || true
-rm -rf ~/sdr-station
-unzip -o ~/sdr-station-deploy.zip -d ~
-cd ~/sdr-station
-sudo bash install.sh
+rm -rf /home/neo/trace-1.3.8
+unzip /home/neo/trace-1.3.8.zip -d /home/neo/trace-1.3.8
+sudo bash /home/neo/trace-1.3.8/install.sh --upgrade      # keeps this box's edition; no question
+bash /usr/local/sbin/sdr-verify
 ```
 
-The full zip is about 55 MB larger because it carries the offline map. For updates when the Pi already has the map, use the small **`sdr-station-app.zip`** instead. It is the same package without `maps/la.pmtiles`. `install.sh` then prints "keeping the installed /var/lib/sdr/maps/la.pmtiles" and leaves the map alone:
-
-```bash
-# on the Mac
-scp sdr-station-app.zip neo@SDRpi.local:~
-ssh neo@SDRpi.local
-# on the Pi
-sudo systemctl stop sdr-fm sdr-spectrum sdr-detect sdr-adsb sdr-web || true
-rm -rf ~/sdr-station
-unzip -o ~/sdr-station-app.zip -d ~
-cd ~/sdr-station
-sudo bash install.sh
-bash verify.sh
-```
+The zip carries no map tiles: an installed `/var/lib/sdr/maps/la.pmtiles` is kept as it is ("keeping the installed
+/var/lib/sdr/maps/la.pmtiles"); a fresh install with internet downloads the LA map (or tap GET MAP on the Map page).
 
 ## Updates (over the air)
 
 Every station function works offline. **Updates are the only part of Trace that ever uses the internet, and only when you tap Check or Install.** Trace never checks by itself and makes no background network calls.
+
+**1.3.6** (2026-11-05 PT): installer audit (`verify.sh` "installed files"), Debian 13 apt fix, map download status fix, full-screen kiosk, sharp boot console, HDMI 720p / 1080p (desktop), boot splash On | Off, one-row SDR chips, FM towers on the map, FRS / GMRS listen tab. See CHANGELOG.md.
+
+**1.3.8** (2026-11-15 PT): map zooms to 12 by enlarging the zoom 10 tiles (no new detail), solid tower card with "Above terrain", Listen > Any MHz manual entry (24-1766 MHz, Auto/AM/NFM/WFM, Recent), `--display dsi` in the installer log, "Get map" wording, no Chromium update bubble and a black kiosk window before the first paint, the map listen strip shows FM playing on SDR 2, Spectrum keeps its center/span/gain across reboots, `vcgencmd get_throttled` readout in verify.sh. Pi 5 `[pi5]` USB-current block staged OFF (held pending battery test).
+
+**1.3.7** (2026-11-12 PT): one package for both editions (`trace-1.3.8.zip`, the installer asks Handheld or Desktop), boot splash fix on Debian 13 (Theme= first in plymouthd.conf), Settings > Screen > Reboot now opens the confirm sheet, map stops at zoom 10 (LA basin view; LA street level removed).
 
 The installed version is in `/usr/local/lib/sdr-station/VERSION`. You can see it on **More → Updates**, in `bash verify.sh`, and with `sdr-update version`.
 
@@ -543,7 +567,7 @@ curl -sN --max-time 4 http://127.0.0.1/api/scope/stream | cut -c1-120
 
 ## Layout on the box
 
-- `/usr/local/lib/sdr-station/web/` — Flask app, HTML, `fieldnote.css`, `nav.js` (status strip at the top + tab bar at the bottom of every page), `more.html` (More: Tuner, Presets, Network, Audio, Screen, Updates, Power), `mode.js` (SDR mode row), `power.js` (Power menu), and `sdr_scope.py` (spectrum/detect service on 127.0.0.1:8081)
+- `/usr/local/lib/sdr-station/web/` — Flask app, HTML, `fieldnote.css`, `nav.js` (status strip at the top + tab bar at the bottom of every page), `more.html` (More: Presets, Network, Audio, Screen, Updates, Power), `mode.js` (SDR mode row), `power.js` (Power menu), and `sdr_scope.py` (spectrum/detect service on 127.0.0.1:8081)
 - `/usr/local/lib/sdr-station/bin/fm_stream.sh` — RTL-SDR to Icecast
 - `/usr/local/lib/sdr-station/bin/adsb_run.sh` — runs readsb / dump1090 for `sdr-adsb`
 - `/usr/local/sbin/sdr-mode` — `status`, `set MODE`, `boot`, `restart`, `stop-all`, `current`
@@ -572,7 +596,7 @@ curl -sN --max-time 4 http://127.0.0.1/api/scope/stream | cut -c1-120
 - `/var/log/sdr-net.log` — every network switch step, one `RESULT` line per switch
 - `/tmp/sdr-web-net.log` — web-side network calls
 
-Services: `sdr-fm` (stream), `sdr-spectrum` / `sdr-detect` (scope on 127.0.0.1:8081, proxied at `/api/scope/`), `sdr-adsb` (aircraft decoder), `sdr-mode` (boot restore of the dongle mode), `sdr-web` (Flask on 8080), `nginx` (port 80 proxy), `icecast2` (8000), `sdr-net` (Wi-Fi boot restore), `sdr-bt-reconnect` (reconnects the saved speaker at boot), `fieldnote-kiosk` (cage kiosk, Lite/Ubuntu), `sdr-screen` (kiosk screen off / timeout / wake), `sdr-screen-final` (backlight off as the last step of a power-off). Only one of `sdr-fm`, `sdr-spectrum`, `sdr-detect`, `sdr-adsb` runs at a time.
+Services: `sdr-fm` (stream), `sdr-spectrum` / `sdr-detect` (scope on 127.0.0.1:8081, proxied at `/api/scope/`), `sdr-adsb` (aircraft decoder), `sdr-mode` (boot restore of the dongle mode), `sdr-web` (Flask on 8080), `nginx` (port 80 proxy), `icecast2` (8000), `sdr-net` (Wi-Fi boot restore), `sdr-bt-reconnect` (reconnects the saved speaker at boot), `fieldnote-kiosk` (cage kiosk, Lite/Ubuntu), `sdr-screen` (kiosk screen off / timeout / wake), `sdr-screen-final` (backlight off as the last step of a power-off only; nothing on a reboot). Only one of `sdr-fm`, `sdr-spectrum`, `sdr-detect`, `sdr-adsb` runs at a time.
 
 ## If AP mode does not start
 
@@ -625,8 +649,13 @@ calls (mode 5 s, network 10 s, audio 15 s), polled every 10 s while the page is 
 cannot read shows a dash.
 
 The **tab bar** at the bottom (Radio · Map · Spectrum · Detect · More) only opens pages; it never changes
-the SDR mode. The green dot marks the tab whose job the SDR is doing now. Tuner, Presets, Network, Audio and
+the SDR mode. The green dot marks the tab whose job the SDR is doing now. Presets, Network, Audio and
 Power live under **More**. The **SDR mode** row on each page still switches the dongle, as before.
 
 ## 1.0.8
 See CHANGELOG.md. "/" opens the single-load app on Spectrum; tabs: Listen (FM/Airband/NOAA), Map, Scan, Spectrum, More. Installer over SSH logs to /var/log/trace-install.log; resume with `sudo bash install.sh --resume`.
+
+## 1.2.8: OS updates, ADS-B decoder check
+- A fresh install runs `apt-get full-upgrade` first (non-interactive, keeps config files). Skip it with `--no-os-upgrade`. An over-the-air update (`--upgrade`) never upgrades the OS. A new kernel takes effect at the reboot the installer asks for at the end.
+- `sudo sdr-adsb-fix`: checks for an RTL-SDR-capable decoder and builds readsb (pinned v3.16.18, GPL-3.0) into `/usr/local/bin` if there is none. `sdr-adsb-fix --check` only reports. `adsb_run.sh` prefers `/usr/local/bin` and refuses a readsb without rtlsdr, with a clear log line instead of a restart loop.
+

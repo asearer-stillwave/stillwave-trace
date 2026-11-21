@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Stillwave Trace (1.2.2): bring the Raspberry Pi Touch Display 2 touch chip (Goodix GT911) up after boot.
+# On a Pi 5 the touch driver can look for the chip before the display's microcontroller has released the chip from reset;
+# the probe then fails (dmesg: "Goodix-TS 10-005d: ... -121" or -5) and there is no touch. Reloading the driver afterwards
+# works (documented by Raspberry Pi staff and users: forums.raspberrypi.com/viewtopic.php?t=389937, raspberrypi/linux#6456,
+# raspberrypi/linux PR #7482). This does exactly that, only when no Goodix input device exists, with retries.
+# Run by sdr-touch-reload.service at boot (Pi 5 with the DSI panel only). Safe to run by hand: sudo sdr-touch-reload
+# It never fails the boot (always exits 0 unless --check). Test hooks: SDR_TOUCH_SYSFS, SDR_TOUCH_INPUT, SDR_TOUCH_DRY=1.
+SYSFS="${SDR_TOUCH_SYSFS:-/sys/bus/i2c/devices}"
+INPUTS="${SDR_TOUCH_INPUT:-/sys/class/input}"
+DRY="${SDR_TOUCH_DRY:-0}"
+say() { echo "sdr-touch-reload: $*"; }
+
+have_input() { grep -qsi goodix "$INPUTS"/input*/name 2>/dev/null; }
+have_client() {  # an I2C client with a goodix compatible (created by the display overlay), bound or not
+  local d
+  for d in "$SYSFS"/*; do
+    [[ -r "$d/of_node/compatible" ]] && tr '\0' ' ' <"$d/of_node/compatible" | grep -qi goodix && return 0
+  done
+  return 1
+}
+
+if [[ "${1:-}" == "--check" ]]; then
+  have_input && { say "touch is up (Goodix input device present)"; exit 0; }
+  have_client && { say "Goodix chip is declared but has no input device (touch is down)"; exit 2; }
+  say "no Goodix chip declared (no Touch Display 2 overlay?)"; exit 1
+fi
+
+# wait up to 30 s for the overlay's I2C client to exist (module / overlay loading is asynchronous)
+for _ in $(seq 1 30); do have_client && break; sleep 1; done
+have_client || { say "no Goodix I2C client found; nothing to do"; exit 0; }
+sleep 2   # let a probe that is already running finish on its own
+if have_input; then say "touch already up (driver bound at boot); nothing to do"; exit 0; fi
+
+for i in 1 2 3 4; do
+  if [[ "$DRY" == 1 ]]; then say "[dry-run] attempt $i: modprobe -r goodix_ts; modprobe goodix_ts"; exit 0; fi
+  say "no touch device; reloading goodix_ts (attempt $i)"
+  /sbin/modprobe -r goodix_ts 2>/dev/null || modprobe -r goodix_ts 2>/dev/null || true
+  sleep 1
+  /sbin/modprobe goodix_ts 2>/dev/null || modprobe goodix_ts 2>/dev/null || { say "cannot load goodix_ts (module missing?)"; exit 0; }
+  sleep 3
+  if have_input; then say "touch is up after attempt $i"; exit 0; fi
+  sleep $((i * 2))
+done
+say "touch still down after 4 attempts; see: sdr-panel-diag"
+exit 0

@@ -18,7 +18,10 @@ if [[ "${1:-}" == "--health" ]]; then
     t=$SECONDS
     if out="$(SDR_SPLASH_LS_TIMEOUT=40 timeout 75 bash "$SPL" gate 2>&1)"; then
       hl "boot splash OK in $((SECONDS - t))s: $(echo "$out" | tail -n1)"
-    elif [[ $? -eq 124 ]]; then
+    elif rc=$?; [[ $rc -eq 3 ]]; then
+      # 1.3.1: splash wanted but skipped (no plymouth / initramfs). Reported as FAILED, but not worth a rollback.
+      SPLASH_FAIL="$(echo "$out" | tail -n1)"; hl "boot splash FAILED (skipped): $SPLASH_FAIL"; echo "HEALTH WARN: boot splash FAILED: $SPLASH_FAIL"
+    elif [[ $rc -eq 124 ]]; then
       hl "boot splash check took over 75s; not checked this time (splash left as is)"
     else
       echo "$out"; hl "boot splash check failed in $((SECONDS - t))s"
@@ -57,14 +60,24 @@ if [[ "${1:-}" == "--health" ]]; then
   done
   echo "HEALTH FAILED after $((SECONDS - T0))s: $why"; exit 1
 fi
+echo "==== installed files (1.3.8 manifest) ===="
+if [[ -s /usr/local/lib/sdr-station/MANIFEST ]]; then
+  miss=0; total=0
+  while IFS= read -r f; do total=$((total + 1)); [[ -e "/usr/local/lib/sdr-station/$f" ]] || { miss=$((miss + 1)); echo "MISSING: /usr/local/lib/sdr-station/$f"; }; done < /usr/local/lib/sdr-station/MANIFEST
+  echo "files: $((total - miss))/$total installed$([[ $miss -gt 0 ]] && echo " - re-run: sudo bash install.sh --upgrade")"
+else
+  echo "no manifest (installed before 1.3.6)"
+fi
 echo "==== Stillwave Trace verify ($(hostname), $(date '+%Y-%m-%d %H:%M %Z')) ===="
 echo "version: $(cat /usr/local/lib/sdr-station/VERSION 2>/dev/null || echo 'unknown (installed before versioning)')"
+echo "==== boot splash ===="
+if sp="$(bash /usr/local/lib/sdr-station/bin/sdr-splash check 2>&1)"; then echo "$sp"; else echo "FAIL: $sp"; fi
 echo "==== services ===="
 systemctl is-active icecast2 sdr-web sdr-net sdr-mode nginx
 echo "==== dongle mode ===="
 cat /etc/sdr/mode.env 2>/dev/null || echo "no /etc/sdr/mode.env (defaults to fm)"
 /usr/local/sbin/sdr-mode status
-for u in sdr-fm sdr-spectrum sdr-detect sdr-adsb; do
+for u in sdr-fm sdr-spectrum sdr-adsb sdr-ais; do
   echo "$u=$(systemctl is-active "$u" 2>/dev/null)"
 done
 MODE="$(/usr/local/sbin/sdr-mode current 2>/dev/null)"
@@ -80,7 +93,7 @@ ss -lptn | grep -E ':80 |:8000|:8080|:8081' || true
 echo "==== files ===="
 ls -l /usr/local/lib/sdr-station/web/radio.html /usr/local/lib/sdr-station/web/radio_control.py \
   /usr/local/lib/sdr-station/web/sdr_scope.py /usr/local/lib/sdr-station/web/spectrum.html \
-  /usr/local/lib/sdr-station/web/detect.html /usr/local/lib/sdr-station/web/adsb.html \
+  /usr/local/lib/sdr-station/web/aircraft_types.json /usr/local/lib/sdr-station/web/adsb.html \
   /usr/local/lib/sdr-station/web/mode.js /usr/local/lib/sdr-station/web/nav.js /usr/local/lib/sdr-station/web/more.html \
   /usr/local/lib/sdr-station/web/fieldnote.css /etc/nginx/sites-enabled/sdr
 echo -n "ADS-B decoder: "; /usr/local/lib/sdr-station/bin/adsb_run.sh --which || echo "not installed"
@@ -89,7 +102,7 @@ echo -n "flask :8080 "; curl -sS --max-time 3 http://127.0.0.1:8080/health; echo
 echo -n "nginx :80   "; curl -sS --max-time 3 http://127.0.0.1/health; echo
 echo "==== page title ===="
 curl -sS --max-time 3 http://127.0.0.1/ | tr '\n' ' ' | grep -o '<title>[^<]*</title>'
-for p in spectrum detect adsb network audio more; do
+for p in spectrum adsb network audio settings; do
   echo -n "/$p: "; curl -sS --max-time 3 "http://127.0.0.1/$p" | tr '\n' ' ' | grep -o '<title>[^<]*</title>'
 done
 echo "==== ADS-B map (offline) ===="
@@ -102,6 +115,17 @@ echo -n "display setup: "; ls /usr/local/sbin/fieldnote-display-setup /usr/local
 ls -l /usr/local/sbin/sdr-power 2>/dev/null || echo "sdr-power missing"
 sudo -n -l /usr/local/sbin/sdr-power reboot >/dev/null 2>&1 && echo "sudoers: sdr-power reboot/poweroff allowed for $(id -un)" || echo "sudoers: sdr-power not allowed for $(id -un) (the web Power menu needs it for the sdr-web user)"
 tail -3 /var/log/sdr-power.log 2>/dev/null || true
+echo "==== power supply (1.2.4) ===="
+if [[ -x /usr/local/sbin/sdr-psu ]]; then /usr/local/sbin/sdr-psu status 2>/dev/null || echo "sdr-psu status failed"; else echo "sdr-psu missing"; fi
+# 1.3.8: raw under-voltage readout (bit 0 = under-voltage now, bit 16 = since boot; 0x0 = clean)
+if command -v vcgencmd >/dev/null 2>&1; then
+  thr="$(vcgencmd get_throttled 2>/dev/null)"; v="${thr#*=}"
+  if [[ "$v" =~ ^0x[0-9a-fA-F]+$ ]]; then
+    echo "vcgencmd get_throttled: $v  under-voltage now: $(( (v & 0x1) ? 1 : 0 ))  since boot: $(( (v & 0x10000) ? 1 : 0 ))"
+  else echo "vcgencmd get_throttled: no reading ($thr)"; fi
+else echo "vcgencmd get_throttled: vcgencmd not installed"; fi
+curl -s -m 3 http://127.0.0.1:8080/api/power/supply 2>/dev/null || echo "(web power API not answering)"; echo
+grep -n 'stillwave-trace-power\|usb_max_current_enable' /boot/firmware/config.txt /boot/config.txt 2>/dev/null || echo "config.txt: no usb_max_current_enable (expected on a Pi 4)"
 if [[ -f /etc/systemd/system/fieldnote-kiosk.service.d/fieldnote-cursor.conf ]]; then
   echo "kiosk pointer: hidden ($(systemctl show fieldnote-kiosk -p Environment --value 2>/dev/null | tr ' ' '\n' | grep XCURSOR_PATH))"
 else
@@ -110,6 +134,18 @@ fi
 echo "==== kiosk screen (sdr-screen) ===="
 echo "sdr-screen=$(systemctl is-active sdr-screen 2>/dev/null)  sdr-screen-final=$(systemctl is-active sdr-screen-final 2>/dev/null)"
 /usr/local/sbin/sdr-screen status 2>/dev/null || echo "sdr-screen missing"
+if grep -q 'Raspberry Pi 5\|Compute Module 5' /proc/device-tree/model 2>/dev/null; then
+  echo "==== Pi 5 touch display helpers (1.2.2) ===="
+  echo "sdr-touch-reload=$(systemctl is-active sdr-touch-reload 2>/dev/null)"
+  # 1.2.3: nothing may write to the display chip (I2C 0x45) while the box reboots: no sdr-panel-off, and "sdr-screen final" only at power-off
+  if [[ -e /usr/local/sbin/sdr-panel-off || -e /etc/systemd/system/sdr-panel-off.service ]]; then
+    echo "WARNING: the 1.2.2 sdr-panel-off hook is still installed (it can leave the panel blank after a warm reboot); run: sudo bash install.sh --upgrade"
+  else
+    echo "shutdown hooks: no sdr-panel-off (ok); sdr-screen-final=$(systemctl is-enabled sdr-screen-final 2>/dev/null) (it writes the backlight at power-off only)"
+  fi
+  /usr/local/sbin/sdr-touch-reload --check 2>/dev/null || true
+  echo "full report: sudo sdr-panel-diag   (save: sudo sdr-panel-diag --save NAME)"
+fi
 echo -n "api/screen: "; curl -sS --max-time 3 http://127.0.0.1/api/screen | head -c 300; echo
 echo "==== bootloader power setting ===="
 if [[ $EUID -eq 0 ]]; then
@@ -136,7 +172,7 @@ case "$MODE" in
     curl -sS --max-time 3 -o /tmp/live-play.mp3 -D - http://127.0.0.1/play.mp3 | head -15
     ls -l /tmp/live-play.mp3
     ;;
-  spectrum|detect)
+  spectrum)
     echo "==== scope ($MODE) ===="
     curl -sS --max-time 3 http://127.0.0.1:8081/health; echo
     curl -sS --max-time 3 http://127.0.0.1/api/scope/status | head -c 600; echo

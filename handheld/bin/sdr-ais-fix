@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Stillwave Trace 1.3.1: install the AIS decoder (AIS-catcher, jvde-github) from pinned source.
+#   sudo sdr-ais-fix           build + install /usr/local/bin/AIS-catcher if missing (needs internet once; ~5 min Pi 5, ~10 min Pi 4)
+#   sdr-ais-fix --check        exit 0 if installed
+# AIS-catcher is GPL-3.0; we build the unmodified upstream source and install only the binary + its LICENSE.
+set -u
+REPO="${SDR_AIS_REPO:-https://github.com/jvde-github/AIS-catcher.git}"
+TAG="${SDR_AIS_TAG:-v0.70}"
+COMMIT="${SDR_AIS_COMMIT:-8833c64b3da0c42e9a724b9bd13eaab2fffadcca}"
+BIN="${SDR_AIS_BIN:-/usr/local/bin/AIS-catcher}"
+LOG=/var/log/sdr-ais-build.log
+case "${1:-}" in
+  --check) if [[ -x "$BIN" ]]; then echo "AIS decoder OK: $BIN"; exit 0; fi; echo "AIS decoder not installed (sudo sdr-ais-fix)"; exit 1 ;;
+  -h|--help) sed -n '2,6p' "$0"; exit 0 ;;
+esac
+[[ ${EUID} -eq 0 ]] || { echo "Run: sudo sdr-ais-fix" >&2; exit 1; }
+if [[ -x "$BIN" && "${1:-}" != --build ]]; then echo "AIS decoder OK: $BIN"; systemctl restart sdr-ais.service 2>/dev/null; exit 0; fi
+echo "Building AIS-catcher $TAG ($COMMIT) ..." | tee "$LOG"
+# 1.3.2 (Searer's 1.3.1 field test): a stale package list / half-configured packages made the build-tool install fail.
+# Refresh the lists, repair broken dependencies, check free space, then install.
+export DEBIAN_FRONTEND=noninteractive
+echo "Refreshing package lists (apt-get update) ..." | tee -a "$LOG"
+apt-get update >>"$LOG" 2>&1 || { echo "WARNING: apt-get update failed (no internet?). Connect to Wi-Fi with internet and run: sudo sdr-ais-fix. See $LOG" >&2; exit 1; }
+echo "Repairing broken packages (apt --fix-broken install) ..." | tee -a "$LOG"
+apt-get --fix-broken install -y >>"$LOG" 2>&1 || echo "WARNING: apt --fix-broken install reported a problem; trying the install anyway (see $LOG)" >&2
+NEED_MB="${SDR_AIS_NEED_MB:-600}"   # build tools + source + build tree, with headroom
+for d in / /tmp; do
+  free_mb="$(df -Pm "$d" 2>/dev/null | awk 'NR==2{print $4}')"
+  if [[ -n "$free_mb" && "$free_mb" -lt "$NEED_MB" ]]; then
+    echo "WARNING: not enough free space on $d: ${free_mb} MB free, the AIS build needs about ${NEED_MB} MB. Delete a map region (Settings > Download maps) or old screenshots, then run: sudo sdr-ais-fix" | tee -a "$LOG" >&2
+    exit 1
+  fi
+done
+apt-get install -y --no-install-recommends git build-essential cmake pkg-config librtlsdr-dev zlib1g-dev >>"$LOG" 2>&1 \
+  || { echo "WARNING: could not install the build tools (internet?). See $LOG" >&2; exit 1; }
+t="$(mktemp -d /tmp/ais-build.XXXXXX)"
+( set -e; cd "$t"; git init -q src && cd src; git remote add origin "$REPO"
+  git fetch -q --depth 1 origin "$COMMIT" 2>/dev/null || git fetch -q --depth 1 origin "refs/tags/$TAG"
+  git checkout -q FETCH_HEAD
+  got="$(git rev-parse HEAD)"; [[ "$got" == "$COMMIT" ]] || { echo "AIS-catcher source is $got, expected $COMMIT" >&2; exit 1; }
+  mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release >>"$LOG" 2>&1 && make -j"$(nproc 2>/dev/null || echo 2)" >>"$LOG" 2>&1
+  install -m 755 AIS-catcher "$BIN"
+  install -d /usr/local/share/doc/ais-catcher; install -m 644 ../LICENSE /usr/local/share/doc/ais-catcher/LICENSE
+  echo "$REPO $TAG $COMMIT (built $(date -u +%FT%TZ))" >/usr/local/share/doc/ais-catcher/SOURCE.txt
+) >>"$LOG" 2>&1; rc=$?; rm -rf "$t"
+[[ $rc -eq 0 && -x "$BIN" ]] || { echo "WARNING: AIS-catcher build failed; see $LOG. Boats stay off; everything else works." >&2; exit 1; }
+echo "AIS decoder OK: $BIN"
+/usr/local/sbin/sdr-dongles env >/dev/null 2>&1 || true
+systemctl restart sdr-ais.service 2>/dev/null || true

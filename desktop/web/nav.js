@@ -1,7 +1,33 @@
+// 1.3.4: shared friendly error card (approved mockup 1.3.4-errors). Raw helper output (sudo / command not found / paths)
+// never reaches the page text; it sits behind a collapsed Details toggle. traceErr.clean() is for one-line status messages.
+window.traceErr = window.traceErr || (function () {
+  const SYS = /sudo:|command not found|Traceback|\/usr\/(local\/)?s?bin\/|No such file|Permission denied|Errno|Internal Server Error|^HTTP 5\d\d/i;
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const sys = m => SYS.test(String(m || ''));
+  const clean = (m, fb) => sys(m) ? (fb || 'The helper on this box did not answer.') : String(m == null ? '' : m);
+  function card(what, why, raw, retry) {
+    const d = document.createElement('div'); d.className = 'ec'; d.setAttribute('role', 'alert');
+    d.innerHTML = '<h3>Couldn\u2019t read ' + esc(what) + '</h3><p>' + esc(why) + '</p><div class="ec-row"><button type="button" class="sm primary ec-retry">Try again</button>' +
+      '<button type="button" class="sm ec-web">Restart web UI</button></div>' + (raw ? '<details><summary>Details</summary><pre>' + esc(raw) + '</pre></details>' : '');
+    const rb = d.querySelector('.ec-retry'), wb = d.querySelector('.ec-web');
+    rb.onclick = () => { rb.disabled = true; rb.textContent = 'Checking\u2026'; Promise.resolve().then(() => retry && retry()).catch(() => {}).then(() => { rb.disabled = false; rb.textContent = 'Try again'; }); };
+    let armed = false;
+    wb.onclick = () => {
+      if (!armed) { armed = true; wb.textContent = 'Tap again to restart'; setTimeout(() => { armed = false; wb.textContent = 'Restart web UI'; }, 4000); return; }
+      wb.disabled = true; wb.textContent = 'Restarting\u2026';
+      fetch('/api/services/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which: 'sdr-web' }) }).catch(() => {});
+      setTimeout(() => location.reload(), 6000);
+    };
+    return d;
+  }
+  function show(host, what, why, raw, retry) { if (!host) return; host.innerHTML = ''; host.appendChild(card(what, why, raw, retry)); }
+  function hide(host) { if (host) host.innerHTML = ''; }
+  return { sys, clean, card, show, hide };
+})();
 // Stillwave Trace 1.0.8: single-load app. "/" is the shell (app.html): status strip + nav are built once and each tab
 // lives in its own same-origin frame that stays loaded, so switching tabs is instant (no page reload) and the map keeps
 // its instance. The shell runs the one live-update loop (/api/strip) and forwards it to the frames.
-// Pages opened on their own (/scan, /adsb, ...) jump into the shell (/#/scan) unless ?standalone=1.
+// Pages opened on their own (/listen, /adsb, ...) jump into the shell (/#/listen) unless ?standalone=1.
 // Status strip (top) + tab bar (bottom on phones / 5" kiosk, side rail on iPad / desktop).
 // Load it as the FIRST thing in <body> (<script src="/nav.js"></script>) so both bars exist before
 // the page paints. Tabs only navigate; they never change what the SDR is doing (that stays in the
@@ -40,7 +66,7 @@
     sizes: TS, get: tsGet,
     set(k) { if (!TS[k]) return; try { localStorage.setItem('traceTextSize', k); } catch (e) {} tsApply(); window.dispatchEvent(new Event('resize')); }
   };
-  const TAB_ROOT = { '/listen': 'listen', '/radio': 'listen', '/adsb': 'map', '/scan': 'scan', '/detect': 'scan', '/spectrum': 'spectrum', '/more': 'more' };
+  const TAB_ROOT = { '/listen': 'listen', '/radio': 'listen', '/adsb': 'map', '/scan': 'spectrum', '/detect': 'spectrum', '/spectrum': 'spectrum', '/more': 'settings', '/settings': 'settings' };
   let SH = null;
   try { SH = (window.parent !== window && window.parent.fieldnoteShell) || null; } catch (e) { SH = null; }
   if (SH) {                                                  // ---- a page inside the shell: no own chrome, no own polling ----
@@ -73,9 +99,8 @@
     radio: svg('<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M7 8l10-5"/><circle cx="15.5" cy="14" r="2.5"/><path d="M6.5 12h4M6.5 15.5h4"/>'),
     map: svg('<path d="M21 15.5v-1.8l-7.5-4.6V4a1.5 1.5 0 0 0-3 0v5.1L3 13.7v1.8l7.5-2.3v4.6l-2 1.5V21l3.5-1 3.5 1v-1.7l-2-1.5v-4.6z"/>', true),
     spectrum: svg('<path d="M2 20h20M4.5 20v-6M8.5 20V7M12.5 20v-9M16.5 20V4M20.5 20v-7"/>'),
-    detect: svg('<circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 4.9a10 10 0 0 0 0 14.2M19.1 4.9a10 10 0 0 1 0 14.2"/>'),
     dash: svg('<rect x="3" y="3" width="11" height="18" rx="1.5"/><rect x="16" y="3" width="5" height="8" rx="1"/><rect x="16" y="13" width="5" height="8" rx="1"/>'),
-    more: svg('<circle cx="5" cy="12" r="2.1"/><circle cx="12" cy="12" r="2.1"/><circle cx="19" cy="12" r="2.1"/>', true),
+    settings: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
     wifi: svg('<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.4a9.5 9.5 0 0 1 13 0M8.6 15.7a5 5 0 0 1 6.8 0"/><circle cx="12" cy="19" r="1.2" fill="currentColor"/>'),
     hotspot: svg('<circle cx="12" cy="10" r="2"/><path d="M12 12v9M8.5 6.5a5 5 0 0 0 0 7M15.5 6.5a5 5 0 0 1 0 7M5.6 3.6a9 9 0 0 0 0 12.8M18.4 3.6a9 9 0 0 1 0 12.8"/>'),
     net: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
@@ -86,32 +111,30 @@
   const TABS = [   // 1.0.8 order
     { id: 'listen', href: '/listen', label: 'Listen' },
     { id: 'map', href: '/adsb', label: 'Map' },
-    { id: 'scan', href: '/scan', label: 'Scan' },
     { id: 'spectrum', href: '/spectrum', label: 'Spectrum' },
-    { id: 'more', href: '/more', label: 'More' }
+    { id: 'settings', href: '/settings', label: 'Settings' }
   ];
-  ICON.scan = ICON.detect;
-  const PAGE_TAB = { 'listen': 'listen', 'radio': 'listen', 'adsb': 'map', 'spectrum': 'spectrum', 'scan': 'scan', 'detect': 'scan',
-                     'more': 'more', 'advanced': 'more', 'presets': 'more', 'network': 'more', 'audio': 'more', 'updates': 'more', 'screen': 'more', 'dongles': 'more', 'shots': 'more' };
-  const MODE_TAB = { fm: 'listen', adsb: 'map', spectrum: 'spectrum', detect: 'scan' };
-  const MODE_NAME = { fm: 'FM radio', adsb: 'ADS-B', spectrum: 'Spectrum', detect: 'Scan' };
-  const MODE_PAGE = { fm: '/listen', adsb: '/adsb', spectrum: '/spectrum', detect: '/scan' };
+  const PAGE_TAB = { 'listen': 'listen', 'radio': 'listen', 'adsb': 'map', 'spectrum': 'spectrum', 'scan': 'spectrum', 'detect': 'spectrum',
+                     'more': 'settings', 'settings': 'settings', 'presets': 'settings', 'network': 'settings', 'system': 'settings', 'audio': 'settings', 'updates': 'settings', 'screen': 'settings', 'dongles': 'settings', 'shots': 'settings', 'maps': 'settings', 'stations': 'settings', 'about': 'settings', 'roles': 'settings' };
+  const MODE_TAB = { fm: 'listen', adsb: 'map', spectrum: 'spectrum' };   // 1.3.2: Scan removed
+  const MODE_NAME = { fm: 'FM radio', adsb: 'ADS-B', spectrum: 'Spectrum' };
+  const MODE_PAGE = { fm: '/listen', adsb: '/adsb', spectrum: '/spectrum' };
   const page = location.pathname.replace(/^\/+|\.html$|\/+$/g, '');
-  let here = IS_SHELL ? 'map' : (PAGE_TAB[page] || 'more');
+  let here = IS_SHELL ? 'map' : (PAGE_TAB[page] || 'settings');
 
   // ---- build ----
   const strip = D.createElement('header');
   strip.className = 'qstrip'; strip.id = 'qstrip'; strip.setAttribute('aria-label', 'Trace status');
   strip.innerHTML =
-    '<a class="qs-chip qs-job" id="qsJob" href="/more">' +
-      '<span class="qs-dot unk" id="qsDot"></span>' +
-      '<span class="qs-txt"><span class="qs-k" id="qsJobK">SDR</span><span class="qs-v dash" id="qsJobV">—</span></span></a>' +
+    '<span class="qs-jobs" id="qsJobs"><a class="qs-chip qs-job" id="qsJob" href="/settings">' +
+      '<span class="qs-dot unk"></span>' +
+      '<span class="qs-txt"><span class="qs-k">SDR</span><span class="qs-v dash">—</span></span></a></span>' +
     '<a class="qs-chip qs-net" id="qsNet" href="/network">' +
       '<span class="qs-ico off" id="qsNetI">' + ICON.net + '</span>' +
       '<span class="qs-txt"><span class="qs-k" id="qsNetK">Network</span><span class="qs-v dash" id="qsNetV">—</span></span></a>' +
     '<a class="qs-chip qs-aud" id="qsAud" href="/audio">' +
       '<span class="qs-ico off" id="qsAudI">' + ICON.speaker + '</span>' +
-      '<span class="qs-txt"><span class="qs-k">Audio</span><span class="qs-v dash" id="qsAudV">—</span></span></a>' +
+      '<span class="qs-txt"><span class="qs-k" id="qsAudK">Audio</span><span class="qs-v dash" id="qsAudV">—</span></span></a>' +
     '<span class="qs-pwr" id="qsPwr"></span>';
 
   const tabs = D.createElement('nav');
@@ -155,49 +178,93 @@
   function metricText(mode, m) {
     if (!m) return null;
     if (mode === 'fm' && typeof m.mhz === 'number') {
-      const air = m.band === 'airband' || m.band === 'noaa' || m.band === 'other';
+      const air = m.band === 'airband' || m.band === 'noaa' || m.band === 'frs' || m.band === 'other' || m.band === 'any';
       const f = air ? m.mhz.toFixed(3) : (Math.round(m.mhz * 10) / 10).toFixed(1) + ' MHz';
       const nm = m.name && !/^Tune /.test(m.name) ? m.name : '';
       return nm ? [nm, nm + (air ? ' · ' + f : '')] : [f, f];   // 1.0.8: station name in the strip
     }
     if (mode === 'adsb' && typeof m.count === 'number') return [m.count + ' aircraft', m.count + ' aircraft'];
     if (mode === 'spectrum' && mhz(m.center_hz, 2)) return [mhz(m.center_hz, 2) + ' MHz', mhz(m.center_hz, 3) + ' MHz'];
-    if (mode === 'detect' && mhz(m.start_hz, 0) && mhz(m.stop_hz, 0)) {
-      const r = trimMhz(mhz(m.start_hz, 1)) + '–' + trimMhz(mhz(m.stop_hz, 1)) + ' MHz';
-      return [r, r];
-    }
     return null;
   }
-  function renderJob() {
-    const md = S && S.mode, mode = md && md.mode;
-    const dot = $('qsDot'), job = $('qsJob');
-    let k = 'SDR', v = ['—'], cls = 'dash', d = 'unk', label;
-    if (busyTo) {
-      k = 'SDR'; v = ['Switching…', 'Switching to ' + (MODE_NAME[busyTo] || busyTo) + '…']; cls = 'warn'; d = 'warn';
-    } else if (md && MODE_NAME[mode]) {
-      k = MODE_NAME[mode]; d = 'ok';
-      if (mode === 'fm' && S.metric && S.metric.band === 'airband') k = 'Airband';
-      else if (mode === 'fm' && S.metric && S.metric.band === 'noaa') k = 'NOAA';
-      const mt = metricText(mode, S.metric);
-      if (mt) { v = mt; cls = ''; } else { v = ['—']; cls = 'dash'; }
-    } else if (md && md.off) {
-      k = 'SDR'; v = ['Off', 'Off']; cls = 'dash'; d = '';
-    } else if (md && md.dongles === 0) {
-      k = 'SDR'; v = ['No radio', 'No radio detected']; cls = 'warn'; d = 'warn';
-    } else if (md && mode === 'none') {
-      k = 'SDR'; v = ['Off', 'Off (nothing running)']; cls = 'dash'; d = '';
+  // 1.3.2: one chip per SDR (USB order): "SDR 1 · ADS-B / 59 AC", "SDR 2 · FM / Tuning…" (amber) -> "Live 98.7" (green);
+  // errors in red use the app's own words (Reconnecting… / No radio / Switching… / No signal). AIS: "SDR 2 · AIS / 4 boats".
+  // One dongle = one chip. Live status comes from /api/strip "live" (radio_control.strip_live).
+  const ROLE_NAME = { adsb: 'ADS-B', ais: 'AIS', radio: 'Radio', spare: 'Spare' };
+  function radioJob(mode) {
+    const m = S && S.metric;
+    if (mode === 'fm') return (m && m.band === 'airband') ? 'Airband' : (m && m.band === 'noaa') ? 'NOAA' : (m && m.band === 'frs') ? 'FRS' : (m && m.band === 'any') ? 'Any MHz' : 'FM';
+    return MODE_NAME[mode] || 'Radio';
+  }
+  function radioState(mode) {   // -> [text, class, dot]
+    const lv = S && S.live, m = S && S.metric;
+    if (busyTo) return ['Switching…', 'err', 'err'];
+    if (mode === 'fm') {
+      const st = lv && lv.radio, f = m && typeof m.mhz === 'number' ? (m.band === 'fm' || !m.band ? m.mhz.toFixed(1) : m.mhz.toFixed(3)) : '';
+      if (st === 'tuning') return ['Tuning…', 'warn', 'warn'];
+      if (st === 'live') return ['Live ' + f, 'live', 'ok'];
+      if (st === 'nosignal') return ['No signal', 'err', 'err'];
+      if (st === 'reconnecting') return ['Reconnecting…', 'err', 'err'];
+      if (st === 'off') return ['Off', 'dash', ''];
+      const mt = metricText(mode, m); return mt ? [mt[0], '', 'ok'] : ['—', 'dash', 'unk'];
     }
-    $('qsJobK').textContent = k;
-    text('qsJobV', v[0], v[1], cls);
-    dot.className = 'qs-dot ' + d;
-    job.href = (md && MODE_PAGE[mode]) || '/more';
-    job.title = (mode === 'fm' && S.metric && S.metric.name) ? 'FM radio: ' + S.metric.name : '';
-    label = 'SDR job: ' + (md ? (MODE_NAME[mode] || (mode === 'none' ? 'off' : 'unknown')) : 'unknown') + (cls ? '' : ', ' + (v[1] || v[0]));
-    job.setAttribute('aria-label', busyTo ? 'SDR job: switching' : label);
-    // live dot on the tab whose job the SDR is doing (status only; tabs never switch modes)
+    if (mode === 'adsb') { const n = (lv && lv.adsb_count != null) ? lv.adsb_count : (m && m.count); return n != null ? [n + ' AC', 'live', 'ok'] : ['—', 'dash', 'unk']; }
+    const mt = metricText(mode, m); return mt ? [mt[0], 'live', 'ok'] : ['—', 'dash', 'unk'];
+  }
+  function chipHTML(c, first) {
+    return '<a class="qs-chip qs-job qs-sdr' + (c.cls === 'err' ? ' err' : c.cls === 'warn' ? ' warn' : '') + '"' + (first ? ' id="qsJob"' : '') + ' href="' + c.href + '" aria-label="' + c.aria.replace(/"/g, '') + '">' +
+      '<span class="qs-dot ' + c.dot + (c.num ? ' num' : '') + '">' + (c.num ? '<b>' + c.num + '</b>' : '') + '</span><span class="qs-txt"><span class="qs-k"></span><span class="qs-v ' + c.cls + '"></span></span></a>';
+  }
+  function renderJob() {
+    const md = S && S.mode, mode = md && md.mode, rd = S && S.radios, lv = S && S.live, box = $('qsJobs');
+    const chips = [];
+    const dl = rd && Array.isArray(rd.dongles) ? rd.dongles : null;
+    if (md && md.off) chips.push({ k: 'SDR', v: 'Off', cls: 'dash', dot: '', href: '/dongles' });
+    else if ((md && md.dongles === 0) || (dl && dl.length === 0)) chips.push({ k: 'SDR', v: 'No radio', cls: 'err', dot: 'err', href: '/dongles' });
+    else if (!dl || dl.length <= 1 || !(rd.dual || rd.degraded || dl.some(d => d.role === 'ais'))) {
+      // one dongle (or roles not set up): one chip for whatever the SDR is doing
+      if (!md) chips.push({ k: 'SDR', v: busyTo ? 'Switching…' : '—', cls: busyTo ? 'err' : 'dash', dot: busyTo ? 'err' : 'unk', href: '/settings' });
+      else if (mode === 'none' && !busyTo) chips.push({ k: 'SDR', v: 'Off', cls: 'dash', dot: '', href: '/settings' });
+      else { const [v, cls, dot] = radioState(mode); chips.push({ k: 'SDR · ' + (mode === 'adsb' ? 'ADS-B' : radioJob(mode)), v, cls, dot, href: MODE_PAGE[mode] || '/settings' }); }
+    } else {
+      const miss = rd.missing || [];
+      dl.forEach((d, i) => {
+        const n = 'SDR ' + (i + 1) + ' · ', c0 = chips.length;
+        if (d.role === 'adsb') {
+          const c = lv && lv.adsb_count;
+          chips.push(c != null ? { k: n + 'ADS-B', v: c + ' AC', cls: 'live', dot: 'ok', href: '/adsb' } : { k: n + 'ADS-B', v: md && md.adsb_live ? '—' : 'Off', cls: 'dash', dot: md && md.adsb_live ? 'unk' : '', href: '/adsb' });
+        } else if (d.role === 'ais') {
+          const a = lv && lv.ais;
+          chips.push(a && a.live ? { k: n + 'AIS', v: a.n + (a.n === 1 ? ' boat' : ' boats'), cls: 'live', dot: 'ok', href: '/adsb' } : { k: n + 'AIS', v: 'Reconnecting…', cls: 'err', dot: 'err', href: '/dongles' });
+        } else if (d.role === 'radio') {
+          if (mode === 'adsb' || mode === 'none' || !mode) chips.push({ k: n + 'Radio', v: busyTo ? 'Switching…' : 'Off', cls: busyTo ? 'err' : 'dash', dot: busyTo ? 'err' : '', href: '/listen' });
+          else { const [v, cls, dot] = radioState(mode); chips.push({ k: n + radioJob(mode), v, cls, dot, href: MODE_PAGE[mode] || '/listen' }); }
+        } else chips.push({ k: n + (ROLE_NAME[d.role] || 'Spare'), v: 'Spare', cls: 'dash', dot: '', href: '/dongles' });
+        if (chips[c0]) chips[c0].num = i + 1;   // 1.3.6: narrow screens show a "1"/"2" badge instead of "SDR 1 · "
+      });
+      miss.forEach(r => chips.push({ k: 'SDR · ' + (ROLE_NAME[r] || r), v: 'No radio', cls: 'err', dot: 'err', href: '/dongles' }));
+    }
+    chips.forEach(c => { c.aria = c.k + ': ' + c.v; });
+    const sig = JSON.stringify(chips);
+    if (box.dataset.sig !== sig) {
+      box.dataset.sig = sig;
+      box.innerHTML = chips.map((c, i) => chipHTML(c, i === 0)).join('');
+      box.querySelectorAll('.qs-chip').forEach((el, i) => {
+        const c = chips[i], k = el.querySelector('.qs-k'), m = c.num ? /^(SDR \d · )(.*)$/.exec(c.k) : null;
+        if (m) { const p = document.createElement('span'); p.className = 'qs-kn'; p.textContent = m[1]; k.append(p, m[2]); } else k.textContent = c.k;
+        const v = el.querySelector('.qs-v'); v.textContent = c.v;
+        if (/^Live /.test(c.v)) { v.dataset.short = '▶ ' + c.v.slice(5); }
+      });
+      box.classList.toggle('multi', chips.length > 1);
+      setTimeout(measure, 0);
+    }
+    // live dot on the tab whose job an SDR is doing (status only; tabs never switch modes)
     tabs.querySelectorAll('.qlive').forEach(x => x.remove());
-    const t = md && MODE_TAB[mode] && tabs.querySelector('[data-tab="' + MODE_TAB[mode] + '"]');
-    if (t && !busyTo) { const i = D.createElement('i'); i.className = 'qlive'; i.title = 'The SDR is doing this now'; t.appendChild(i); }
+    const ids = new Set();
+    if (!busyTo && md && MODE_TAB[mode]) ids.add(MODE_TAB[mode]);
+    if (md && md.adsb_live) ids.add('map');
+    if (lv && lv.ais && lv.ais.live) ids.add('map');
+    ids.forEach(id => { const t = tabs.querySelector('[data-tab="' + id + '"]'); if (t) { const i = D.createElement('i'); i.className = 'qlive'; i.title = 'An SDR is doing this now'; t.appendChild(i); } });
   }
   function renderNet() {
     const n = S && S.net, ic = $('qsNetI'), a = $('qsNet');
@@ -214,23 +281,48 @@
   }
   function renderAudio() {
     const au = S && S.audio, ic = $('qsAudI'), a = $('qsAud');
-    let v = ['—'], cls = 'dash', icon = ICON.speaker, on = false;
+    let k = 'Audio', v = ['—'], cls = 'dash', icon = ICON.speaker, on = false;
     if (au) {
-      const nm = au.speaker || 'Speaker';
+      // 1.3: Off/none shows SPEAKER; full name on the Bluetooth / Audio page
       const wants = au.output === 'speaker' || au.output === 'both';
-      if (au.output === 'phone' || !au.output) { v = ['Phone', 'Phone stream']; cls = ''; icon = ICON.phone; on = true; }
-      else if (wants && au.connected) {
-        v = au.output === 'both' ? ['Both', nm + ' + phone'] : ['Speaker', nm]; cls = ''; on = true;
-      } else if (wants) {
-        v = au.speaker ? ['No speaker', nm + ' not connected'] : ['No speaker', 'No speaker paired']; cls = 'warn';
-      }
+      if (au.output === 'phone' || !au.output) { v = ['Phone', 'Phone']; cls = ''; icon = ICON.phone; on = true; }
+      // 1.3.1: the connected speaker's own name, trimmed to fit one line (SPEAKER when it has none)
+      else if (wants && au.connected) { const nm = String(au.speaker || '').trim(); k = nm ? (nm.length > 12 ? nm.slice(0, 11).trimEnd() + '…' : nm) : 'Speaker'; v = ['✓', au.output === 'both' ? '✓ + phone' : '✓']; cls = ''; on = true; }
+      else if (wants) { k = 'Speaker'; v = ['Off', 'Off']; cls = 'warn'; }
     }
+    $('qsAudK').textContent = k;
     text('qsAudV', v[0], v[1], cls);
     ic.innerHTML = icon; ic.className = 'qs-ico' + (on ? '' : ' off');
-    a.setAttribute('aria-label', 'Audio: ' + (v[1] || v[0]) + '. Open Audio.');
+    a.setAttribute('aria-label', k + ': ' + (v[1] || v[0]) + (au && au.speaker ? ' (' + au.speaker + ')' : '') + '. Open Audio.');
+  }
+  // ---- 1.2.4 weak power supply banner (from /api/strip psu; no extra polling). Pushes the content down; the X hides it
+  // until the NEXT new under-voltage event (event number + boot id, saved per device). ----
+  let pwr = null;
+  function psuKey(p) { return (p.boot || '') + ':' + (p.event || 0); }
+  function psuFit() {
+    const h = pwr && !pwr.hidden ? Math.ceil(pwr.getBoundingClientRect().height) + 16 : 0;
+    if (h) H.style.setProperty('--pwr-h', h + 'px'); else H.style.removeProperty('--pwr-h');
+  }
+  function renderPsu() {
+    const p = S && S.psu;
+    let dis = null; try { dis = localStorage.getItem('tracePsuDismissed'); } catch (e) {}
+    const show = !!(p && (p.state === 'weak_now' || p.state === 'weak_seen') && dis !== psuKey(p));
+    if (show && !pwr) {
+      pwr = D.createElement('div'); pwr.id = 'pwrwarn'; pwr.className = 'umsg warn'; pwr.setAttribute('role', 'status');
+      pwr.innerHTML = '<span class="pw-ico"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span>' +
+        '<span class="pw-t"><b>Power supply too weak.</b> Use a stronger battery (5&nbsp;V, 3&nbsp;A or more).</span>' +
+        '<button type="button" class="pw-x" aria-label="Dismiss">\u2715</button>';
+      pwr.querySelector('.pw-x').onclick = () => {
+        try { if (S && S.psu) localStorage.setItem('tracePsuDismissed', psuKey(S.psu)); } catch (e) {}
+        pwr.hidden = true; psuFit();
+      };
+      D.body.appendChild(pwr);
+      if (window.ResizeObserver) new ResizeObserver(psuFit).observe(pwr);
+    }
+    if (pwr) { pwr.hidden = !show; psuFit(); }
   }
   function render() {
-    renderJob(); renderNet(); renderAudio();
+    renderJob(); renderNet(); renderAudio(); renderPsu();
     D.dispatchEvent(new CustomEvent('fieldnote-strip', { detail: S }));
     eachFrame(w => w.document.dispatchEvent(new w.CustomEvent('fieldnote-strip', { detail: S })));
   }
@@ -238,20 +330,22 @@
   // ---- shell router (1.0.8) ----
   const frames = {};             // tab id -> iframe (kept alive)
   function eachFrame(fn) { Object.values(frames).forEach(f => { try { if (f.contentWindow && f.contentWindow.document) fn(f.contentWindow); } catch (e) {} }); }
-  function tabOf(path) { const p = path.split(/[?#]/)[0].replace(/\.html$/, '').replace(/\/+$/, '') || '/adsb'; return PAGE_TAB[p.slice(1)] || 'more'; }
+  function tabOf(path) { const p = path.split(/[?#]/)[0].replace(/\.html$/, '').replace(/\/+$/, '') || '/adsb'; return PAGE_TAB[p.slice(1)] || 'settings'; }
   function setHere(id) {
     here = id;
     tabs.querySelectorAll('.qtab').forEach(t => { const on = t.dataset.tab === id; t.classList.toggle('on', on); if (on) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current'); });
   }
   function go(url, opt) {
     url = url || '/adsb';
+    url = url.replace(/^\/more(\.html)?(?=[?#]|$)/, '/settings');
+    url = url.replace(/^\/(scan|detect)(\.html)?(?=[?#]|$)[^#]*/, '/spectrum');   // 1.3.2: Scan was removed; old links open Spectrum   // 1.3: More was renamed Settings; old links land on Settings
     if (url === '/' || url === '/app') url = '/adsb';   // 1.2.0: Trace opens on Map/ADS-B (idle START screen)
     const id = tabOf(url), root = (TABS.find(t => t.id === id) || {}).href;
     let f = frames[id];
     if (!f) {
       f = D.createElement('iframe'); f.className = 'qframe'; f.title = id; f.dataset.tab = id;
       f.src = url; frames[id] = f; D.getElementById('qframes').appendChild(f);
-    } else if ((opt && opt.reload) || (id === here && url.split('?')[0] === root) || url !== root || id === 'more') {   // 1.1.0.1: the More tab always opens the More menu itself
+    } else if ((opt && opt.reload) || (id === here && url.split('?')[0] === root) || url !== root || id === 'settings') {   // 1.1.0.1: the More tab always opens the More menu itself
       try { if (f.contentWindow.location.pathname + f.contentWindow.location.search !== url) f.contentWindow.location.replace(url); } catch (e) { f.src = url; }
     }
     Object.entries(frames).forEach(([k, el]) => { el.hidden = k !== id; });
@@ -344,4 +438,25 @@
   render();
   refresh();
   window.fieldnoteStrip = { refresh, get: () => S, icons: ICON };
+})();
+// 1.3.5: kiosk auto-reload. The kiosk shell (top window, html.kiosk) polls /api/ui/epoch and reloads itself when it changes:
+// after an update restarts the web UI, after a map is installed or deleted, or from Settings > System > Reload screen.
+// Nobody needs a keyboard (Ctrl+Shift+R) on the device. Phones and other browsers are never reloaded under the user.
+(function () {
+  if (window.top !== window || window.__traceEpoch) return;
+  window.__traceEpoch = true;
+  let first = null, fails = 0;
+  async function tick() {
+    if (!document.documentElement.classList.contains('kiosk')) return setTimeout(tick, 15000);
+    try {
+      const j = await (await fetch('/api/ui/epoch', { cache: 'no-store' })).json();
+      fails = 0;
+      if (j && j.epoch) {
+        if (first === null) first = j.epoch;
+        else if (j.epoch !== first) { location.reload(); return; }
+      }
+    } catch (e) { fails++; }   // web UI restarting: keep the old epoch, reload when it answers with a new one
+    setTimeout(tick, fails ? 3000 : 5000);
+  }
+  setTimeout(tick, 4000);
 })();

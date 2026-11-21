@@ -358,7 +358,7 @@ body {
 /* -- bottom tab bar: navigation only (never changes the SDR mode) -- */
 .qtabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 900;
-  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px;
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px;   /* 1.3.4: one column per tab (Scan removed in 1.3.2 left a gap) */
   padding: 6px max(6px, env(safe-area-inset-right, 0px)) max(6px, env(safe-area-inset-bottom, 0px)) max(6px, env(safe-area-inset-left, 0px));
   background: rgba(10, 17, 27, .98); border-top: 1px solid var(--line);
   box-shadow: 0 -6px 18px rgba(0, 0, 0, .25);
@@ -1062,6 +1062,7 @@ html.kiosk.hdmi:not(.shell):not(.embed) body { padding-left: calc(var(--rail) + 
    Every secondary line (page leads, card notes, status lines, list metadata, player notes, Audio / Network / Services
    help) is the same voice as the More rows: JetBrains Mono, Static colour, small size, no red unless it is an error. */
 .lead, .note, .msub, .status, .hint, .hint .sub2, .nmeta, .unotes, .umsg, .spkname .nmeta, .mapnote, #mOpen, .v-start p, .v-start .tiny,
+.pwr-full .pwr-sub, .scr-shut .scr-sub,
 .net .nmeta, .filepick span, .bs-note {
   font-family: var(--mono); letter-spacing: .01em; line-height: 1.5;
 }
@@ -1219,3 +1220,269 @@ button.net.on { background: var(--signal-wash); border-color: var(--signal); }
 #apcard .apform { flex-direction: column; align-items: stretch; } #apcard .apform label { width: 100%; }
 #apcard .apband button.on { background: var(--signal); color: var(--green-ink) !important; border-color: var(--signal); }
 #apcard #apPskShow { min-height: 52px; min-width: 6.5rem; }
+
+/* ===== 1.2.1 ===== */
+.v-gate .v-ico svg { width: 72px; height: 72px; display: inline-block; }   /* START screen aircraft: line icon (same path as the Map tab) */
+html.kiosk .maplibregl-ctrl-attrib a { pointer-events: none; text-decoration: none; cursor: default; }   /* map credit is text only on the kiosk */
+
+/* 1.2.4 weak power supply banner (nav.js, shell + standalone pages): sits under the status strip and pushes the content
+   down by its own height (--pwr-h); the X hides it until the next new under-voltage event. Hidden with the full-screen map. */
+#pwrwarn { position: fixed; left: calc(var(--rail, 0px) + 10px); right: 10px; top: calc(var(--chrome-top) + 8px); z-index: 50;
+  display: flex; align-items: center; gap: .7rem; margin: 0; padding: .55rem .55rem .55rem .85rem; box-shadow: 0 8px 22px rgba(0,0,0,.45); }
+#pwrwarn[hidden] { display: none; }
+#pwrwarn .pw-ico { flex: none; color: var(--orange); display: flex; }
+#pwrwarn .pw-t { flex: 1; min-width: 0; line-height: 1.35; }
+#pwrwarn .pw-t b { color: var(--orange); font-weight: 700; }
+#pwrwarn .pw-x { flex: none; min-width: var(--tap); min-height: var(--tap); padding: 0; display: flex; align-items: center; justify-content: center; }
+html.shell #qframes { top: calc(var(--chrome-top) + var(--pwr-h, 0px)); }
+html:not(.shell):not(.embed) body { padding-top: calc(var(--chrome-top) + var(--pwr-h, 0px) + var(--pad)); }
+html.shell.mapfs #pwrwarn { display: none; }
+html.shell.mapfs #qframes { top: 0; }
+/* More > This box: power supply row */
+.mrow .ms.pv-ok { color: var(--green, var(--ok)); }
+.mrow .ms.pv-warn { color: var(--orange); }
+.pv-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: currentColor; margin-right: .45em; vertical-align: .05em; }
+
+/* ======================= Stillwave Trace 1.2.5: FM presets shortcut + Large/XL form reflow ======================= */
+.fm-presets-h { display:flex; align-items:center; justify-content:space-between; gap:.6rem; flex-wrap:wrap; margin-bottom:.5rem; }
+.fm-presets-h h2 { margin:0; }
+a.fm-edit { display:inline-flex; align-items:center; gap:.35rem; min-height:44px; padding:0 1rem; border-radius:999px; border:1px solid var(--line);
+  background:var(--panel); color:var(--signal); font-family:var(--mono); font-weight:700; text-transform:uppercase; letter-spacing:.08em; font-size:.8rem; text-decoration:none; white-space:nowrap; }
+/* grid tracks may shrink below the inputs' intrinsic width; inputs fill their cell */
+form.grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+form.grid2 label { min-width:0; }
+form.grid2 label > input, form.grid2 label > select { width:100%; min-width:0; box-sizing:border-box; }
+form.grid2 .row button { flex:1 1 auto; white-space:nowrap; }
+/* Large / XL on the portrait handheld (720 px / zoom = 626 / 554 css px): one column */
+@media (max-width: 800px) { html[data-ts="large"] form.grid2, html[data-ts="xl"] form.grid2 { grid-template-columns: minmax(0,1fr); } }
+/* XL: band tabs no longer break "AIRBAND" mid-word */
+html[data-ts="xl"] .v-sub button { letter-spacing:.02em; white-space:nowrap; }
+
+.pre-back-h { display:flex; justify-content:flex-start; margin:.2rem 0 .6rem; }
+
+/* ======================= Stillwave Trace 1.2.5: radio roles, header chip, aircraft model in the list ======================= */
+.qs-chip.dual-chip .qs-k.ok, .qs-chip.dual-chip .qs-v.ok { color: var(--signal); }
+.qs-chip.dual-chip .qs-v.no { color: #f5a524; }
+.qs-chip.dual-chip.warn { border-color: #f5a524; }
+.amodel.hide { display: none; }
+#planes .mrow2 { display: block; font-family: var(--mono); font-size: .78em; letter-spacing: .03em; color: var(--static); font-weight: 600; white-space: nowrap; }
+#planes .mrow2.hide { display: none; }
+#planes .mrow2 .unk { font-style: italic; opacity: .75; }
+.role-card .rc-h { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.role-card .rc-h h2 { margin: 0; }
+.role-card .rc-sn { font-family: var(--mono); font-size: .85rem; color: var(--static); letter-spacing: .04em; margin: .35rem 0 .8rem; overflow-wrap: anywhere; }
+.role-card .v-seg2 { display: flex; flex-wrap: wrap; }
+.role-card .v-seg2 button { flex: 1 1 7rem; }
+.role-card .rc-live { font-family: var(--mono); font-size: .8rem; color: var(--signal); margin: .7rem 0 0; letter-spacing: .04em; }
+.role-card.ident { border-color: var(--signal); box-shadow: 0 0 0 2px rgba(74, 222, 128, .35), 0 0 24px rgba(74, 222, 128, .35); }
+.role-card.gone { opacity: .5; }
+.role-card.gone .rc-live { color: #f5a524; }
+.about-list p { margin: .35rem 0; }
+
+/* ======================= Stillwave Trace 1.2.7: navigation ======================= */
+/* ‹ More on More sub-pages */
+.nav-back { margin:.2rem 0 .5rem; }
+/* Listen: Station bank + Edit presets stay together on one line; on narrow screens (handheld XL) the pair moves to a second row */
+.fm-links { display:flex; gap:.5rem; flex-wrap:nowrap; margin-left:auto; align-items:center; }
+.fm-presets-h h2 { min-width:0; }
+html[data-ts="xl"] .fm-links a.fm-edit { padding:0 .75rem; letter-spacing:.04em; }
+.air-presets-h { flex-wrap:wrap; gap:.5rem; }
+.air-presets-h .fm-links { flex-wrap:wrap; justify-content:flex-end; }
+
+/* ======================= Stillwave Trace 1.2.8 ======================= */
+/* Airband/NOAA tuner at XL on the 5" handheld: the frequency cell may shrink, so the "+" step button stays inside the card */
+.v-tune { grid-template-columns: auto minmax(0, 1fr) auto; }
+.v-freq { min-width: 0; }
+html[data-ts="xl"] .v-tune .v-freq { font-size: min(64px, 11vw); }
+html[data-ts="xl"] .v-tune .v-freq small { display: block; margin: 6px 0 0; white-space: nowrap; }
+
+/* ===== 1.2.9 text audit (brand) ===== */
+/* H1 single-word titles: Paper (accent only on the second word, as in the brand deck) */
+/* H1: single-word titles in Paper (markup change in more.html / shots.html) */
+/* T1 tags like "saved for FM": Static outline, not amber (amber/red are for warnings only) */
+.v-tag{color:var(--static,#A3B5A9);border-color:rgba(163,181,169,.45)}
+/* T2 tuner unit under the frequency as HUD label */
+.v-freq small{text-transform:uppercase;letter-spacing:.16em}
+/* M1 More > Reset SDR USB pill: mono uppercase (stays orange: it is a caution action) */
+.mrow .mpill{font-family:var(--mono);text-transform:uppercase;letter-spacing:.12em}
+/* S1 Screen > text size options: uppercase HUD like every other option button */
+.tsopt span{ text-transform:uppercase; letter-spacing:.1em }
+
+/* 1.2.9 short names: preset chip names are one line, never wrap */
+.v-pre span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.v-pre{min-width:0}
+
+/* ===== 1.2.9 body text: mono, ALL CAPS (Searer). Anton headlines unchanged. Typed and case-sensitive text keeps its case. ===== */
+:root { --font: var(--mono); }
+body, body * { text-transform: uppercase !important; }
+input, select, textarea, option, code, pre, .ulog, #log, .kbd, .kbd *, #appw, .keep-case, .keep-case * { text-transform: none !important; }
+input::placeholder, textarea::placeholder { text-transform: uppercase; }
+/* 1.2.9: wider mono caps — single-word option buttons never break mid-word */
+.bs-gain button, .seg button { white-space: nowrap; overflow-wrap: normal; letter-spacing: .04em; padding-left: .2em; padding-right: .2em; min-width: 0; }
+
+/* ===== 1.3 ===== */
+/* Network: Wi-Fi switch row, one-line error with Details, hotspot form without gaps (item 12, 14) */
+#netcard .nw-row { margin: 0 0 .5rem; }
+#netcard .nw-row h2 { margin: 0; }
+.nw-err { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: .6rem; margin-top: .6rem; text-align: left;
+  border: 1px solid var(--danger-line); color: var(--red); background: var(--danger-bg); min-height: var(--tap); }
+.nw-err .nw-more { color: var(--muted); white-space: nowrap; }
+.nw-err.hide, #netlastD.hide { display: none !important; }
+#apcard .apform { gap: .5rem; margin: .4rem 0 0; }
+#apcard .apform label { margin: 0; }
+#apcard .v-lbl { margin: .6rem 0 .3rem; }
+#apcard .aprow { margin: .6rem 0; }
+#apcard .note { margin-top: .5rem; }
+/* New preset: labels line up with their fields (item 8) */
+.np-form label { display: grid !important; grid-template-columns: minmax(0, 9.5em) minmax(0, 1fr); align-items: center; gap: .6rem; flex-direction: initial; }
+.np-form label[hidden] { display: none !important; }
+.np-form label > input { width: 100%; min-width: 0; }
+html[data-ts="xl"] .np-form label, html[data-ts="large"] .np-form label { grid-template-columns: 1fr; gap: .25rem; }
+/* Station bank STATE ▾ / CITY ▾ pickers (item 11) */
+.sb-pick { display: flex; gap: .5rem; flex-wrap: wrap; margin: .6rem 0; }
+.sb-dd { position: relative; flex: 1 1 12rem; min-width: 0; }
+.sb-ddb { width: 100%; display: flex; gap: .5rem; align-items: center; justify-content: flex-start; min-height: var(--tap); text-align: left; }
+.sb-ddb .sb-ddk { color: var(--muted); white-space: nowrap; }
+.sb-ddb b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sb-ddl { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px); max-height: 50vh; overflow: auto; background: var(--panel); border: 1px solid var(--signal); border-radius: 10px; }
+.sb-ddl[hidden] { display: none; }
+.sb-ddl button { display: flex; width: 100%; justify-content: space-between; gap: .5rem; border: 0; border-bottom: 1px solid var(--grid); border-radius: 0; background: transparent; min-height: var(--tap); text-align: left; }
+.sb-ddl button.on { color: var(--signal); }
+.sb-ddl button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sb-ddl button small { color: var(--muted); white-space: nowrap; }
+.sb-about { background: transparent; border: 0; color: var(--muted); padding: .4rem 0; min-height: 0; margin-top: .6rem; }
+/* Listen (items 4, 9, 21, 22): pinned activity strip, tuner card with gear, presets right under it */
+.page-listen .wrap { position: relative; }
+.page-listen .v-now { position: sticky; top: 0; z-index: 15; display: flex; align-items: center; flex-wrap: wrap; gap: .3rem .6rem; padding: .45rem .6rem;
+  background: var(--panel); border: 1px solid var(--signal); border-left-width: 3px; border-radius: 10px; margin: 0 0 .7rem; }
+.page-listen .v-now b { white-space: nowrap; }
+.v-live { background: var(--red); color: #fff; border-radius: 5px; padding: 1px 7px; font-weight: 700; letter-spacing: .1em; white-space: nowrap; }
+.v-live.off { background: transparent; color: var(--static); border: 1px solid var(--line); }
+.v-talk { color: var(--static); white-space: nowrap; } .v-talk.on { color: var(--signal); font-weight: 700; }
+.v-sig { color: var(--static); white-space: nowrap; margin-left: auto; letter-spacing: 0; }
+.v-stop { white-space: nowrap; min-height: 40px; }
+.page-listen .v-sub { margin: 0 0 .6rem; }
+.v-tcard { padding-top: .7rem; padding-bottom: .5rem; }
+.v-tcard .v-h { margin-bottom: .3rem; }
+.v-gear { white-space: nowrap; }
+.v-gearp { border: 1px solid var(--line); border-radius: 10px; padding: .5rem .6rem; margin: .3rem 0 .5rem; }
+.v-gearp[hidden] { display: none !important; }
+.page-listen .v-freq { font-size: 54px; }
+.page-listen .v-step { min-width: 56px; min-height: 56px; }
+.v-steprow { display: flex; align-items: center; gap: .6rem; margin-top: .5rem; }
+.v-stepk { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; color: var(--static); }
+.page-listen .v-dial { height: 64px; margin-top: .7rem; cursor: pointer; }
+.page-listen .v-dial .ps { width: 13px; height: 13px; top: -7px; background: var(--signal); }
+.v-dlab { position: absolute; right: 0; bottom: 0; font-family: var(--mono); font-size: 10px; letter-spacing: .1em; color: var(--static); white-space: nowrap; }
+.page-listen .v-dial .nm { display: none; }
+.v-ph { margin: .2rem 0 .5rem; flex-wrap: wrap; gap: .4rem; }
+.v-ph h2 { margin: 0; }
+.v-ph .fm-links { display: flex; gap: .4rem; flex-wrap: wrap; }
+.v-ph .fm-links .btn, .v-ph .fm-links button { min-height: 40px; white-space: nowrap; }
+.page-listen .v-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
+.page-listen .v-pre { min-height: 58px; padding: .5rem .55rem; align-items: center; text-align: center; min-width: 0; }
+.page-listen .v-pre b, .page-listen .v-pre span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.page-listen .v-pre.on { border-color: var(--signal); color: var(--signal); }
+html[data-ts="xl"] .page-listen .v-grid, html[data-ts="large"] .page-listen .v-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+html.hdmi .page-listen .v-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.v-hint { margin: .2rem 0 .2rem; }
+.v-near { position: absolute; left: 1rem; right: 1rem; z-index: 30; background: var(--panel); border: 1px solid var(--signal); border-radius: 12px; padding: .3rem; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+.v-near[hidden] { display: none; }
+.v-nearl button { display: flex; width: 100%; justify-content: space-between; gap: .6rem; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; min-height: var(--tap); }
+.v-nearl button span { color: var(--static); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Scan (items 18, 20): FREQUENCY ▾ + gear + HOLD/RESUME; HOLD drops to a second row at XL */
+.sc-top { display: flex; flex-wrap: wrap; gap: .5rem; align-items: stretch; margin-bottom: .5rem; }
+.sc-freq { flex: 1 1 14rem; min-width: 0; display: flex; gap: .5rem; align-items: center; justify-content: flex-start; text-align: left; min-height: var(--tap); }
+.sc-freq .sc-k { white-space: nowrap; color: var(--static); }
+.sc-freq b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sc-gear { min-width: var(--tap); font-size: 1.15em; }
+.sc-hold { white-space: nowrap; min-width: 7.5rem; }
+html[data-ts="xl"] .sc-hold { flex: 1 0 100%; }
+.sc-ddl { border: 1px solid var(--signal); border-radius: 10px; background: var(--panel); margin: 0 0 .6rem; max-height: 55vh; overflow: auto; }
+.sc-ddl[hidden] { display: none; }
+.sc-ddl button { display: flex; width: 100%; justify-content: space-between; gap: .6rem; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; min-height: var(--tap); text-align: left; }
+.sc-ddl button.on { color: var(--signal); }
+.sc-ddl button small { color: var(--static); white-space: nowrap; }
+.sc-held { background: #facc15; color: #1a1400; border-radius: 5px; padding: 1px 7px; font-weight: 700; letter-spacing: .1em; white-space: nowrap; margin-right: .6rem; }
+.sc-held[hidden], .sc-heldnote[hidden], #progbox[hidden] { display: none !important; }
+.sc-held[hidden], .sc-heldnote[hidden], #progbox[hidden] { display: none !important; }
+/* 1.3 fixes: hotspot form gaps at XL, station pickers stack at XL */
+#apcard .apform label { flex: 0 0 auto; }
+html[data-ts=xl] .sb-pick, html[data-ts=large] .sb-pick { flex-direction: column; align-items: stretch; }
+html[data-ts=xl] .sb-dd, html[data-ts=large] .sb-dd { flex: 0 0 auto; width: 100%; }
+
+/* ---------- 1.3.2 ---------- */
+/* one chip per SDR (nav.js renderJob): wraps to a second row when there are three */
+.qs-jobs { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; flex: 0 1 auto; max-width: 40%; }
+.qs-jobs .qs-job { max-width: 100%; min-width: 0; }
+.qs-jobs.multi { flex: 1 1 0; max-width: none; }
+.qs-jobs.multi .qs-job { flex: 0 1 auto; }
+.qs-sdr.warn { border-color: rgba(250, 204, 21, .55); }
+.qs-sdr.warn .qs-v { color: #facc15 !important; }
+.qs-sdr.warn .qs-dot { background: #facc15; box-shadow: 0 0 0 4px rgba(250, 204, 21, .2); animation: qsPulse 1s infinite; }
+.qs-sdr.err { border-color: rgba(248, 113, 113, .55); }
+.qs-sdr.err .qs-v { color: #f87171 !important; }
+@keyframes qsPulse { 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .qs-sdr.warn .qs-dot { animation: none; } }
+/* gear panel APPLY / CANCEL (listen.html) */
+.pend { outline: 2px dashed #facc15 !important; outline-offset: -3px; background: repeating-linear-gradient(135deg, rgba(250, 204, 21, .13) 0 6px, transparent 6px 12px) !important; color: #facc15 !important; }
+.bs-apply { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--grid, #1f2a22); }
+.bs-apply .bs-pend { margin: 0 0 8px; color: #facc15; font: 600 var(--fs-1, 13px) var(--mono, monospace); letter-spacing: .06em; text-transform: uppercase; }
+.bs-apply .bs-btns { display: flex; gap: 10px; }
+.bs-apply .bs-btns button { flex: 1; min-height: 46px; }
+.bs-apply .bs-btns button[disabled] { opacity: .35; }
+/* Network > Auto-join known Wi-Fi */
+.aj-list { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
+.aj-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--grid, #1f2a22); border-radius: 10px; background: var(--panel, #0f1712); min-width: 0; }
+.aj-row.on { border-color: rgba(74, 222, 128, .6); }
+.aj-n { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; letter-spacing: .06em; }
+.aj-m { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; color: var(--static, #7a8a80); font: 600 var(--fs-1, 13px) var(--mono, monospace); text-transform: uppercase; }
+.aj-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; }
+.aj-bars i { display: block; width: 3px; background: #2a3a30; border-radius: 1px; }
+.aj-bars i.g { background: var(--signal, #4ade80); } .aj-bars i.w { background: #facc15; }
+.aj-s.joined { color: var(--signal, #4ade80); } .aj-s.weak { color: #facc15; }
+@media (max-width: 430px) { .aj-row { flex-wrap: wrap; } .aj-m { order: 3; flex-basis: 100%; } }
+
+/* 1.3.4: shared error card (nav.js traceErr) */
+.ec { border: 1px solid rgba(245, 165, 36, .55); background: rgba(245, 165, 36, .06); border-radius: 14px; padding: 14px 16px; margin: .6rem 0 1rem; }
+.ec h3 { margin: 0 0 4px; color: #f5a524; font: 700 15px var(--mono, monospace); letter-spacing: .12em; text-transform: uppercase; }
+.ec p { margin: 0 0 12px; color: var(--paper); font-size: 14px; line-height: 1.45; }
+.ec .ec-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.ec details { margin-top: 12px; } .ec summary { cursor: pointer; color: var(--static); font: 700 12px var(--mono, monospace); letter-spacing: .12em; text-transform: uppercase; }
+.ec pre { white-space: pre-wrap; word-break: break-all; background: #060908; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 8px 0 0; color: var(--static); font: 12px/1.4 var(--mono, monospace); text-transform: none; }
+.m-count.m-nodata { border-color: #f5a524; color: var(--paper); } .m-count.m-nodata #mCnt { letter-spacing: .05em; } html.kiosk .m-count.m-nodata #mCnt { font-size: 12px; } .m-count.m-nodata .d { background: #f5a524; box-shadow: none; } .m-count.m-nodata b { color: #f5a524; }
+
+/* ---------- 1.3.6 #8: SDR chips stay on ONE row at every text size ---------- */
+.qs-jobs, .qs-jobs.multi { flex-wrap: nowrap; }
+.qs-jobs.multi { flex: 1 1 auto; min-width: 0; max-width: none; }
+.qs-jobs .qs-job, .qs-jobs.multi .qs-job { flex: 0 1 auto; min-width: 0; max-width: none; overflow: hidden; }
+.qs-chip .qs-txt { min-width: 0; overflow: hidden; }
+.qs-chip .qs-k, .qs-chip .qs-v, .qs-net .qs-v, .qs-aud .qs-v, .qs-net .qs-k, .qs-aud .qs-k { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.qs-net, .qs-aud { min-width: 0; overflow: hidden; }
+.qs-dot.num b { display: none; }   /* desktop: the plain status dot + full "SDR 1 · …" label */
+.qs-jobs.multi .qs-dot.num b { font: 800 12px/1 var(--mono, monospace); color: #06100a; letter-spacing: 0; }
+@media (max-width: 999px) {
+  .qs-jobs.multi .qs-job { padding: 0 8px; gap: 6px; }
+  .qs-jobs.multi .qs-dot.num { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; background: var(--green, #4ade80); }
+  .qs-jobs.multi .qs-sdr.err .qs-dot.num { background: #f87171; box-shadow: none; }
+  .qs-jobs.multi .qs-sdr.warn .qs-dot.num { background: #facc15; }
+  .qs-jobs.multi .qs-dot.num:not(.ok):not(.warn):not(.err) { background: #5f6f84; }
+  .qs-jobs.multi .qs-kn { display: none; }
+  .qs-jobs.multi .qs-dot.num b { display: inline; }
+  .qs-net { flex: 0 1 auto; max-width: 25%; }
+  .qs-net .qs-ico { display: none; }
+  .qs-aud { flex: 0 1 auto; max-width: 21%; }
+}
+
+/* ---------- 1.3.6 #10: FRS / GMRS tab (listen.html #pfrs) ---------- */
+#bands.four button { letter-spacing: .03em !important; padding-left: .2rem !important; padding-right: .2rem !important; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.frs-g { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 1rem 0 .5rem; }
+.frs-g h2 { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frs-b { flex: 0 0 auto; font-family: var(--mono); font-weight: 700; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid rgba(74,222,128,.45); color: var(--signal, #4ade80); white-space: nowrap; }
+.frs-b.lo { border-color: rgba(245,165,36,.55); color: #f5a524; } .frs-b.hi { border-color: rgba(125,211,252,.55); color: #7dd3fc; }
+.frs-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; }
+html.kiosk:not(.hdmi) .page-listen .frs-grid .v-pre { min-height: 74px; padding: .55rem .6rem; align-items: flex-start; }
+.frs-grid .v-pre b { white-space: nowrap; } .frs-grid .v-pre span { white-space: nowrap; letter-spacing: .02em !important; overflow: hidden; text-overflow: ellipsis; }
+html[data-ts=xl] .frs-grid, html[data-ts=large] .frs-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 999px) { #bands.four button { font-size: .8em; letter-spacing: 0 !important; } }

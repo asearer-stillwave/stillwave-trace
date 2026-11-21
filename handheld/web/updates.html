@@ -1,7 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -18,6 +20,7 @@
 <body class="page-updates">
 <script src="/nav.js"></script>
 <div class="wrap">
+  <div class="pre-back-h nav-back"><a class="btn sm fm-edit" href="/settings" aria-label="Back to Settings"><span aria-hidden="true">‹</span> Settings</a></div>
   <div class="brand">
     <h1>Updates</h1>
   </div>
@@ -67,8 +70,8 @@
 
   <div class="card">
     <h2>Install from file</h2>
-    <p class="note">No internet needed. Pick the <b>.ota</b> file (or the <b>.tar.gz</b> and its <b>.sig</b> together) from your phone, laptop or a USB stick.</p>
-    <label class="filepick" id="uPickLbl"><input type="file" id="uFile" multiple><span id="uPickTxt">Choose update file…</span></label>
+    <p class="note">No internet needed. Pick the <b>.tar.gz</b> and its <b>.sig</b> together (from the update zip) on your phone, laptop or a USB stick. An older <b>.ota</b> file also works.</p>
+    <label class="filepick" id="uPickLbl"><input type="file" id="uFile" multiple><span id="uPickTxt">Choose update files…</span></label>
     <div class="row uact"><button type="button" id="uUpload" disabled>Check file</button></div>
     <div id="uFileMsg" class="umsg hide" role="status" aria-live="polite"></div>
     <div id="uFileAvail" class="hide">
@@ -225,7 +228,7 @@
   // ---------- install from file ----------
   $('uFile').onchange = () => {
     const fs = [...$('uFile').files];
-    $('uPickTxt').textContent = fs.length ? fs.map(f => f.name).join(' + ') : 'Choose update file…';
+    $('uPickTxt').textContent = fs.length ? fs.map(f => f.name).join(' + ') : 'Choose update files…';
     $('uUpload').disabled = !fs.length || polling;
     show('uFileAvail', false); msg('uFileMsg', ''); fileTok = null;
   };
@@ -233,7 +236,7 @@
     const fs = [...$('uFile').files];
     if (!fs.length) return;
     const bad = fs.filter(f => !/\.(ota|tar\.gz|tgz|sig)$/i.test(f.name));
-    if (bad.length) { msg('uFileMsg', bad[0].name + ' is not a Trace update. Pick the .ota file (or the .tar.gz plus its .sig).', 'err'); return; }
+    if (bad.length) { msg('uFileMsg', bad[0].name + ' is not a Trace update. Pick the .tar.gz plus its .sig (or an .ota file).', 'err'); return; }
     const fd = new FormData(); fs.forEach(f => fd.append('file', f, f.name));
     $('uUpload').disabled = true; msg('uFileMsg', 'Uploading ' + Math.round(fs.reduce((a, f) => a + f.size, 0) / 1048576) + ' MB and checking the signature (up to a minute)…');
     try {

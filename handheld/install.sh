@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Stillwave Trace installer.
+# Stillwave Trace installer (1.3.8; the version comes from ./VERSION). Handheld edition tree of trace-1.3.8.zip:
+# normally started by the package's top-level install.sh (edition question / --display dsi), which passes --display dsi.
 #   sudo bash install.sh                 install / update the station (keeps /etc/sdr settings)
-#   sudo bash install.sh --display       same, then set up the 5" Touch Display 2 kiosk
+#   sudo bash install.sh --display dsi   same, then set up the 5" Touch Display 2 kiosk (a bare --display works too)
 #   sudo bash install.sh --display-only  only the display/kiosk part (fieldnote-display-setup, alias trace-display-setup)
+#   options for --display:  --dsi-port 0|1   Pi 5 only: ribbon in DISP0 (0 -> dtoverlay=...,dsi0) or DISP1 (1, the default)
+#                           --force-edition  convert a box that runs Trace Desktop into handheld Trace (see below)
 #   sudo bash install.sh --upgrade       non-interactive upgrade (used by sdr-update): no apt / internet, no network
 #                                        or display/kiosk changes, keeps Icecast passwords and every /etc/sdr file
 # The installer never switches the network: if the Pi is on Wi-Fi it stays on Wi-Fi.
@@ -10,17 +13,43 @@ DO_DISPLAY=0
 DISPLAY_ONLY=0
 UPGRADE=0
 RESUME=0
+NO_OS_UPGRADE=0
+DSI_PORT=""
+FORCE_EDITION=0
 [[ "${SDR_UPDATE_RUN:-}" == 1 ]] && UPGRADE=1
+prev=""
 for arg in "$@"; do
+  # 1.3.8: --display takes an optional value, like the package installer: --display dsi (also touch / handheld).
+  # A bare --display still means the 5" touch display.
+  if [[ "$prev" == --display ]]; then
+    prev=""
+    case "$arg" in
+      dsi|touch|handheld) continue ;;
+      hdmi|desktop) echo "This is handheld Trace (5\" touch display). For HDMI use the desktop edition: sudo bash <package>/install.sh --display hdmi" >&2; exit 2 ;;
+    esac
+  fi
+  if [[ "$prev" == --dsi-port ]]; then
+    case "$arg" in 0|1) DSI_PORT="$arg" ;; *) echo "--dsi-port must be 0 (DISP0) or 1 (DISP1)" >&2; exit 2 ;; esac
+    prev=""; continue
+  fi
   case "$arg" in
-    --display) DO_DISPLAY=1 ;;
+    --dsi-port) prev="--dsi-port" ;;
+    --dsi-port=*) DSI_PORT="${arg#--dsi-port=}"; case "$DSI_PORT" in 0|1) ;; *) echo "--dsi-port must be 0 (DISP0) or 1 (DISP1)" >&2; exit 2 ;; esac ;;
+    --force-edition) FORCE_EDITION=1 ;;
+    --display) DO_DISPLAY=1; prev="--display" ;;
+    --display=dsi|--display=touch|--display=handheld) DO_DISPLAY=1 ;;
+    --display=*) echo "This is handheld Trace: --display dsi (5\" touch display) is the only display option." >&2; exit 2 ;;
     --display-only) DO_DISPLAY=1; DISPLAY_ONLY=1 ;;
     --upgrade) UPGRADE=1 ;;
     --resume) RESUME=1 ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+    --no-os-upgrade) NO_OS_UPGRADE=1 ;;
+    -h|--help) sed -n '2,9p' "$0"; echo '#   --no-os-upgrade                      fresh install without apt full-upgrade (1.2.8)'; exit 0 ;;
     *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
+[[ "$prev" == --display ]] && prev=""
+[[ -z "$prev" ]] || { echo "$prev needs a value (0 or 1)" >&2; exit 2; }
+DSI_ARGS=(); [[ -n "$DSI_PORT" ]] && DSI_ARGS=(--dsi-port "$DSI_PORT")
 if [[ $UPGRADE -eq 1 ]]; then DO_DISPLAY=0; DISPLAY_ONLY=0; fi
 echo "Stillwave Trace installer starting ($( [[ $UPGRADE -eq 1 ]] && echo upgrade || echo install ) of $(cat "$(dirname "${BASH_SOURCE[0]}")/VERSION" 2>/dev/null || echo '?'))..."
 if [[ ${EUID} -ne 0 ]]; then
@@ -30,10 +59,42 @@ fi
 set -eu
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ---- 1.2.2 edition guard: handheld Trace says so in /usr/local/lib/sdr-station/EDITION (sdr-update refuses packages of
+# the other edition). A box that runs Trace Desktop is only converted on purpose (--force-edition), like the desktop
+# installer does in the other direction. ----
+EDITION_FILE=/usr/local/lib/sdr-station/EDITION
+HERE_ED="$(cat "$EDITION_FILE" 2>/dev/null || echo handheld)"
+HERE_ED="${HERE_ED//[[:space:]]/}"
+CONVERTING=0
+if [[ "$HERE_ED" == desktop ]]; then
+  if [[ $FORCE_EDITION -ne 1 || $UPGRADE -eq 1 ]]; then
+    echo "This box already runs Trace Desktop ($(cat /usr/local/lib/sdr-station/VERSION 2>/dev/null || echo '?')). Handheld Trace will not install over it." >&2
+    if [[ $UPGRADE -eq 1 ]]; then
+      echo "(An upgrade never changes the edition. To convert this box on purpose, run the full installer with internet:" >&2
+    else
+      echo "(To convert this box on purpose:" >&2
+    fi
+    echo " sudo bash install.sh --display dsi --force-edition   (Pi 5 with the ribbon in DISP0: add --dsi-port 0))" >&2
+    exit 1
+  fi
+  CONVERTING=1
+  echo "NOTE: converting this box from Trace Desktop to handheld Trace (--force-edition). Settings in /etc/sdr and Wi-Fi stay."
+fi
+
 # ---- 1.0.8: SSH-safe. A full install over SSH re-runs itself as a detached systemd unit (log: /var/log/trace-install.log),
 # so a dropped SSH session or Ctrl-C only stops the log view, never the install. ----
 ILOG=/var/log/trace-install.log
-if [[ $UPGRADE -eq 0 && -n "${SSH_CONNECTION:-}${SSH_TTY:-}" && -z "${SDR_INSTALL_DETACHED:-}" && -z "${SDR_INSTALL_FOREGROUND:-}" ]]; then
+# 1.3.3: sudo drops SSH_CONNECTION/SSH_TTY, so also walk the parent processes looking for sshd
+over_ssh() {
+  [[ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]] && return 0
+  local p=$$ c i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"; [[ -z "$p" || "$p" -le 1 ]] && return 1
+    c="$(ps -o comm= -p "$p" 2>/dev/null)"; [[ "$c" == sshd* ]] && return 0
+  done
+  return 1
+}
+if [[ $UPGRADE -eq 0 ]] && over_ssh && [[ -z "${SDR_INSTALL_DETACHED:-}" && -z "${SDR_INSTALL_FOREGROUND:-}" ]]; then
   : >"$ILOG"; chmod 644 "$ILOG"
   UNIT="trace-install-$(date +%s)"
   echo "Over SSH: the install runs in the background as $UNIT, so it survives a dropped session or Ctrl-C."
@@ -152,10 +213,88 @@ RUN_GROUP="$(id -gn "$RUN_USER")"
 echo "[progress] 10 Checking the system"
 echo "Service user: $RUN_USER"
 
+# ---- Raspberry Pi 5 + Touch Display 2 helpers (all idempotent; removed by: sudo fieldnote-display-setup --undo) ----
+# 1. sdr-touch-reload.service (1.2.2): reload the Goodix touch driver at boot when its first probe failed (-121 / -5).
+#    Replaces a hand-made goodix-reload.service (moved to /var/lib/sdr-station/, not deleted).
+# 2. /etc/modules-load.d/sdr-i2c-dev.conf: i2c-dev at boot (sdr-panel-diag reads the display over it).
+# 3. 1.2.3: sdr-panel-off.service (the 1.2.2 shutdown hook) is REMOVED. It wrote to the display's microcontroller (I2C 0x45)
+#    right before a reboot; so did sdr-screen-final. That write is what left the panel blank after a warm reboot (a hung
+#    0x45 chip: only a power cut recovers it). Nothing in Trace touches the display over I2C while the box reboots any more.
+# The two scripts are always installed (harmless; sdr-panel-diag is useful anywhere); the unit and the autoload file only on
+# a Pi 5 / CM5 that has the Touch Display 2 set up (overlay line in config.txt, or its chip on I2C).
+remove_panel_off() {
+  # idempotent; safe when it was disabled by hand (or masked, or never installed). Order matters: the script goes first, so
+  # that stopping a still-active unit cannot run its old ExecStop (the display-off write) one more time.
+  local had=0 f
+  for f in /usr/local/sbin/sdr-panel-off /etc/systemd/system/sdr-panel-off.service /etc/systemd/system/multi-user.target.wants/sdr-panel-off.service; do
+    [[ -e "$f" || -L "$f" ]] && had=1
+  done
+  [[ -d /etc/systemd/system/sdr-panel-off.service.d ]] && had=1
+  [[ $had -eq 1 ]] || return 0
+  rm -f /usr/local/sbin/sdr-panel-off
+  systemctl disable sdr-panel-off.service >/dev/null 2>&1 || true
+  if systemctl is-active --quiet sdr-panel-off.service 2>/dev/null; then
+    systemctl stop sdr-panel-off.service >/dev/null 2>&1 || true
+  fi
+  rm -f /etc/systemd/system/sdr-panel-off.service /etc/systemd/system/multi-user.target.wants/sdr-panel-off.service
+  rm -rf /etc/systemd/system/sdr-panel-off.service.d
+  systemctl daemon-reload || true
+  systemctl reset-failed sdr-panel-off.service >/dev/null 2>&1 || true
+  echo "Removed sdr-panel-off.service (1.2.2): nothing writes to the display chip at shutdown any more"
+  return 0
+}
+install_pi5_helpers() {
+  install -d -m 755 /usr/local/sbin
+  remove_panel_off || true
+  install -m 755 "$SRC/bin/sdr-touch-reload" /usr/local/sbin/sdr-touch-reload
+  install -m 755 "$SRC/bin/sdr-panel-diag" /usr/local/sbin/sdr-panel-diag
+  install -m 755 "$SRC/bin/sdr-psu" /usr/local/sbin/sdr-psu      # 1.2.4: power supply status + Pi 5 USB current block
+  local model cfg d have_dsi=0 prc=0
+  model="$(cat /proc/device-tree/model 2>/dev/null | tr -d '\0')"
+  if [[ "$model" != *"Raspberry Pi 5"* && "$model" != *"Compute Module 5"* ]]; then
+    return 0
+  fi
+  # 1.2.4 (Pi 5 only; a Pi 4 config.txt is never touched): usb_max_current_enable=1 in Trace's own marked block, so the USB
+  # ports are not capped at 600 mA on a 3 A power bank. Idempotent; undo: sudo sdr-psu config undo (or fieldnote-display-setup --undo).
+  /usr/local/sbin/sdr-psu config apply || prc=$?
+  if [[ $prc -eq 3 ]]; then echo "Pi 5: reboot once so the USB current setting takes effect (sudo reboot)"
+  elif [[ $prc -ne 0 ]]; then echo "WARNING: could not set usb_max_current_enable in config.txt (see above)"; fi
+  cfg=/boot/firmware/config.txt; [[ -f "$cfg" ]] || cfg=/boot/config.txt
+  grep -qE '^[[:space:]]*dtoverlay=vc4-kms-dsi-ili9881' "$cfg" 2>/dev/null && have_dsi=1
+  for d in /sys/bus/i2c/devices/*-0045 /sys/bus/i2c/devices/*-005d; do
+    [[ -e "$d" ]] && have_dsi=1
+  done
+  if [[ $have_dsi -eq 0 ]]; then
+    echo "Pi 5: no Touch Display 2 set up (no panel overlay in config.txt); touch-reload unit not installed"
+    return 0
+  fi
+  echo "Pi 5 + Touch Display 2: installing the touch-reload helper"
+  install -m 644 "$SRC/systemd/sdr-touch-reload.service" /etc/systemd/system/sdr-touch-reload.service
+  install -d -m 755 /etc/modules-load.d
+  printf '# Stillwave Trace: sdr-panel-diag talks to the Touch Display 2 over I2C (read-only)\ni2c-dev\n' >/etc/modules-load.d/sdr-i2c-dev.conf
+  chmod 644 /etc/modules-load.d/sdr-i2c-dev.conf
+  # a hand-made reload unit (from the 1.2.1 Pi 5 test) would reload the driver a second time: set it aside
+  if [[ -f /etc/systemd/system/goodix-reload.service ]] && grep -q 'goodix_ts' /etc/systemd/system/goodix-reload.service; then
+    install -d -m 755 /var/lib/sdr-station
+    systemctl disable goodix-reload.service >/dev/null 2>&1 || true
+    mv -f /etc/systemd/system/goodix-reload.service /var/lib/sdr-station/goodix-reload.service.pre-1.2.2
+    echo "Moved your goodix-reload.service to /var/lib/sdr-station/ (sdr-touch-reload.service does the same, with checks)"
+  fi
+  systemctl daemon-reload || true
+  systemctl enable sdr-touch-reload.service >/dev/null 2>&1 || echo "WARNING: could not enable the Pi 5 helper unit"
+  systemctl start --no-block sdr-touch-reload.service >/dev/null 2>&1 || true   # does nothing when touch already works
+  return 0
+}
+
 if [[ $DISPLAY_ONLY -eq 1 ]]; then
   install -m 755 "$SRC/bin/fieldnote-display-setup" /usr/local/sbin/fieldnote-display-setup
   ln -sfn fieldnote-display-setup /usr/local/sbin/trace-display-setup   # same script, new-brand name
-  exec /usr/local/sbin/fieldnote-display-setup --user "$RUN_USER"
+  install -d -m 755 /usr/local/lib/sdr-station
+  printf 'handheld\n' >"$EDITION_FILE"
+  rc=0
+  /usr/local/sbin/fieldnote-display-setup --user "$RUN_USER" ${DSI_ARGS[@]+"${DSI_ARGS[@]}"} || rc=$?
+  install_pi5_helpers || true
+  exit "$rc"
 fi
 
 rand_pw() {
@@ -190,6 +329,42 @@ elif [[ $RESUME -eq 1 ]] && step_done packages; then
 else
 echo "icecast2 icecast2/icecast-setup boolean false" | debconf-set-selections || true
 apt-get update -y
+# ---- 1.3.6: heal a half-configured dpkg / broken dependencies BEFORE installing anything (Debian 13 / trixie).
+# 1.3.5 could leave libxkbcommon0 downgraded and cage/wlroots unconfigured; apt refuses every install after that. ----
+heal_apt() {
+  DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+  DEBIAN_FRONTEND=noninteractive apt-get -f install -y || true
+  apt-get check >/dev/null 2>&1
+}
+if ! heal_apt; then
+  echo "apt reports broken dependencies; refreshing package lists and retrying once ..."
+  sleep 5; apt-get update -y || true
+  if ! heal_apt; then
+    echo "ERROR: apt still reports broken dependencies (see 'sudo apt-get check')."
+    echo "       Fix with: sudo dpkg --configure -a && sudo apt-get -f install -y"
+    echo "       then resume with: sudo bash $SRC/install.sh --resume"
+    exit 1
+  fi
+fi
+# ---- 1.2.8: bring a FRESH system up to date first (never during --upgrade / OTA; skip with --no-os-upgrade).
+# Non-interactive, keeps existing config files. A new kernel/firmware is NOT rebooted into mid-install: it takes
+# effect at the reboot the installer asks for at the end (no half-finished install after a reboot). ----
+OS_REBOOT_NEEDED=0
+if [[ $NO_OS_UPGRADE -eq 1 ]]; then
+  echo "OS upgrade skipped (--no-os-upgrade)"
+elif step_done osupgrade; then
+  echo "OS upgrade already done for this install"
+else
+  echo "[progress] 10 Updating the operating system (apt full-upgrade; can take 5-15 minutes)"
+  KERNEL_BEFORE="$(ls -1 /lib/modules 2>/dev/null | sort | tr '\n' ' ')"
+  if DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade; then
+    mark_step osupgrade
+  else
+    echo "WARNING: OS upgrade did not finish (the install continues; run 'sudo apt full-upgrade' later)"
+  fi
+  KERNEL_AFTER="$(ls -1 /lib/modules 2>/dev/null | sort | tr '\n' ' ')"
+  if [[ -f /var/run/reboot-required || "$KERNEL_BEFORE" != "$KERNEL_AFTER" ]]; then OS_REBOOT_NEEDED=1; install -d -m 755 /var/lib/sdr-station; touch /var/lib/sdr-station/os-reboot-needed; fi
+fi
 apt-get install -y software-properties-common ca-certificates || true
 add-apt-repository -y universe || true
 apt-get update -y
@@ -216,7 +391,7 @@ if ! command -v readsb >/dev/null 2>&1 && ! command -v dump1090-mutability >/dev
   echo "dump1090-mutability dump1090-mutability/use-lighttpd boolean false" | debconf-set-selections || true
   apt-get install -y --no-install-recommends readsb \
     || apt-get install -y --no-install-recommends dump1090-mutability \
-    || echo "WARNING: no ADS-B decoder package available; ADS-B mode will be disabled (FM, spectrum, detect still work)."
+    || echo "WARNING: no ADS-B decoder package available; ADS-B mode will be disabled (FM and spectrum still work)."
 fi
 if [[ -f /etc/default/dump1090-mutability ]]; then
   sed -i 's/^START_DUMP1090=.*/START_DUMP1090=no/' /etc/default/dump1090-mutability || true
@@ -225,6 +400,9 @@ for u in readsb dump1090-mutability dump1090-fa; do
   systemctl disable --now "$u.service" >/dev/null 2>&1 || true
 done
 systemctl mask readsb.service >/dev/null 2>&1 || true
+# 1.2.8: the decoder must really drive an RTL-SDR. Raspberry Pi OS's readsb is built without rtlsdr; then build the
+# pinned upstream readsb with RTLSDR=yes into /usr/local/bin (binary only, no readsb service). Non-fatal.
+bash "$SRC/bin/sdr-adsb-fix" || echo "WARNING: ADS-B decoder not ready (map stays off; FM/Spectrum work). Later: sudo sdr-adsb-fix"
 mark_step packages
 fi   # end of package installs (skipped by --upgrade)
 [[ "${TRACE_POLICY:-0}" == 1 ]] && rm -f /usr/sbin/policy-rc.d
@@ -240,7 +418,6 @@ rmmod dvb_usb_rtl28xxu rtl2832 rtl2830 2>/dev/null || true
 install -d -m 755 /usr/local/lib/sdr-station/bin /usr/local/lib/sdr-station/web /etc/sdr
 install -m 755 "$SRC/bin/fm_stream.sh" /usr/local/lib/sdr-station/bin/fm_stream.sh
 install -m 755 "$SRC/bin/sdr-select-station" /usr/local/sbin/sdr-select-station
-install -m 755 "$SRC/bin/sdr-scan" /usr/local/sbin/sdr-scan
 install -m 755 "$SRC/bin/sdr-tune-freq" /usr/local/sbin/sdr-tune-freq
 install -m 755 "$SRC/bin/sdr-fm-env" /usr/local/sbin/sdr-fm-env          # 1.0.8.2: safe fm.env writer + self-heal
 install -m 755 "$SRC/bin/sdr-add-station" /usr/local/sbin/sdr-add-station
@@ -256,10 +433,36 @@ install -m 755 "$SRC/bin/sdr-shot" /usr/local/sbin/sdr-shot            # 1.0.9: 
 install -d -m 755 /var/lib/sdr/screenshots
 install -d -m 755 /usr/local/lib/sdr-station/config
 install -m 644 "$SRC/config/listen-presets.json" /usr/local/lib/sdr-station/config/listen-presets.json
-for u in sdr-net-retry.service sdr-net-retry.timer sdr-firstboot-done.service sdr-firstboot-done.timer; do install -m 644 "$SRC/systemd/$u" /etc/systemd/system/$u; done
+install -m 644 "$SRC/config/regions.json" /usr/local/lib/sdr-station/config/regions.json          # 1.3.1: Settings > Maps region list (Protomaps direct)
+install -m 644 "$SRC/config/airports.json" /usr/local/lib/sdr-station/config/airports.json        # 1.2.5: airport focus frequencies (KLAX)
+install -m 755 "$SRC/bin/sdr-level" /usr/local/lib/sdr-station/bin/sdr-level                   # 1.2.5: airband level meter (map listen strip)
+install -m 755 "$SRC/bin/sdr-aircraft-db" /usr/local/sbin/sdr-aircraft-db                      # 1.2.5: offline aircraft models (ODC-By)
+install -d -m 755 /var/lib/sdr/aircraft
+install -m 755 "$SRC/bin/sdr-adsb-fix" /usr/local/sbin/sdr-adsb-fix                            # 1.2.8: rtlsdr-capable ADS-B decoder check/build
+install -m 755 "$SRC/bin/sdr-content" /usr/local/sbin/sdr-content                              # 1.2.6: map packs + station bank from CONTENT_URL
+install -m 644 "$SRC/web/bank.py" /usr/local/lib/sdr-station/web/bank.py                         # 1.2.6: station bank queries
+install -m 644 "$SRC/web/stationnames.py" /usr/local/lib/sdr-station/web/stationnames.py         # 1.2.9: short station names (bank.py imports it)
+install -d -m 755 /var/lib/sdr/maps/packs /var/lib/sdr/content /var/lib/sdr/bank
+if [[ -s "$SRC/vendor/station-bank/stations.sqlite.gz" ]]; then
+  install -d -m 755 /usr/local/lib/sdr-station/vendor/station-bank
+  install -m 644 "$SRC/vendor/station-bank/stations.sqlite.gz" "$SRC/vendor/station-bank/SOURCE.txt" /usr/local/lib/sdr-station/vendor/station-bank/
+  /usr/local/sbin/sdr-content bank-install-local /usr/local/lib/sdr-station/vendor/station-bank/stations.sqlite.gz \
+    || echo "WARNING: station bank not installed; Stations shows nothing (try: More > About > Update station bank)"
+fi
+if [[ -s "$SRC/vendor/aircraft-db/aircraft.csv.gz" ]]; then
+  install -d -m 755 /usr/local/lib/sdr-station/vendor/aircraft-db
+  install -m 644 "$SRC/vendor/aircraft-db/aircraft.csv.gz" "$SRC/vendor/aircraft-db/SOURCE.txt" /usr/local/lib/sdr-station/vendor/aircraft-db/
+  /usr/local/sbin/sdr-aircraft-db install-local /usr/local/lib/sdr-station/vendor/aircraft-db/aircraft.csv.gz \
+    || echo "WARNING: aircraft model database not built; the map shows no aircraft models (try: sudo sdr-aircraft-db fetch)"
+fi
+for u in sdr-net-retry.service sdr-net-retry.timer sdr-net-watch.service sdr-firstboot-done.service sdr-firstboot-done.timer; do install -m 644 "$SRC/systemd/$u" /etc/systemd/system/$u; done
 install -m 755 "$SRC/bin/fieldnote-display-setup" /usr/local/sbin/fieldnote-display-setup
 ln -sfn fieldnote-display-setup /usr/local/sbin/trace-display-setup   # alias (same script; internal names stay fieldnote-*)
 install -m 755 "$SRC/bin/adsb_run.sh" /usr/local/lib/sdr-station/bin/adsb_run.sh
+# 1.3.1 AIS boats: decoder runner + unit (inactive until a dongle has the AIS role) + on-demand pinned source build
+install -m 755 "$SRC/bin/ais_run.sh" /usr/local/lib/sdr-station/bin/ais_run.sh
+install -m 755 "$SRC/bin/sdr-ais-fix" /usr/local/sbin/sdr-ais-fix
+install -m 644 "$SRC/systemd/sdr-ais.service" /etc/systemd/system/sdr-ais.service
 install -m 644 "$SRC/systemd/sdr-net.service" /etc/systemd/system/sdr-net.service
 
 install -d -m 755 /etc/sdr /var/log /var/lib/sdr-station
@@ -306,7 +509,14 @@ touch /var/log/sdr-power.log && chmod 644 /var/log/sdr-power.log
 # ---- kiosk screen: off button, timeout, wake on touch, brightness, dark screen at power-off (sdr-screen) ----
 install -m 755 "$SRC/bin/sdr-screen" /usr/local/sbin/sdr-screen
 install -m 644 "$SRC/systemd/sdr-screen.service" /etc/systemd/system/sdr-screen.service
+# 1.2.3: a unit that was switched off by hand (the warm-reboot test on a Pi 5) is simply enabled again below: the new
+# "sdr-screen final" never touches the backlight on a reboot, so there is nothing left to keep it disabled for.
+if [[ -f /etc/systemd/system/sdr-screen-final.service ]] && ! systemctl is-enabled --quiet sdr-screen-final.service 2>/dev/null; then
+  echo "sdr-screen-final.service was disabled; enabling it again (1.2.3: it does nothing on a reboot; backlight off only at power-off)"
+fi
 install -m 644 "$SRC/systemd/sdr-screen-final.service" /etc/systemd/system/sdr-screen-final.service
+install -m 755 "$SRC/bin/sdr-shutdown-screen" /usr/local/sbin/sdr-shutdown-screen                 # 1.3: 5 s shutdown screen (no display chip writes)
+install -m 644 "$SRC/systemd/sdr-shutdown-screen.service" /etc/systemd/system/sdr-shutdown-screen.service
 install -d -m 755 /var/lib/sdr-screen
 if [[ ! -f /etc/sdr/screen.env ]]; then
   install -m 644 "$SRC/config/screen.env.example" /etc/sdr/screen.env
@@ -315,9 +525,19 @@ else
 fi
 chmod 644 /etc/sdr/screen.env
 install -m 644 "$SRC/README.md" /usr/local/lib/sdr-station/README.md
-install -m 644 "$SRC/web/radio_control.py" /usr/local/lib/sdr-station/web/radio_control.py
+for f in "$SRC"/web/*.py; do install -m 644 "$f" /usr/local/lib/sdr-station/web/; done   # 1.3.6: all Python modules (radio_control, airports, bank, stationnames, sdr_scope)
 for f in "$SRC"/web/*.html "$SRC"/web/*.js "$SRC"/web/*.css; do install -m 644 "$f" /usr/local/lib/sdr-station/web/; done   # 1.0.8: every page
+rm -f /usr/local/lib/sdr-station/web/advanced.html   # 1.2.8: Tuner page removed (/advanced redirects to Listen)
 rm -f /usr/local/lib/sdr-station/web/dashboard.html   # 1.0.8: desktop dashboard removed
+# 1.3.2: Scan tab + hidden one-shot FM scan removed (FCC): stop, disable and delete the detect unit, page and helper
+systemctl stop sdr-detect.service >/dev/null 2>&1 || true
+systemctl disable sdr-detect.service >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/sdr-detect.service /usr/local/sbin/sdr-scan /usr/local/lib/sdr-station/web/detect.html
+systemctl daemon-reload >/dev/null 2>&1 || true
+if grep -q '^MODE=detect$' /etc/sdr/mode.env 2>/dev/null; then sed -i 's/^MODE=detect$/MODE=spectrum/' /etc/sdr/mode.env; fi
+if grep -q '^OFF_RESUME=detect$' /etc/sdr/mode.env 2>/dev/null; then sed -i 's/^OFF_RESUME=detect$/OFF_RESUME=spectrum/' /etc/sdr/mode.env; fi
+if grep -q '^BOOT_MODE=detect$' /etc/sdr/mode.env 2>/dev/null; then sed -i 's/^BOOT_MODE=detect$/BOOT_MODE=spectrum/' /etc/sdr/mode.env; fi
+for f in "$SRC"/web/*.json; do [[ -f "$f" ]] && install -m 644 "$f" /usr/local/lib/sdr-station/web/; done   # 1.3.2: aircraft_types.json, airports
 install -m 644 "$SRC/web/sdr_scope.py" /usr/local/lib/sdr-station/web/sdr_scope.py
 install -d -m 755 /usr/local/lib/sdr-station/web/fonts   # UI fonts (Anton, JetBrains Mono; SIL OFL 1.1, bundled, offline)
 for f in anton-latin.woff2 jetbrainsmono-latin.woff2 OFL-Anton.txt OFL-JetBrainsMono.txt README.txt; do
@@ -325,13 +545,22 @@ for f in anton-latin.woff2 jetbrainsmono-latin.woff2 OFL-Anton.txt OFL-JetBrains
 done
 rm -f /usr/local/lib/sdr-station/web/fonts/inter-latin.woff2 /usr/local/lib/sdr-station/web/fonts/OFL-Inter.txt
 install -d -m 755 /usr/local/lib/sdr-station/web/img   # kiosk shutdown art (same picture as the boot splash)
-install -m 644 "$SRC/web/img/trace-art.png" /usr/local/lib/sdr-station/web/img/trace-art.png
+for f in "$SRC"/web/img/*.png; do install -m 644 "$f" /usr/local/lib/sdr-station/web/img/; done   # 1.3.6: trace-art + app icons
 # boot + shutdown splash: Plymouth theme files + sdr-splash (turned on at the end of this script)
 install -d -m 755 /usr/local/lib/sdr-station/plymouth/stillwave-trace
-for f in stillwave-trace.plymouth stillwave-trace.script bg.png bg-shutdown.png sweep.png hub.png; do
+for f in stillwave-trace.plymouth stillwave-trace.script bg-reboot.png cursor.png bg.png bg-shutdown.png sweep.png hub.png bg-stillwave.png ok.png cd0.png cd1.png cd2.png cd3.png cd4.png cd5.png g0.png g1.png g2.png g3.png g4.png g5.png g6.png g7.png g8.png g9.png g10.png g11.png g12.png g13.png g14.png g15.png g16.png g17.png g18.png g19.png g20.png g21.png g22.png g23.png g24.png g25.png g26.png g27.png g28.png g29.png g30.png g31.png g32.png g33.png g34.png g35.png g36.png g37.png g38.png g39.png g40.png g41.png g42.png g43.png g44.png g45.png g46.png g47.png g48.png g49.png g50.png g51.png g52.png g53.png g54.png g55.png g56.png g57.png g58.png g59.png g60.png g61.png g62.png g63.png g64.png g65.png g66.png g67.png g68.png g69.png g70.png g71.png g72.png g73.png g74.png g75.png g76.png g77.png g78.png g79.png g80.png g81.png g82.png g83.png g84.png g85.png g86.png g87.png g88.png g89.png g90.png g91.png g92.png s0.png s1.png s2.png s3.png s4.png s5.png s6.png s7.png s8.png s9.png s10.png s11.png s12.png s13.png s14.png s15.png s16.png s17.png s18.png s19.png s20.png s21.png s22.png s23.png s24.png s25.png s26.png s27.png s28.png s29.png s30.png s31.png s32.png s33.png s34.png s35.png s36.png s37.png s38.png s39.png s40.png s41.png s42.png s43.png s44.png s45.png s46.png s47.png s48.png s49.png s50.png s51.png s52.png s53.png s54.png s55.png s56.png s57.png s58.png s59.png s60.png s61.png s62.png s63.png s64.png s65.png s66.png s67.png s68.png s69.png s70.png s71.png s72.png s73.png s74.png s75.png s76.png s77.png s78.png s79.png s80.png s81.png s82.png s83.png s84.png s85.png s86.png s87.png s88.png s89.png s90.png s91.png s92.png ok8.png cursor8.png; do
   install -m 644 "$SRC/plymouth/stillwave-trace/$f" "/usr/local/lib/sdr-station/plymouth/stillwave-trace/$f"
 done
 install -m 755 "$SRC/bin/sdr-splash" /usr/local/lib/sdr-station/bin/sdr-splash
+# 1.3.6: manifest of every web/ + boot-theme file this package ships; sdr-verify checks each one is installed
+(cd "$SRC" && find web plymouth/stillwave-trace -type f ! -name '*.pre-*' ! -name '*.pyc' ! -path '*/__pycache__/*' | LC_ALL=C sort) \
+  > /usr/local/lib/sdr-station/MANIFEST || true
+# 1.3.1: offline plymouth packages for Raspberry Pi OS trixie (sdr-splash installs them only if plymouth is missing)
+if compgen -G "$SRC/vendor/plymouth/*.deb" >/dev/null; then
+  install -d -m 755 /usr/local/lib/sdr-station/vendor/plymouth
+  rm -f /usr/local/lib/sdr-station/vendor/plymouth/*.deb   # 1.3.6: drop stale 1.3.5 libxkbcommon0/xkb-data debs
+  install -m 644 "$SRC"/vendor/plymouth/*.deb "$SRC/vendor/plymouth/SHA256SUMS" "$SRC/vendor/plymouth/README.txt" /usr/local/lib/sdr-station/vendor/plymouth/
+fi
 ln -sfn /usr/local/lib/sdr-station/bin/sdr-boot-setup /usr/local/sbin/sdr-boot-setup
 # ---- over-the-air updates (sdr-update): the only part that goes online, and only when asked ----
 install -m 644 "$SRC/VERSION" /usr/local/lib/sdr-station/VERSION
@@ -348,6 +577,8 @@ install -d -m 755 /var/lib/sdr-update /var/lib/sdr-update/releases
 touch /var/log/sdr-update.log && chmod 644 /var/log/sdr-update.log
 # ---- ADS-B map: vendored MapLibre/pmtiles/fonts/sprites + offline LA tiles (works with no internet) ----
 install -m 755 "$SRC/bin/sdr-maps" /usr/local/sbin/sdr-maps
+install -d -m 755 /usr/local/lib/sdr-station/bin
+install -m 755 "$SRC/bin/sdr-mapjob" /usr/local/lib/sdr-station/bin/sdr-mapjob   # 1.3.5: on-screen LA / USA map downloads
 rm -rf /usr/local/lib/sdr-station/web/maplib.new
 cp -r "$SRC/web/maplib" /usr/local/lib/sdr-station/web/maplib.new
 find /usr/local/lib/sdr-station/web/maplib.new -type d -exec chmod 755 {} +
@@ -361,8 +592,13 @@ if [[ -s "$SRC/maps/la.pmtiles" ]]; then
   /usr/local/sbin/sdr-maps install-local "$SRC/maps/la.pmtiles" || echo "WARNING: map tiles not installed; the ADS-B map falls back to a basic outline"
 elif [[ -s /var/lib/sdr/maps/la.pmtiles ]]; then
   echo "Map tiles: this package has none (app-only zip); keeping the installed /var/lib/sdr/maps/la.pmtiles"
+elif [[ "$(curl -sI -o /dev/null -w '%{http_code}' --max-time 8 https://build.protomaps.com/ 2>/dev/null)" =~ ^[1-5][0-9][0-9]$ ]]; then
+  # 1.3.5: any HTTP answer = online. build.protomaps.com/ answers 404, so 1.3.4's `curl -f` check always said "No internet"
+  # 1.3.4: fresh install with internet -> pull the LA city/street map now so it works out of the box
+  echo "Downloading the LA street map (a few minutes)..."
+  /usr/local/sbin/sdr-maps fetch || echo "WARNING: map download failed; the ADS-B map shows a basic outline. Tap GET MAP on the Map page (or Settings > Download maps) once it is online"
 else
-  echo "No map tiles in this package: the ADS-B map shows a basic outline until you run (with internet, once): sudo sdr-maps fetch"
+  echo "No internet: the ADS-B map shows a basic outline. Tap GET MAP on the Map page once the box is on Wi-Fi"
 fi
 if [[ ! -f /etc/sdr/stations.conf ]]; then
   install -m 644 "$SRC/stations.conf" /etc/sdr/stations.conf
@@ -386,9 +622,11 @@ chown root:"$RUN_GROUP" /etc/sdr/fm.env /etc/sdr/stations.conf
 chmod 644 /etc/sdr/fm.env /etc/sdr/stations.conf
 # 1.0.8.2: restore any stream key an older Listen save dropped (password from icecast.xml, installer defaults otherwise)
 /usr/local/sbin/sdr-fm-env heal || true
+# 1.3.2: FM filters are now 50/60/70/80 Hz and 6k/7k/8k/9k: snap saved values (8500 -> 8000, others to the nearest)
+/usr/local/sbin/sdr-listen migrate >/dev/null 2>&1 || true
 SOURCE_PW="$(awk -F= '/^ICECAST_SOURCE_PASSWORD=/{print $2; exit}' /etc/sdr/fm.env || true)"
 
-# Dongle mode (fm / spectrum / detect / adsb). Default fm = same behavior as before.
+# Dongle mode (fm / spectrum / adsb). Default fm = same behavior as before.
 if [[ ! -f /etc/sdr/mode.env ]]; then
   install -m 644 "$SRC/config/mode.env.example" /etc/sdr/mode.env
 else
@@ -408,7 +646,7 @@ sed -e "s/^\\[Service\\]/[Service]\\nUser=${RUN_USER}\\nGroup=${RUN_GROUP}/" \
   "$SRC/systemd/sdr-fm.service" > /etc/systemd/system/sdr-fm.service
 sed -e "s/^\\[Service\\]/[Service]\\nUser=${RUN_USER}\\nGroup=${RUN_GROUP}/" \
   "$SRC/systemd/sdr-web.service" > /etc/systemd/system/sdr-web.service
-for u in sdr-spectrum sdr-detect sdr-adsb sdr-adsb-dual; do   # 1.0.9: + dual-dongle map unit
+for u in sdr-spectrum sdr-adsb sdr-adsb-dual; do   # 1.0.9: + dual-dongle map unit
   sed -e "s/^\\[Service\\]/[Service]\\nUser=${RUN_USER}\\nGroup=${RUN_GROUP}/" \
     "$SRC/systemd/$u.service" > "/etc/systemd/system/$u.service"
 done
@@ -448,7 +686,7 @@ sed -e "s/FIELDNOTE_UID/${AUDIO_UID:-0}/g" "$SRC/systemd/sdr-bt-reconnect.servic
 [[ -n "$AUDIO_UID" ]] || sed -i 's/ user@0.service//' /etc/systemd/system/sdr-bt-reconnect.service
 
 cat >/etc/sudoers.d/sdr-station <<EOF
-${RUN_USER} ALL=(root) NOPASSWD: /usr/local/sbin/sdr-select-station, /usr/local/sbin/sdr-scan, /usr/local/sbin/sdr-tune-freq, /usr/local/sbin/sdr-add-station, /usr/local/sbin/sdr-apply-settings, /usr/local/sbin/sdr-save-preset, /usr/local/sbin/sdr-delete-preset, /usr/local/sbin/sdr-net-mode, /usr/local/sbin/sdr-svc, /usr/local/sbin/sdr-mode, /usr/local/sbin/sdr-bt, /usr/local/sbin/sdr-maps, /usr/local/sbin/sdr-update, /usr/local/sbin/sdr-screen, /usr/local/sbin/sdr-listen, /usr/local/sbin/sdr-usb-reset, /usr/local/sbin/sdr-dongles, /usr/local/sbin/sdr-shot, /usr/local/sbin/sdr-power reboot, /usr/local/sbin/sdr-power poweroff
+${RUN_USER} ALL=(root) NOPASSWD: /usr/local/sbin/sdr-select-station, /usr/local/sbin/sdr-tune-freq, /usr/local/sbin/sdr-add-station, /usr/local/sbin/sdr-apply-settings, /usr/local/sbin/sdr-save-preset, /usr/local/sbin/sdr-delete-preset, /usr/local/sbin/sdr-net-mode, /usr/local/sbin/sdr-svc, /usr/local/sbin/sdr-mode, /usr/local/sbin/sdr-bt, /usr/local/sbin/sdr-maps, /usr/local/sbin/sdr-update, /usr/local/sbin/sdr-screen, /usr/local/sbin/sdr-listen, /usr/local/sbin/sdr-usb-reset, /usr/local/sbin/sdr-dongles, /usr/local/sbin/sdr-aircraft-db, /usr/local/sbin/sdr-content, /usr/local/sbin/sdr-shot, /usr/local/sbin/sdr-boot-setup, /usr/local/sbin/sdr-power reboot, /usr/local/sbin/sdr-power poweroff
 EOF
 chmod 440 /etc/sudoers.d/sdr-station
 
@@ -494,13 +732,17 @@ systemctl disable sdr-fm >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/multi-user.target.wants/sdr-fm.service
 systemctl daemon-reload
 systemctl enable icecast2 sdr-web sdr-net sdr-mode nginx
+systemctl enable sdr-ais.service >/dev/null 2>&1 || true   # 1.3.1: exits at once without an AIS dongle
+systemctl try-restart sdr-ais.service >/dev/null 2>&1 || true   # 1.3.2: pick up "-X off" (no aiscatcher.org community feed)
 # 1.2.0: the first-boot grace is a timer now (the old service slept 10 min inside multi-user.target)
 systemctl disable sdr-firstboot-done.service >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/multi-user.target.wants/sdr-firstboot-done.service
 systemctl enable sdr-net-retry.timer sdr-firstboot-done.timer >/dev/null 2>&1 || true
+systemctl enable sdr-net-watch.service >/dev/null 2>&1 || true; systemctl try-restart sdr-net-watch.service >/dev/null 2>&1 || systemctl start sdr-net-watch.service >/dev/null 2>&1 || true   # 1.3.2 auto-join drop watchdog
 [[ $UPGRADE -eq 0 ]] && { install -d -m 755 /var/lib/sdr-station; touch /var/lib/sdr-station/first-boot; }   # no hotspot fallback during the first boot
 systemctl enable sdr-bt-reconnect >/dev/null 2>&1 || true
 systemctl enable sdr-screen sdr-screen-final >/dev/null 2>&1 || echo "WARNING: could not enable sdr-screen"
+systemctl enable sdr-shutdown-screen >/dev/null 2>&1 || echo "WARNING: could not enable sdr-shutdown-screen"
 if systemctl list-unit-files bluetooth.service >/dev/null 2>&1; then
   systemctl enable --now bluetooth >/dev/null 2>&1 || true
 fi
@@ -522,6 +764,7 @@ systemctl restart icecast2 || true
 sleep 1
 systemctl restart sdr-web nginx || true
 systemctl start sdr-screen-final >/dev/null 2>&1 || true
+systemctl start sdr-shutdown-screen >/dev/null 2>&1 || true
 systemctl restart sdr-screen >/dev/null 2>&1 || echo "WARNING: sdr-screen did not start (journalctl -u sdr-screen)"
 DONGLE_MODE="$(/usr/local/sbin/sdr-mode current 2>/dev/null || echo fm)"
 [[ "$DONGLE_MODE" == "none" ]] && DONGLE_MODE=spectrum
@@ -543,7 +786,6 @@ echo "Same page via Icecast:    http://${IP:-HOST}:8000/radio.html"
 echo "Direct Flask:             http://${IP:-HOST}:8080/"
 echo "Stream:                   http://${IP:-HOST}:8000/live.mp3"
 echo "Spectrum / waterfall:     http://${IP:-HOST}/spectrum"
-echo "RF detect:                http://${IP:-HOST}/detect"
 echo "ADS-B aircraft:           http://${IP:-HOST}/adsb   (decoder: $(/usr/local/lib/sdr-station/bin/adsb_run.sh --which 2>/dev/null || echo 'not installed'))"
 [[ $UPGRADE -eq 1 ]] || echo "Icecast admin:            http://${IP:-HOST}:8000/admin/  user=admin pass=${ADMIN_PW}"
 echo "By name (mDNS):           http://$(hostname).local/"
@@ -605,6 +847,8 @@ if [[ $UPGRADE -eq 1 ]]; then
   # over-the-air upgrade: never rewrite the display setup / kiosk unit (it may be hand-fixed). Only the
   # hidden-pointer drop-in (1.0.6: also covers snap Chromium's own pointer). Applied once even if the pointer
   # had been set to shown, then that choice is kept again. Takes effect at the next reboot.
+  # 1.3.6: always refresh the kiosk launcher (full-screen geometry, 1:1 scale, black background); the unit is untouched
+  [[ -x /usr/local/bin/fieldnote-kiosk ]] && { /usr/local/sbin/fieldnote-display-setup --refresh-launcher || echo "WARNING: could not refresh the kiosk launcher"; }
   if [[ -f /etc/systemd/system/fieldnote-kiosk.service ]]; then
     if ! grep -qx 'CURSOR_FIX=106' /etc/sdr/display.env 2>/dev/null || ! grep -qx 'CURSOR=shown' /etc/sdr/display.env 2>/dev/null; then
       /usr/local/sbin/fieldnote-display-setup --hide-cursor --no-restart || echo "WARNING: could not hide the kiosk mouse pointer (see above)."
@@ -615,7 +859,7 @@ if [[ $UPGRADE -eq 1 ]]; then
   fi
 elif [[ $DO_DISPLAY -eq 1 ]]; then
   echo
-  /usr/local/sbin/fieldnote-display-setup --user "$RUN_USER" && mark_step display || echo "WARNING: display setup reported a problem (see above). Resume: sudo bash $SRC/install.sh --resume --display"
+  /usr/local/sbin/fieldnote-display-setup --user "$RUN_USER" ${DSI_ARGS[@]+"${DSI_ARGS[@]}"} && mark_step display || echo "WARNING: display setup reported a problem (see above). Resume: sudo bash $SRC/install.sh --resume --display dsi"
 elif [[ -f /etc/systemd/system/fieldnote-kiosk.service ]]; then
   # Existing cage kiosk (it may be hand-edited): apply ONLY the hidden-pointer drop-in, never rewrite the unit.
   if grep -qx 'CURSOR=shown' /etc/sdr/display.env 2>/dev/null; then
@@ -624,9 +868,20 @@ elif [[ -f /etc/systemd/system/fieldnote-kiosk.service ]]; then
     /usr/local/sbin/fieldnote-display-setup --hide-cursor || echo "WARNING: could not hide the kiosk mouse pointer (see above)."
   fi
 elif ls /sys/class/drm/card*-DSI-* >/dev/null 2>&1 && [[ ! -f /etc/sdr/display.env ]]; then
-  echo "A DSI display is connected. For the full-screen Trace kiosk run:"
-  echo "  sudo trace-display-setup     (same as fieldnote-display-setup; then sudo reboot)"
+  if [[ $UPGRADE -eq 0 ]]; then   # 1.3.3: fresh install + screen attached -> set up the kiosk now (it also lets the splash step run)
+    echo "A DSI display is connected: setting up the full-screen Trace kiosk"
+    /usr/local/sbin/fieldnote-display-setup --user "$RUN_USER" && mark_step display || echo "WARNING: display setup reported a problem. Run: sudo trace-display-setup"
+  else
+    echo "A DSI display is connected. For the full-screen Trace kiosk run:"
+    echo "  sudo trace-display-setup     (same as fieldnote-display-setup; then sudo reboot)"
+  fi
 fi
+
+install_pi5_helpers || echo "WARNING: Pi 5 helper step reported a problem (see above)"
+# 1.2.2: record the edition explicitly (sdr-update's edition guard reads this file; no file also means handheld)
+install -d -m 755 /usr/local/lib/sdr-station
+printf 'handheld\n' >"$EDITION_FILE"
+[[ $CONVERTING -eq 1 ]] && echo "Edition: this box is now handheld Trace (was Trace Desktop)."
 
 # ---- network (1.0.8: after the display step, so a network change can never stop the kiosk setup) ----
 if [[ $UPGRADE -eq 0 ]]; then
@@ -646,6 +901,17 @@ if [[ "$(systemctl is-enabled dnsmasq 2>/dev/null)" == "enabled" ]] \
    && ! grep -hvE '^[[:space:]]*(#|$)' /etc/dnsmasq.conf /etc/dnsmasq.d/*.conf 2>/dev/null | grep -q .; then
   systemctl disable --now dnsmasq >/dev/null 2>&1 && echo "Disabled the unused system dnsmasq service (hotspot DHCP uses NetworkManager's own)."
 fi
+# 1.3.2: http://trace-xxxx.local/ - a unit still on a stock name (raspberrypi / SDRpi / trace) is renamed to
+# trace-<last 4 of the board serial>, matching its TRACE-XXXX hotspot. A name you chose yourself is kept.
+HN_NOW="$(hostname -s 2>/dev/null || true)"
+case "${HN_NOW,,}" in raspberrypi|sdrpi|trace|"")
+  HN_SFX="$(/usr/local/sbin/sdr-net-mode default-ssid 2>/dev/null | tail -n1 | sed -n 's/^TRACE-\([0-9A-Fa-f]\{4\}\)$/\1/p' | tr 'A-F' 'a-f')"
+  if [[ -n "$HN_SFX" ]]; then
+    hostnamectl set-hostname "trace-$HN_SFX" >/dev/null 2>&1 || echo "trace-$HN_SFX" >/etc/hostname
+    if grep -q '^127\.0\.1\.1' /etc/hosts; then sed -i "s/^127\.0\.1\.1.*/127.0.1.1\ttrace-$HN_SFX/" /etc/hosts; else printf '127.0.1.1\ttrace-%s\n' "$HN_SFX" >>/etc/hosts; fi
+    echo "Hostname: trace-$HN_SFX (http://trace-$HN_SFX.local/)"
+  fi ;;
+esac
 systemctl enable --now avahi-daemon >/dev/null 2>&1 || true   # http://$(hostname).local
 # Record what the Pi is doing right now (on Wi-Fi -> MODE=wifi) so neither this install nor
 # the next reboot flips it into hotspot mode.
@@ -662,14 +928,22 @@ if [[ -f /etc/systemd/system/fieldnote-kiosk.service || -f /etc/sdr/display.env 
   echo
   echo "[progress] 92 Boot splash + initramfs (a rebuild can take a few minutes on a Pi)"
   t0=$SECONDS
-  bash /usr/local/lib/sdr-station/bin/sdr-splash auto || echo "WARNING: boot splash not turned on (see above); the Pi keeps its normal text boot."
+  bash /usr/local/lib/sdr-station/bin/sdr-splash auto || echo "BOOT SPLASH FAILED: not turned on (see above); the Pi keeps its normal text boot. Details: sdr-splash status"
   echo "boot splash step took $((SECONDS - t0))s"
 fi
 [[ $UPGRADE -eq 0 ]] && mark_step install
 # ---- 1.2.0 faster boot: turn off cloud-init and (only when nothing needs it) snapd ----
 # cloud-init: its network config was already copied into NetworkManager (see above) and the netplan file stays, so
-# disabling it only skips its boot stages. snapd: on Ubuntu the kiosk browser is the Chromium SNAP, which needs snapd,
-# so snapd is only turned off when no snap apps are installed (bases / snapd itself do not count).
+# disabling it only skips its boot stages.
+# snapd (1.2.1 fix): on Ubuntu the kiosk browser is the Chromium SNAP, which needs snapd. 1.2.0 turned snapd off whenever no
+# snap app was installed YET, so a first run whose display step failed (no internet) left snapd off and every retry
+# could not install Chromium. Now snapd is left alone whenever this box is (or is about to be) a kiosk: --display was
+# asked for, a kiosk is configured, or a display is attached. It is only turned off on a headless box with no snap apps,
+# and it is turned back on when a kiosk box has it off and no Chromium yet.
+wants_kiosk() {
+  [[ ${DO_DISPLAY:-0} -eq 1 ]] || [[ -f /etc/systemd/system/fieldnote-kiosk.service || -f /etc/sdr/display.env ]] \
+    || ls /sys/class/drm/card*-DSI-* >/dev/null 2>&1
+}
 boot_trim() {
   if [[ -d /etc/cloud && ! -e /etc/cloud/cloud-init.disabled ]]; then
     touch /etc/cloud/cloud-init.disabled && echo "Boot: cloud-init turned off (/etc/cloud/cloud-init.disabled; rm it to undo)"
@@ -677,12 +951,23 @@ boot_trim() {
   if command -v snap >/dev/null 2>&1 && systemctl list-unit-files snapd.service >/dev/null 2>&1; then
     local apps
     apps="$(snap list 2>/dev/null | awk 'NR>1 && $1 !~ /^(core[0-9]*|snapd|bare|gtk-common-themes|gnome-[0-9-]+|mesa-[0-9a-z-]+)$/ {print $1}' | xargs)"
-    if [[ -z "$apps" ]] && ! [[ -x /snap/bin/chromium ]]; then
-      systemctl disable snapd.service snapd.socket snapd.seeded.service >/dev/null 2>&1 && echo "Boot: snapd turned off (no snap apps installed)"
+    if wants_kiosk; then
+      if ! [[ -x /snap/bin/chromium ]] && ! systemctl is-enabled --quiet snapd.service 2>/dev/null; then
+        systemctl unmask snapd.service snapd.socket >/dev/null 2>&1 || true
+        systemctl enable --now snapd.socket snapd.service snapd.seeded.service >/dev/null 2>&1 \
+          && echo "Boot: snapd turned back on (the kiosk browser, the Chromium snap, needs it)"
+      else
+        echo "Boot: snapd kept on (kiosk box; the Chromium snap needs it)"
+      fi
+    elif [[ -z "$apps" ]] && ! [[ -x /snap/bin/chromium ]]; then
+      systemctl disable snapd.service snapd.socket snapd.seeded.service >/dev/null 2>&1 && echo "Boot: snapd turned off (headless, no snap apps installed)"
     else
-      echo "Boot: snapd kept on (snap apps in use: ${apps:-chromium}; the kiosk browser needs it)"
+      echo "Boot: snapd kept on (snap apps in use: ${apps:-chromium})"
     fi
   fi
 }
 boot_trim || true
+if [[ $UPGRADE -eq 0 && -f /var/lib/sdr-station/os-reboot-needed ]]; then
+  echo "NOTE: the OS upgrade installed a new kernel/firmware; it starts with this reboot."; rm -f /var/lib/sdr-station/os-reboot-needed
+fi
 echo "TRACE-INSTALL: OK ($VERSION). Reboot to finish: sudo reboot"

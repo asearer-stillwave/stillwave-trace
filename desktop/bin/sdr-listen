@@ -4,9 +4,13 @@
   sdr-listen presets                                   JSON {airband:[...], noaa:[...]}
   sdr-listen save BAND MHZ NAME | delete BAND MHZ      BAND: airband | noaa
   sdr-listen bands                                     JSON per-band gain / squelch (1.0.9)
-  sdr-listen band BAND [gain=G|gain=station] [squelch=S]   BAND: fm | airband | noaa; saved separately in fm.env
+  sdr-listen band BAND [gain=G|gain=station] [squelch=S]   BAND: fm | airband | noaa | frs | any; saved separately in fm.env
                                                        (via sdr-fm-env); restarts the stream when that band is playing
-Airband = AM 118-137 MHz (25 kHz / 8.33 kHz channels). NOAA = narrow FM 162.400-162.550 MHz."""
+  sdr-listen migrate                                   1.3.2: snap saved FM high/low-pass to 50/60/70/80 and 6k/7k/8k/9k
+Airband = AM 118-137 MHz (25 kHz / 8.33 kHz channels). NOAA = narrow FM 162.400-162.550 MHz.
+FRS / GMRS (1.3.6) = narrow FM, 22 channels 462/467 MHz, own FRS_* keys (never NOAA's).
+Any MHz (1.3.8) = manual entry, BAND any: any frequency 24-1766 MHz (the R820T / R860 tuner range) with wfm, am or nfm,
+own ANY_* keys (ANY_GAIN, ANY_SQUELCH, ANY_MHZ, ANY_DEMOD, ANY_RECENT); never touches the other bands' settings."""
 import json, os, re, subprocess, sys, shutil
 ENV = os.environ.get("SDR_ENV_FILE", "/etc/sdr/fm.env")
 PRESETS = os.environ.get("SDR_LISTEN_PRESETS", "/etc/sdr/listen-presets.json")
@@ -14,19 +18,29 @@ DEFAULTS = os.environ.get("SDR_LISTEN_DEFAULTS", "/usr/local/lib/sdr-station/con
 MODE = os.environ.get("SDR_MODE_BIN", "/usr/local/sbin/sdr-mode")
 SERVICE = os.environ.get("SDR_STREAM_SERVICE", "sdr-fm.service")
 RANGE = {"am": (118.0, 137.0), "nfm": (25.0, 1700.0), "wfm": (87.5, 108.0)}
+ANY_RANGE = (24.0, 1766.0)   # 1.3.8 Any MHz: the whole tuner range, any demod
+ANY_RECENT_MAX = 6
+# 1.3.6 FRS / GMRS (narrow FM, -s 24k): CH 1-7 462.5625-462.7125, CH 8-14 467.5625-467.7125, CH 15-22 462.5500-462.7250
+FRS_CHANNELS = ([{"ch": i + 1, "mhz": round(462.5625 + 0.025 * i, 4), "name": "CH %d" % (i + 1)} for i in range(7)]
+                + [{"ch": i + 8, "mhz": round(467.5625 + 0.025 * i, 4), "name": "CH %d" % (i + 8)} for i in range(7)]
+                + [{"ch": i + 15, "mhz": round(462.5500 + 0.025 * i, 4), "name": "CH %d" % (i + 15)} for i in range(8)])
+def frs_ch(f):
+    for c in FRS_CHANNELS:
+        if abs(c["mhz"] - float(f)) < 0.0004: return c["ch"]
+    return 0
 def die(msg, code=2): print(msg, file=sys.stderr); sys.exit(code)
 ATIS = [{"mhz": 133.8, "name": "LAX ATIS Arrival"}, {"mhz": 135.65, "name": "LAX ATIS Departure"}]
 def load():
     for p in (PRESETS, DEFAULTS):
         try: d = json.load(open(p))
         except Exception: continue
-        out = {"airband": d.get("airband", []), "noaa": d.get("noaa", [])}
+        out = {"airband": d.get("airband", []), "noaa": d.get("noaa", []), "frs": FRS_CHANNELS}
         if p == PRESETS and not d.get("_atis109"):      # 1.0.9: add the LAX ATIS presets once to saved lists
             for a in ATIS:
                 if not any(abs(float(x["mhz"]) - a["mhz"]) < 1e-4 for x in out["airband"]): out["airband"].append(dict(a))
             out["airband"].sort(key=lambda x: float(x["mhz"]))
         return out
-    return {"airband": [], "noaa": []}
+    return {"airband": [], "noaa": [], "frs": FRS_CHANNELS}
 def store(d):
     os.makedirs(os.path.dirname(PRESETS), exist_ok=True)
     d = dict(d, _atis109=True)
@@ -35,8 +49,28 @@ def mhz(v):
     try: f = round(float(v), 4)
     except ValueError: die("bad frequency " + v)
     return f
-BANDKEY = {"fm": "FM", "airband": "AIRBAND", "noaa": "NOAA"}
-BAND_DEFAULT = {"fm": {"gain": None, "squelch": 0}, "airband": {"gain": 40, "squelch": 0}, "noaa": {"gain": 40, "squelch": 0}}
+BANDKEY = {"fm": "FM", "airband": "AIRBAND", "noaa": "NOAA", "frs": "FRS", "any": "ANY"}
+BAND_DEFAULT = {"fm": {"gain": None, "squelch": 0}, "airband": {"gain": 40, "squelch": 0}, "noaa": {"gain": 40, "squelch": 0}, "frs": {"gain": 40, "squelch": 20}, "any": {"gain": 40, "squelch": 20}}
+# 1.3.1 audio filters per band (fm.env FM_AUDIO_RATE/FM_HIGHPASS/FM_LOWPASS, AIRBAND_HIGHPASS/AIRBAND_LOWPASS; read by fm_stream.sh).
+# FM: unset = the playing preset's own values. Airband: 200-3400 Hz by default. NOAA stays fixed at 200-3400 Hz (no controls).
+FILT = {"fm": {"rate": ("AUDIO_RATE", (16000, 24000, 32000, 44100, 48000)), "hp": ("HIGHPASS", (10, 1000)), "lp": ("LOWPASS", (2000, 16000))},
+        "airband": {"hp": ("HIGHPASS", (50, 1000)), "lp": ("LOWPASS", (1500, 6000))}}
+# 1.3.2: FM filters are picked from fixed options (Searer: outside these is useless); defaults 50 Hz / 8 kHz
+FM_OPT = {"hp": (50, 60, 70, 80), "lp": (6000, 7000, 8000, 9000)}
+FILT_DEFAULT = {"fm": {"rate": None, "hp": 50, "lp": 8000}, "airband": {"hp": 200, "lp": 3400}}
+def snap_fm(n, v):
+    """1.3.2 migration: 8500 -> 8000; any other old value -> nearest new option (ties go to the lower one)."""
+    v = int(v)
+    if n == "lp" and v == 8500: return 8000
+    return min(FM_OPT[n], key=lambda o: (abs(o - v), o))
+def migrate():
+    """1.3.2: snap saved FM_HIGHPASS / FM_LOWPASS in fm.env to the new options (run by install.sh on update)."""
+    k = envkeys(); items = []
+    for n, key in (("hp", "FM_HIGHPASS"), ("lp", "FM_LOWPASS")):
+        v = k.get(key)
+        if v and v.isdigit() and int(v) not in FM_OPT[n]: items.append("%s=%d" % (key, snap_fm(n, v)))
+    if items: fmenv_set(*items)
+    print(json.dumps({"ok": True, "changed": items}))
 def envkeys():
     d = {}
     try:
@@ -55,15 +89,49 @@ def bands():
         g = k.get(K + "_GAIN"); sq = k.get(K + "_SQUELCH")
         out[b] = {"gain": float(g) if g and re.fullmatch(r"\d+(\.\d+)?", g) else BAND_DEFAULT[b]["gain"],
                   "squelch": int(sq) if sq and sq.isdigit() else BAND_DEFAULT[b]["squelch"], "saved": bool(g or sq)}
+    for b, F in FILT.items():
+        for n, (key, _) in F.items():
+            v = k.get(BANDKEY[b] + "_" + key)
+            out[b][n] = int(v) if v and v.isdigit() else FILT_DEFAULT[b][n]
+            if b == "fm" and n in FM_OPT and out[b][n] is not None and out[b][n] not in FM_OPT[n]: out[b][n] = snap_fm(n, out[b][n])
+    out["fm"]["station_rate"] = k.get("AUDIO_RATE"); out["fm"]["station_hp"] = k.get("HIGHPASS_HZ"); out["fm"]["station_lp"] = k.get("LOWPASS_HZ")
     out["fm"]["station_gain"] = k.get("GAIN")
+    try: out["frs"]["mhz"] = float(k.get("FRS_MHZ") or 462.5625)
+    except ValueError: out["frs"]["mhz"] = 462.5625
+    out["frs"]["ch"] = int(k.get("FRS_CH")) if (k.get("FRS_CH") or "").isdigit() else frs_ch(out["frs"]["mhz"])
+    out["any"]["mhz"], out["any"]["demod"], out["any"]["recent"] = any_state(k)   # 1.3.8 Any MHz
     out["playing"] = k.get("BAND") or ("fm" if (k.get("DEMOD") or "wfm") == "wfm" else "")
     return out
+def any_recent(k):
+    out = []
+    for x in (k.get("ANY_RECENT") or "").split(","):
+        m = re.fullmatch(r"(\d{2,4}(?:\.\d{1,4})?):(wfm|am|nfm)", x.strip())
+        if m and ANY_RANGE[0] <= float(m.group(1)) <= ANY_RANGE[1]: out.append({"mhz": float(m.group(1)), "demod": m.group(2)})
+    return out[:ANY_RECENT_MAX]
+def any_state(k):
+    try: f = float(k.get("ANY_MHZ") or 446.0)
+    except ValueError: f = 446.0
+    if not ANY_RANGE[0] <= f <= ANY_RANGE[1]: f = 446.0
+    d = k.get("ANY_DEMOD") if k.get("ANY_DEMOD") in RANGE else "nfm"
+    return f, d, any_recent(k)
 def band(a):
     if not a or a[0] not in BANDKEY: die(__doc__)
     b, K = a[0], BANDKEY[a[0]]; items = []
     for x in a[1:]:
+        m = re.fullmatch(r"(rate|hp|lp)=(\S*)", x)
+        if m:   # 1.3.1 filters
+            if m.group(1) not in FILT.get(b, {}): die("%s has no %s setting" % (b, m.group(1)))
+            key, rng = FILT[b][m.group(1)]
+            if m.group(2) in ("", "default"): items.append("-" + K + "_" + key); continue
+            if not m.group(2).isdigit(): die("%s must be a number" % m.group(1))
+            v = int(m.group(2))
+            if m.group(1) == "rate":
+                if v not in rng: die("audio rate must be one of " + ", ".join(map(str, rng)))
+            elif b == "fm" and v not in FM_OPT[m.group(1)]: die("FM %s must be one of %s" % ({"hp": "high-pass", "lp": "low-pass"}[m.group(1)], ", ".join(map(str, FM_OPT[m.group(1)]))))
+            elif not rng[0] <= v <= rng[1]: die("%s must be %d-%d Hz" % ({"hp": "high-pass", "lp": "low-pass"}[m.group(1)], rng[0], rng[1]))
+            items.append(K + "_" + key + "=" + str(v)); continue
         m = re.fullmatch(r"(gain|squelch)=(\S+)", x)
-        if not m: die("use gain=G or squelch=S")
+        if not m: die("use gain=G, squelch=S, rate=R, hp=HZ or lp=HZ")
         if m.group(1) == "gain":
             if m.group(2) in ("station", "default", ""): items.append("-" + K + "_GAIN")
             elif re.fullmatch(r"\d{1,2}(\.\d)?", m.group(2)) and float(m.group(2)) <= 50: items.append(K + "_GAIN=" + m.group(2))
@@ -72,7 +140,16 @@ def band(a):
             if b == "fm": die("FM has no squelch")
             if re.fullmatch(r"\d{1,3}", m.group(2)) and int(m.group(2)) <= 500: items.append(K + "_SQUELCH=" + m.group(2))
             else: die("squelch must be 0-500")
-    if items: fmenv_set(*items)
+    if items:
+        k0 = envkeys(); nv = dict(k0)
+        for it in items:
+            if it.startswith("-"): nv.pop(it[1:], None)
+            else: nv[it.split("=", 1)[0]] = it.split("=", 1)[1]
+        hp = nv.get(K + "_HIGHPASS") or ("50" if b == "fm" else "200"); lp = nv.get(K + "_LOWPASS") or ("8000" if b == "fm" else "3400")
+        rate = nv.get(K + "_AUDIO_RATE") or nv.get("AUDIO_RATE") or "48000"
+        if b in FILT and hp and lp and hp.isdigit() and lp.isdigit() and int(hp) >= int(lp): die("high-pass must be below low-pass")
+        if b == "fm" and lp and lp.isdigit() and rate.isdigit() and int(lp) > int(rate) // 2: die("low-pass must be at most half the audio rate (%d Hz)" % (int(rate) // 2))
+        fmenv_set(*items)
     k = envkeys(); playing = k.get("BAND") or ("fm" if (k.get("DEMOD") or "wfm") == "wfm" else "")
     if items and playing == b and not os.environ.get("SDR_LISTEN_DRY"):
         cur = subprocess.run([MODE, "current"], capture_output=True, text=True).stdout.strip()
@@ -83,15 +160,23 @@ def tune(a):
     if len(a) < 2: die(__doc__)
     f, demod = mhz(a[0]), a[1]
     if demod not in RANGE: die("demod must be wfm, am or nfm")
-    lo, hi = RANGE[demod]
-    if not lo <= f <= hi: die("%.3f MHz is outside %s range %.1f-%.1f" % (f, demod, lo, hi))
+    lo, hi = ANY_RANGE if len(a) > 4 and a[4] == "any" else RANGE[demod]   # 1.3.8 Any MHz: whole tuner range
+    if not lo <= f <= hi: die("%.3f MHz is outside %s range %.1f-%.1f" % (f, "Any MHz" if (lo, hi) == ANY_RANGE else demod, lo, hi))
     sq = a[2] if len(a) > 2 and re.fullmatch(r"\d{1,3}", a[2]) else "0"
     name = re.sub(r"[^\w .+/()-]", "", a[3] if len(a) > 3 else "")[:40] or ("%.3f MHz" % f)
-    band = a[4] if len(a) > 4 and a[4] in ("fm", "airband", "noaa", "other") else {"am": "airband", "wfm": "fm"}.get(demod, "noaa" if 162.39 <= f <= 162.56 else "other")
+    band = a[4] if len(a) > 4 and a[4] in ("fm", "airband", "noaa", "frs", "other", "any") else {"am": "airband", "wfm": "fm"}.get(demod, "noaa" if 162.39 <= f <= 162.56 else "frs" if frs_ch(f) else "other")
+    if band == "frs" and (demod != "nfm" or not frs_ch(f)): die("%.4f MHz is not an FRS / GMRS channel (narrow FM)" % f)
     # 1.0.8.2: update only the Listen keys; sdr-fm-env keeps every other line and restores missing stream keys.
     # 1.0.9: an explicit squelch is that band's own squelch (AIRBAND_SQUELCH / NOAA_SQUELCH); fm_stream.sh reads the band keys.
-    items = ["STATION_ID=listen-" + band, "STATION_NAME=" + name, "FREQ=%gM" % f, "DEMOD=" + demod, "SQUELCH=" + sq, "BAND=" + band]
-    if len(a) > 2 and band in ("airband", "noaa") and re.fullmatch(r"\d{1,3}", a[2]): items.append(BANDKEY[band] + "_SQUELCH=" + sq)
+    fs = ("%.4f" % f).rstrip("0").rstrip(".")          # 1.3.6: keep 4 decimals (FRS 462.5625; %g cut it to 462.562)
+    items = ["STATION_ID=listen-" + band, "STATION_NAME=" + name, "FREQ=%sM" % fs, "DEMOD=" + demod, "SQUELCH=" + sq, "BAND=" + band]
+    if len(a) > 2 and band in ("airband", "noaa", "frs", "any") and re.fullmatch(r"\d{1,3}", a[2]): items.append(BANDKEY[band] + "_SQUELCH=" + sq)
+    if band == "frs": items += ["FRS_MHZ=%s" % fs, "FRS_CH=%d" % frs_ch(f)]   # 1.3.6: own keys, NOAA settings untouched
+    if band == "any":   # 1.3.8: remember the last manual frequency + mode and the recent list (newest first, no repeats)
+        rec = [r for r in any_recent(envkeys()) if abs(r["mhz"] - f) > 1e-4]
+        rec = [{"mhz": f, "demod": demod}] + rec
+        items += ["ANY_MHZ=%s" % fs, "ANY_DEMOD=" + demod,
+                  "ANY_RECENT=" + ",".join(("%.4f" % r["mhz"]).rstrip("0").rstrip(".") + ":" + r["demod"] for r in rec[:ANY_RECENT_MAX])]
     fmenv_set(*items)
     if os.environ.get("SDR_LISTEN_DRY"):
         print("DRY tune %s %g %s sq=%s" % (band, f, demod, sq)); return
@@ -110,6 +195,7 @@ def main():
     if cmd == "tune": tune(a)
     elif cmd == "presets": print(json.dumps(load()))
     elif cmd == "bands": print(json.dumps(bands()))
+    elif cmd == "migrate": migrate()
     elif cmd == "band": band(a)
     elif cmd in ("save", "delete"):
         if len(a) < 2 or a[0] not in ("airband", "noaa"): die(__doc__)

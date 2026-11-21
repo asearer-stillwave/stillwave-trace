@@ -1,7 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -16,9 +18,11 @@
 <body class="page-audio">
 <script src="/nav.js"></script>
 <div class="wrap">
+  <div class="pre-back-h nav-back"><a class="btn sm fm-edit" href="/settings" aria-label="Back to Settings"><span aria-hidden="true">‹</span> Settings</a></div>
   <div class="brand">
     <h1>Audio <span class="acc">output</span></h1>
   </div>
+  <div id="audErr"></div>
   <p class="lead">Play FM radio from the box itself on a Bluetooth speaker, stream it to your phone, or both. The choice is saved and comes back after a reboot.</p>
 
   <div class="card">
@@ -81,7 +85,7 @@
 <script>
 const $ = id => document.getElementById(id);
 let A = {}, lastJob = '', pollT = null, scanTime = null;
-function setMsg(t,k){ const e=$('msg'); e.className='status '+(k||''); e.textContent=t||''; }
+function setMsg(t,k){ const e=$('msg'); e.className='status '+(k||''); e.textContent=(window.traceErr ? traceErr.clean(t) : t)||''; }
 async function jfetch(url, opt){
   const r = await fetch(url, Object.assign({cache:'no-store'}, opt||{}));
   const t = await r.text();
@@ -170,7 +174,8 @@ async function refresh(){
     }
     if (a.scan_time && a.scan_time !== scanTime) { scanTime = a.scan_time; renderFound(await jfetch('/api/audio/scan')); }
     else renderFound();
-  } catch(e) { setMsg('Could not read audio status: '+e.message, 'err'); }
+    traceErr.hide($('audErr'));
+  } catch(e) { traceErr.show($('audErr'), 'audio status', 'The audio service didn’t answer. Sound keeps playing as it was; this page just can’t show the speaker right now.', e.message, refresh); }
   clearTimeout(pollT);
   pollT = setTimeout(refresh, busy() ? 1200 : 5000);
 }

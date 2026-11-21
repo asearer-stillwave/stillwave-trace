@@ -1,6 +1,6 @@
 // Stillwave Trace dongle mode (1.0.8: START screen per tab, no mode row).
-// Load /mode.js on a page; <body data-mode="fm|spectrum|detect|adsb"> ties the page to a mode. (Page navigation is the tab bar in nav.js.)
-// One RTL-SDR: Listen (FM), Spectrum, Scan and ADS-B take turns owning it.
+// Load /mode.js on a page; <body data-mode="fm|spectrum|adsb"> ties the page to a mode. (Page navigation is the tab bar in nav.js.)
+// One RTL-SDR: Listen (FM), Spectrum and ADS-B take turns owning it.
 (function(){
   // Kiosk flag for the Trace display: /?kiosk=1 sets it (kiosk=0 clears), then it sticks
   // for this browser profile so every page hides the pointer.
@@ -17,13 +17,12 @@
   const MODES = [
     {id:'fm', label:'FM radio', page:'/listen', start:'Start listening', tab:'Listen'},
     {id:'spectrum', label:'Spectrum', page:'/spectrum', start:'Start spectrum', tab:'Spectrum'},
-    {id:'detect', label:'Scan', page:'/scan', start:'Start scan', tab:'Scan'},
     {id:'adsb', label:'ADS-B', page:'/adsb', start:'Start map', tab:'Map'}
   ];
   // 1.0.8: no SDR MODE row. Each tab belongs to one dongle mode (<body data-mode="...">). When the dongle is doing
   // something else the page shows the START screen (mode line + big START button). Opening a tab never switches.
   const PAGE_MODE = document.body && document.body.dataset.mode;
-  const NAMES = {fm:'FM', spectrum:'SPECTRUM', detect:'SCAN', adsb:'ADS-B', none:'NO', unknown:'UNKNOWN'};
+  const NAMES = {fm:'FM', spectrum:'SPECTRUM', adsb:'ADS-B', none:'NO', unknown:'UNKNOWN'};
   let gate = null;
   function gateRender(s){
     if(!PAGE_MODE) return;
@@ -37,7 +36,7 @@
     if(!off){ if(gate) gate.hidden = true; return; }
     if(!gate){
       gate = document.createElement('div'); gate.className = 'v-gate'; gate.setAttribute('role', 'region'); gate.setAttribute('aria-label', 'Start ' + m.label);
-      gate.innerHTML = '<div class="card v-start"><div class="v-ico" id="vgI" aria-hidden="true" hidden>✈</div><div class="k" id="vgK"></div><button type="button" class="primary" id="vgGo"></button><p class="tiny" id="vgN"></p></div>';
+      gate.innerHTML = '<div class="card v-start"><div class="v-ico" id="vgI" aria-hidden="true" hidden><svg viewBox="0 0 24 24" focusable="false" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15.5v-1.8l-7.5-4.6V4a1.5 1.5 0 0 0-3 0v5.1L3 13.7v1.8l7.5-2.3v4.6l-2 1.5V21l3.5-1 3.5 1v-1.7l-2-1.5v-4.6z"/></svg></div><div class="k" id="vgK"></div><button type="button" class="primary" id="vgGo"></button><p class="tiny" id="vgN"></p></div>';
       document.body.appendChild(gate);
       gate.querySelector('#vgGo').onclick = () => (state && state.off ? power(true) : set(PAGE_MODE, false, true)).catch(() => {});
       if(PAGE_MODE === 'adsb' && s && !s.adsb_available){ gate.querySelector('#vgGo').disabled = true; }
@@ -53,7 +52,7 @@
     if(noRadio){
       gate.querySelector('#vgK').textContent = '// NO RADIO DETECTED';
       gate.querySelector('#vgGo').textContent = 'Try again';
-      gate.querySelector('#vgN').textContent = 'No SDR dongle on USB. Check it is plugged in (try another USB port), then tap Try again. Still nothing: More > Reset SDR USB.';
+      gate.querySelector('#vgN').textContent = 'No SDR dongle on USB. Check it is plugged in (try another USB port), then tap Try again. Still nothing: Settings > Reset SDR USB.';
       return;
     }
     if(s.mode === 'none'){   // 1.2.0 boot idle: radio + map idle until START

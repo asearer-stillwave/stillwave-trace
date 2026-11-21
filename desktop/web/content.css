@@ -1,0 +1,113 @@
+/* Trace 1.2.6: Download maps, Stations (station bank), New preset sheet. Shared by both editions. */
+.mp-crumb { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 .7rem; font:600 var(--fs-1,13px)/1.2 var(--mono,ui-monospace,monospace); letter-spacing:.1em; text-transform:uppercase; color:var(--static); }
+.mp-crumb a { color:var(--signal); text-decoration:none; padding:6px 0; }
+.mp-store { padding:12px 14px; }
+.mp-store .st-h { display:flex; justify-content:space-between; gap:10px; font:700 var(--fs-1,13px) var(--mono,monospace); letter-spacing:.1em; text-transform:uppercase; color:var(--static); }
+.mp-bar { height:10px; border-radius:6px; background:var(--night); border:1px solid var(--line); margin:8px 0 4px; overflow:hidden; display:flex; }
+.mp-bar i { display:block; height:100%; background:var(--signal); } .mp-bar i.os { background:#3a4a3f; } .mp-bar i.dl { background:repeating-linear-gradient(45deg,var(--signal) 0 6px,#2a8a50 6px 12px); }
+.mp-list { display:flex; flex-direction:column; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; margin:0 0 .9rem; }
+.mp-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:12px; min-height:60px; padding:10px 14px; background:var(--panel,#111c15); color:inherit; text-decoration:none; border:0; text-align:left; width:100%; }
+.mp-row + .mp-row { border-top:1px solid var(--line); }
+.mp-row .mt { font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mp-row .ms { display:block; color:var(--static); font-size:.85em; white-space:normal; font-weight:400; margin-top:2px; }
+.mp-sz { font:700 var(--fs-1,13px) var(--mono,monospace); color:var(--paper); white-space:nowrap; }
+.mp-row .chev { color:var(--static); font-size:1.4em; }
+.mp-row button, .mp-act button { min-height:44px; white-space:nowrap; }
+.mp-tag { font:700 11px var(--mono,monospace); letter-spacing:.1em; text-transform:uppercase; padding:3px 8px; border-radius:999px; border:1px solid rgba(74,222,128,.5); color:var(--signal); white-space:nowrap; }
+.mp-prog { padding:14px; } .mp-prog .pp-h { display:flex; justify-content:space-between; gap:10px; font-weight:700; }
+.mp-prog .mp-bar { height:16px; } .mp-prog .pp-s { display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; color:var(--static); font:600 var(--fs-1,13px) var(--mono,monospace); }
+.mp-warn { border-left:3px solid var(--orange); background:rgba(255,159,67,.08); padding:12px 14px; border-radius:10px; margin:0 0 .9rem; color:var(--paper); }
+.mp-warn b { color:var(--orange); }
+.mp-off { text-align:center; padding:28px 16px; } .mp-off .big { font-size:42px; color:var(--static); }
+.mp-act { display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+.mp-two { display:grid; grid-template-columns:1fr; gap:0 18px; }
+@media (min-width:1100px) and (max-height:800px) { .mp-two { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } }
+.mp-row button { width:auto !important; flex:none; margin:0; }
+.mp-row .mp-tag { justify-self:end; width:auto; }
+html[data-ts="large"] .mp-row, html[data-ts="xl"] .mp-row { gap:10px; padding:10px 12px; }
+.mp-src { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; margin:.4rem 0 0; } .mp-src input { min-width:0; }
+.mp-row .mp-btns { display:flex; gap:8px; }
+.mp-row.click { cursor:pointer; }
+.mp-msg { min-height:1.2em; }
+html[data-ts="large"] .mp-row .mp-btns, html[data-ts="xl"] .mp-row .mp-btns { flex-direction:column; gap:6px; }
+html[data-ts="xl"] .mp-row { grid-template-columns:minmax(0,1fr) auto; } html[data-ts="xl"] .mp-row .mp-sz { grid-column:1; grid-row:2; }
+/* Stations (station bank) */
+.sb-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.45rem;margin:.2rem 0 .7rem}
+.sb-tabs button{padding:.55rem .3rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-crumb{font-family:var(--mono);color:var(--static);font-size:var(--t-small);margin:.2rem 0 .6rem;overflow-wrap:anywhere}
+.sb-crumb b{color:var(--signal)} .sb-crumb a{color:var(--signal);cursor:pointer;text-decoration:none}
+.sb-list{display:flex;flex-direction:column;gap:.45rem}
+.sb-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.6rem;align-items:center;padding:.55rem .7rem;border:1px solid var(--line);border-radius:12px;background:var(--night)}
+.sb-main{min-width:0}
+.sb-t{font-weight:var(--fw-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb-s{color:var(--static);font-size:var(--t-small);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb-f{font-family:var(--mono);color:var(--signal)}
+.sb-act{display:flex;gap:.4rem}
+.sb-act button{padding:.45rem .7rem;min-height:0;font-size:var(--t-button-sm);white-space:nowrap;width:auto}
+.sb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));gap:.45rem}
+.sb-grid button{padding:.5rem .4rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.04em}
+.sb-grid button small{display:block;color:var(--static);font-size:var(--t-label);font-weight:400}
+.sb-grid.st{grid-template-columns:repeat(auto-fill,minmax(5.2rem,1fr))}
+.sb-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.45rem;margin-bottom:.6rem}
+.sb-search input{min-width:0}
+.sb-g{margin:.7rem 0 .35rem;color:var(--static);font-size:var(--t-label);letter-spacing:.12em;text-transform:uppercase}
+.sb-home{display:flex;flex-wrap:wrap;gap:.45rem;align-items:center;margin-bottom:.6rem}
+.sb-home input{width:7.5rem}
+.sb-tag{font-size:var(--t-label);padding:.1rem .45rem;border:1px solid var(--line-strong);border-radius:8px;color:var(--static);margin-left:.35rem}
+.sb-hdr{display:flex;flex-wrap:wrap;gap:.45rem;justify-content:space-between;align-items:center;margin-bottom:.4rem}
+.sb-more{margin-top:.6rem}
+html.hdmi .sb-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:1rem}
+html[data-ts="xl"] .sb-row{grid-template-columns:minmax(0,1fr)} html[data-ts="xl"] .sb-act{justify-content:flex-end}
+/* + New preset sheet (Preset settings) */
+.np-sheet{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;z-index:50;padding:1rem}
+.np-sheet[hidden]{display:none}
+.np-form{box-sizing:border-box;background:var(--panel);border:1px solid var(--grid);border-radius:16px;padding:1.1rem;width:100%;max-width:30rem;display:flex;flex-direction:column;gap:.7rem;max-height:100%;overflow:auto}
+.np-h{margin:0;font-size:var(--t-heading)}
+.np-band,.np-row{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+.np-form label{display:flex;flex-direction:column;gap:.3rem}
+html.hdmi .np-sheet{padding:.5rem}
+html.hdmi .np-form{display:grid;grid-template-columns:1fr 1fr;max-width:44rem;gap:.4rem .9rem;padding:.8rem 1rem}
+html.hdmi .np-form > *{min-width:0}
+html.hdmi .np-h,html.hdmi .np-band,html.hdmi .np-row,html.hdmi .np-src,html.hdmi .np-msg,html.hdmi .np-form label.np-name{grid-column:1/-1}
+.pre-back-h { display:flex; flex-wrap:wrap; gap:.5rem; justify-content:space-between; }
+html[data-ts="xl"] .sb-tabs{grid-template-columns:1fr 1fr}
+html.kiosk:not(.hdmi) .np-sheet{padding-top:1.2rem}
+
+/* ===== 1.2.9 text audit (brand) ===== */
+/* B1 group labels = HUD labels: mono, Static, +0.16em, // prefix */
+.sb-g{font-family:var(--mono);letter-spacing:.16em;color:var(--static)}
+.sb-g::before{content:"// "}
+/* B2 row titles: mono (call sign / ICAO / facility) like presets and the Listen buttons */
+.sb-t{font-family:var(--mono);font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.sb-tag{font-family:var(--mono);letter-spacing:.14em;text-transform:uppercase}
+/* B3 breadcrumb as a HUD line */
+.sb-crumb:has(> a){text-transform:uppercase;letter-spacing:.12em}
+/* B5 Near me "Home" label */
+.sb-home > span:first-child{font-family:var(--mono);color:var(--static);letter-spacing:.16em;text-transform:uppercase;font-size:var(--t-label)}
+.sb-home > span:first-child::before{content:"// "}
+
+/* ===== 1.2.9 short names: one line, ellipsis, never wrap ===== */
+.sb-t,.sb-s{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-t{white-space:pre}  /* keeps the two-space gap between code and name; still one line */
+.sb-t{overflow:hidden;text-overflow:ellipsis}
+.sb-s{color:var(--static)}
+
+/* 1.3.1 Station Bank: compact one-line rows (TUNE / + PRESET on the right, also at Large / XL) */
+.sb-row.sb-c{padding:.35rem .6rem}
+.sb-c .sb-cy{color:var(--static);font-weight:400}
+html[data-ts] .sb-row.sb-c{grid-template-columns:minmax(0,1fr) auto} html[data-ts] .sb-c .sb-act{justify-content:flex-end}
+.sb-c .sb-act button{padding:.35rem .55rem}
+/* 1.3.2 Download maps cleanup */
+.mp-bar i.sys { background:#3a4a3f; }
+.mp-store .note .k { display:inline-block; width:9px; height:9px; border-radius:2px; background:var(--signal); margin:0 5px 0 2px; vertical-align:middle; }
+.mp-store .note .k.sys { background:#3a4a3f; } .mp-store .note .k.dl { background:repeating-linear-gradient(45deg,var(--signal) 0 3px,#2a8a50 3px 6px); }
+.mp-tag.warn { border-color:rgba(245,165,36,.6); color:#f5a524; }
+.mp-soon .mp-row { opacity:1; border:1px dashed rgba(245,165,36,.5); }   /* 1.3.4: clear "not available yet" state */
+.mp-soon .mp-row .ms { color:#f5a524; }
+.mp-soon { margin-top:.6rem; }
+/* 1.3.5 on-screen LA / USA street map downloads (approved mockups 1.3.5-maps) */
+.mp-row.dlr { grid-template-columns:minmax(0,1fr) auto; }
+.mp-row .mpdl { grid-column:1/-1; height:8px; border-radius:4px; background:rgba(255,255,255,.12); overflow:hidden; }
+.mp-row .mpdl i { display:block; height:100%; background:#f5a524; transition:width .4s; }
+.mp-tag.err { border-color:rgba(248,113,113,.6); color:#f87171; }
+.mp-row .ms .e { color:#f87171; }

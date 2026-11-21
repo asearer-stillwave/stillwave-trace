@@ -55,6 +55,31 @@ grim (vendor/grim_1.4.0+ds-2build2_arm64.deb)
 Map outline fallback (web/maplib/fallback/la-lowzoom.geojson)
   Derived from OpenStreetMap data via Protomaps. ODbL 1.0, © OpenStreetMap contributors.
 
+readsb (built at setup time when needed; not bundled)
+  When the distribution's readsb cannot drive an RTL-SDR (Raspberry Pi OS
+  package 3.14.1630+git20240609 is built without rtlsdr), the installer's
+  sdr-adsb-fix downloads the unmodified upstream source of wiedehopf/readsb,
+  tag v3.16.18 (commit 9460652952a62fcfd9bf11a2664d737147f266a5), builds it
+  on the box with RTLSDR=yes and installs only the binary to /usr/local/bin
+  (with COPYING/LICENSE and SOURCE.txt in /usr/local/share/doc/readsb/).
+  GNU General Public License v3.0 or later. https://github.com/wiedehopf/readsb
+  It runs as a separate program; Trace does not link to it.
+
+AIS-catcher (built at setup time when a dongle gets the AIS job; not bundled)
+  sdr-ais-fix downloads the unmodified upstream source of jvde-github/AIS-catcher,
+  tag v0.70 (commit 8833c64b3da0c42e9a724b9bd13eaab2fffadcca), builds it on the
+  box and installs only the binary to /usr/local/bin (with LICENSE and
+  SOURCE.txt in /usr/local/share/doc/ais-catcher/).
+  GNU General Public License v3.0. https://github.com/jvde-github/AIS-catcher
+  It runs as a separate program; Trace does not link to it.
+
+Plymouth and dependencies (* vendor/plymouth/, bundled .deb files, unmodified)
+  Debian 13 (trixie) arm64 binary packages from deb.debian.org, installed offline
+  on Raspberry Pi OS only: plymouth and libplymouth5 24.004.60-5
+  (GPL-2.0-or-later), libevdev2 1.13.4 (MIT), libxkbcommon0 1.7.0 (MIT),
+  xkb-data 2.42 (MIT-style). Corresponding source:
+  https://snapshot.debian.org/ and https://packages.debian.org/source/trixie/plymouth
+
 Packages installed at setup time (not bundled): Ubuntu / Raspberry Pi OS
 packages such as Icecast, rtl-sdr, ffmpeg, readsb or dump1090-mutability,
 Flask, nginx and the Chromium snap are downloaded from their distributors and

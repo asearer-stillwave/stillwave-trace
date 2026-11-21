@@ -1,7 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -12,14 +14,16 @@
 <meta name="apple-mobile-web-app-title" content="Trace">
 <title>Stillwave Trace · Presets</title>
 <link rel="stylesheet" href="/fieldnote.css">
+<link rel="stylesheet" href="/content.css">
 </head>
 <body>
 <script src="/nav.js"></script>
 <div class="wrap">
+  <div class="pre-back-h"><a class="btn sm fm-edit" href="/listen?band=fm" data-back aria-label="Back to FM radio"><span aria-hidden="true">‹</span> FM radio</a><button type="button" class="btn sm fm-edit" id="newP" aria-label="New preset"><span aria-hidden="true">＋</span> New preset</button></div>
   <div class="brand">
     <h1>Preset <span class="acc">settings</span></h1>
   </div>
-  <p class="lead">Listen applies settings to the live stream without saving. Save writes them onto that preset. Either one switches the dongle back to FM if it was in another mode.</p>
+  <p class="lead">Listen tries settings live. Save keeps them on the preset.</p>
   <div class="now" id="now">Now playing: …</div>
   <div class="row" id="list"></div>
   <form id="form" class="grid2">
@@ -31,8 +35,8 @@
     <label>Audio rate
       <select name="audio_rate">
         <option>16000</option><option>24000</option>
-        <option selected>32000</option>
-        <option>44100</option><option>48000</option>
+        <option>32000</option>
+        <option>44100</option><option selected>48000</option>
       </select>
     </label>
     <label>MP3 bitrate
@@ -42,8 +46,8 @@
         <option>160k</option><option>192k</option>
       </select>
     </label>
-    <label>High-pass Hz <input name="highpass" value="30"></label>
-    <label>Low-pass Hz <input name="lowpass" value="15000"></label>
+    <label>High-pass Hz <input name="highpass" value="50"></label>
+    <label>Low-pass Hz <input name="lowpass" value="8000"></label>
     <div class="span2 row">
       <button type="button" id="listen" class="primary">Listen (don’t save)</button>
       <button type="button" id="save">Save preset</button>
@@ -52,7 +56,17 @@
   </form>
   <audio id="player" controls preload="none"></audio>
   <p class="status" id="msg"></p>
-  <p class="note">Gain on a Nooelec R820T snaps to the nearest hardware step (3.7, 7.7, 12.5…). Start low on strong local signals.</p>
+  <div class="np-sheet" id="np" hidden role="dialog" aria-modal="true" aria-labelledby="npH"><form class="np-form" id="npF" autocomplete="off">
+    <h2 class="np-h" id="npH">New preset</h2>
+    <div class="np-band"><button type="button" id="npFM" class="on" aria-pressed="true">FM</button><button type="button" id="npAir" aria-pressed="false">Airband</button></div>
+    <label class="np-name">Name <input id="npName" maxlength="40" placeholder="e.g. KPCC"></label>
+    <label>Frequency (MHz) <input id="npMhz" inputmode="decimal" placeholder="89.3"></label>
+    <label id="npGainL">SDR gain (dB) <input id="npGain" value="4" inputmode="decimal"></label>
+    <p class="note np-src" id="npSrc" hidden></p>
+    <p class="status np-msg" id="npMsg"></p>
+    <div class="np-row"><button type="button" class="primary" id="npSave">Save preset</button><button type="button" id="npCancel">Cancel</button></div>
+  </form></div>
+  <p class="note">SDR gain snaps to the nearest hardware step. Start low on strong local signals.</p>
 </div>
 <script src="/mode.js"></script>
 <script src="/power.js"></script>
@@ -70,8 +84,8 @@ function formData(){
     ppm: f.ppm.value.trim() || '0',
     audio_rate: f.audio_rate.value,
     mp3_bitrate: f.mp3_bitrate.value,
-    highpass: f.highpass.value.trim() || '30',
-    lowpass: f.lowpass.value.trim() || '15000'
+    highpass: f.highpass.value.trim() || '50',
+    lowpass: f.lowpass.value.trim() || '8000'
   };
 }
 function fill(st){
@@ -81,10 +95,10 @@ function fill(st){
   f.frequency.value = st.frequency || '';
   f.gain.value = st.gain || '4';
   f.ppm.value = st.ppm || '0';
-  f.audio_rate.value = st.audio_rate || '32000';
+  f.audio_rate.value = st.audio_rate || '48000';
   f.mp3_bitrate.value = st.mp3_bitrate || '128k';
-  f.highpass.value = st.highpass || '30';
-  f.lowpass.value = st.lowpass || '15000';
+  f.highpass.value = st.highpass || '50';
+  f.lowpass.value = st.lowpass || '8000';
 }
 async function jfetch(url, opt){
   const r = await fetch(url, Object.assign({cache:'no-store'}, opt||{}));
@@ -151,6 +165,71 @@ document.getElementById('del').onclick = async () => {
   }catch(e){ setMsg(e.message,'err'); }
 };
 refresh().catch(e=>setMsg(e.message,'err'));
+// 1.2.6: + New preset. FM -> stations.conf via /api/station (saved, not tuned); Airband -> Listen presets via /api/listen/preset.
+// Stations (station bank) opens /presets?new=1&band=air|fm&mhz=..&name=.. to prefill it.
+(function(){
+  const $ = id => document.getElementById(id);
+  let band = 'fm';
+  function setBand(b){
+    band = b; $('npFM').classList.toggle('on', b === 'fm'); $('npAir').classList.toggle('on', b === 'air');
+    $('npFM').setAttribute('aria-pressed', b === 'fm'); $('npAir').setAttribute('aria-pressed', b === 'air');
+    $('npGainL').hidden = b === 'air';
+    $('npMhz').placeholder = b === 'air' ? '118.700' : '89.3';
+    if (b === 'air' && !$('npSrc').dataset.bank) { $('npSrc').hidden = false; $('npSrc').textContent = 'Airband gain is set once for the whole band on Listen › Airband.'; }
+    else if (!$('npSrc').dataset.bank) $('npSrc').hidden = true;
+  }
+  function open(q){
+    $('npMsg').textContent = ''; $('npSrc').dataset.bank = ''; $('npSrc').hidden = true;
+    $('npName').value = q.get('name') || ''; $('npMhz').value = q.get('mhz') || ''; $('npGain').value = '4';
+    $('npH').textContent = q.get('name') ? 'Add to presets' : 'New preset';
+    if (q.get('name')) { $('npSrc').dataset.bank = '1'; $('npSrc').hidden = false; $('npSrc').textContent = 'Prefilled from the station bank (' + (q.get('band') === 'air' ? 'FAA' : 'FCC') + '). Check it, then Save.'; }
+    setBand(q.get('band') === 'air' ? 'air' : 'fm');
+    $('np').hidden = false;
+    // 1.3: + New preset jumps to the form: page + sheet back to the top, Name focused (on-screen keyboard opens for it)
+    try { window.scrollTo(0, 0); document.scrollingElement.scrollTop = 0; $('npF').scrollTop = 0; } catch (e) {}
+    setTimeout(() => { try { $('npName').focus({preventScroll: true}); } catch (e) { $('npName').focus(); } }, 60);
+  }
+  function close(){ $('np').hidden = true; if (location.search) history.replaceState(null, '', location.pathname); }
+  const slug = n => (n.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'preset').slice(0, 24);
+  async function save(){
+    const name = $('npName').value.trim(), mhz = parseFloat($('npMhz').value.replace(',', '.'));
+    const m = t => { $('npMsg').className = 'status np-msg err'; $('npMsg').textContent = (window.traceErr ? traceErr.clean(t) : t); };
+    if (!name) return m('Give it a name.');
+    if (band === 'fm' && !(mhz >= 87.5 && mhz <= 108)) return m('FM is 87.5 to 108.0 MHz.');
+    if (band === 'air' && !(mhz >= 118 && mhz < 137)) return m('Airband is 118.000 to 136.975 MHz.');
+    $('npSave').disabled = true;
+    try {
+      if (band === 'air') {
+        await jfetch('/api/listen/preset', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({band:'airband', mhz, name})});
+        setMsg('Saved ' + name + ' to Listen › Airband presets.', 'ok');
+      } else {
+        const gain = $('npGain').value.trim() || '4';
+        let id = slug(name), n = 2, done = false;
+        while (!done && n < 9) {
+          try { await jfetch('/api/station', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, name, freq: mhz.toFixed(3).replace(/0+$/, '') + 'M', gain})}); done = true; }
+          catch (e) { if (/already exists/.test(e.message)) id = slug(name).slice(0, 21) + '-' + (n++); else throw e; }
+        }
+        await refresh();
+        setMsg('Saved ' + name + '. Tap it above to play it.', 'ok');
+      }
+      close();
+    } catch (e) { m(e.message); }
+    finally { $('npSave').disabled = false; }
+  }
+  $('newP').onclick = () => open(new URLSearchParams());
+  $('npFM').onclick = () => setBand('fm'); $('npAir').onclick = () => setBand('air');
+  $('npCancel').onclick = close; $('npSave').onclick = save;
+  $('npF').onsubmit = e => { e.preventDefault(); save(); };
+  $('np').addEventListener('click', e => { if (e.target === $('np')) close(); });
+  const q = new URLSearchParams(location.search); if (q.get('new')) open(q);
+})();
+</script>
+<script>
+// 1.2.7: the back button follows where you came from. More links here with ?from=more, so the button reads ‹ More and returns to More;
+// without it the button keeps its default target.
+(function(){ const f = new URLSearchParams(location.search).get('from'); if (f !== 'more' && f !== 'settings') return;
+  const a = document.querySelector('a[data-back]'); if (!a) return;
+  a.href = '/settings'; a.setAttribute('aria-label', 'Back to Settings'); a.innerHTML = '<span aria-hidden="true">‹</span> Settings'; })();
 </script>
 </body>
 </html>

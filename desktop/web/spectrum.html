@@ -1,7 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -23,7 +25,7 @@
 
   <div class="card hide" id="off">
     <b id="offtxt">The dongle is busy with another mode.</b>
-    <p class="note">Starting the spectrum view stops the FM stream (or detect / ADS-B) until you switch back.</p>
+    <p class="note">Starting the spectrum view stops the FM stream (or ADS-B) until you switch back.</p>
     <button class="primary" id="start">Start spectrum</button>
   </div>
 
@@ -58,7 +60,7 @@
     <button id="mlisten" disabled>Listen</button>
   </div>
   <p class="status" id="msg"></p>
-  <p class="note">The RTL-SDR has a small DC spike at the exact center; it is masked. LISTEN picks FM (88–108), airband AM (118–137) or narrow FM for anything else.</p>
+  <p class="note">The SDR has a small DC spike at the exact center; it is masked. LISTEN picks FM (88–108), airband AM (118–137) or narrow FM for anything else.</p>
 </div>
 <script src="/mode.js"></script>
 <script src="/power.js"></script>

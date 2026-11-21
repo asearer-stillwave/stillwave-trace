@@ -1,7 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -16,20 +18,37 @@
 <body>
 <script src="/nav.js"></script>
 <div class="wrap">
+  <div class="pre-back-h nav-back"><a class="btn sm fm-edit" href="/settings" aria-label="Back to Settings"><span aria-hidden="true">‹</span> Settings</a></div>
   <div class="brand">
-    <h1>Network & <span class="acc">services</span></h1>
+    <h1>Net<span class="acc">work</span></h1>
   </div>
-  <p class="lead">Move this box between your home Wi‑Fi and its own hotspot (for a phone with no router). The choice is saved and comes back after a reboot. If joining Wi‑Fi fails, the box brings the hotspot back by itself, so you are never locked out.</p>
+  <p class="lead">Join Wi‑Fi or share this box as a hotspot.</p>
+  <div id="netErr"></div>
 
-  <div class="card">
-    <div class="now" id="netnow">Network: …</div>
+  <div class="card" id="netcard">
+    <div class="aprow nw-row"><h2>Wi‑Fi</h2><button type="button" class="v-sw on" id="nWifi" role="switch" aria-checked="true" aria-label="Wi‑Fi on or off"></button></div>
+    <div class="now" id="netnow">…</div>
     <p class="note" id="netdetail"></p>
-    <p class="note" id="netlast"></p>
+    <button type="button" class="nw-err hide" id="netlast" aria-expanded="false"><span id="netlastT"></span><span class="nw-more">Details ›</span></button>
+    <p class="note hide" id="netlastD"></p>
+  </div>
+<div class="v-modal" id="wfm" hidden><div class="v-dlg" role="dialog" aria-modal="true">
+  <div class="k">// TURN WI‑FI OFF</div>
+  <p>Phones on this Wi‑Fi or the hotspot disconnect now. Turn it back on here on the screen, or reboot.</p>
+  <div class="row"><button type="button" class="big" id="wfmNo">Cancel</button><button type="button" class="big primary v-danger" id="wfmYes">Turn off</button></div></div></div>
+
+  <div class="card" id="autocard">
+    <div class="aprow nw-row"><h2>Auto-join known Wi‑Fi</h2><button type="button" class="v-sw" id="aj" role="switch" aria-checked="false" aria-label="Auto-join known Wi‑Fi"></button></div>
+    <p class="note">Joins a saved network if the signal is strong, otherwise starts the Trace hotspot.</p>
+    <div class="now hide" id="ajNow"></div>
+    <h2 class="sub">Saved networks <button type="button" id="ajScan" class="sm">Check signal</button></h2>
+    <div class="aj-list" id="ajList"><p class="note">…</p></div>
+    <p class="note" id="ajNote">Strong = 3 bars or more (about −67 dBm). If Wi‑Fi drops for 30 s, the hotspot comes back.</p>
   </div>
 
   <div class="card" id="joincard">
     <h2>Join Wi‑Fi</h2>
-    <p class="note">Pick a network (saved ones first) or type its name. The password is only sent to this box and is never shown again. Leave it empty for a saved network.</p>
+    <p class="note">Pick a network or type its name. Saved networks need no password.</p>
     <div class="ctl">
       <label class="grow">Network <input id="ssid" placeholder="Wi‑Fi name" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <label class="grow">Password
@@ -56,14 +75,13 @@
     <h2 class="sub">Saved networks</h2>
     <div class="netlist" id="saved"><p class="note">Loading…</p></div>
     <h2 class="sub">Nearby <button type="button" id="scanwifi" class="sm">Scan for networks</button></h2>
-    <div class="netlist" id="wifis"><p class="note">Tap “Scan for networks”. While the hotspot is on, the radio may not see other networks; type the name instead.</p></div>
+    <div class="netlist" id="wifis"><p class="note">Tap Scan. With the hotspot on, type the name instead.</p></div>
   </div>
 
   <div class="card" id="apcard">
     <h2>Hotspot</h2>
-    <p class="note" id="apinfo">Hotspot <b>Trace</b> at <b>http://10.42.0.1/</b></p>
-    <div class="ctl apform">
-      <label class="grow">Name <input id="apSsid" maxlength="32" placeholder="Trace" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <div class="ctl apform">
+      <label class="grow">Name <input id="apSsid" maxlength="32" placeholder="TRACE-XXXX" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
       <label class="grow">Password
         <span class="pwrow"><input id="apPsk" type="password" maxlength="63" placeholder="Saved – leave empty to keep" autocomplete="off" autocapitalize="off" spellcheck="false"><button type="button" id="apPskShow" class="sm">Show</button></span></label>
     </div>
@@ -72,31 +90,11 @@
     <div class="aprow"><span>Start hotspot at boot</span><button type="button" class="v-sw" id="apBoot" role="switch" aria-checked="false" aria-label="Start hotspot at boot"></button></div>
     <div class="row"><button type="button" class="primary" id="apSave">Save hotspot</button>
       <button type="button" id="appwshow" class="sm">Show hotspot password</button></div>
-    <p class="note">2.4 GHz works with every phone; 5 GHz is faster but not every device (or country channel) supports it. Password: at least 8 characters. If the hotspot is on now it restarts with the new settings, so rejoin it.</p>
+    <p class="note">Trace always starts as its hotspot (on by default). Switch to Wi‑Fi for updates and map downloads. 2.4 GHz works with every phone. Password: 8+ characters.</p>
     <p class="now hide" id="appw"></p>
     <p class="status" id="apMsg"></p>
   </div>
 
-  <div class="card">
-    <h2>Logs</h2>
-    <p class="note">If a switch fails, tap Show logs and copy the text. On the box: <code>sudo sdr-net-mode last</code> or <code>tail -100 /var/log/sdr-net.log</code></p>
-    <p><button type="button" id="showlog">Show logs</button></p>
-    <pre id="netlog" style="display:none;white-space:pre-wrap;max-height:22rem;overflow:auto;background:var(--night);border:1px solid var(--line);font-family:var(--mono);padding:.7rem;border-radius:8px;line-height:1.35;"></pre>
-  </div>
-
-  <div class="card">
-    <h2>Services</h2>
-    <p class="note" id="svcnow">…</p>
-    <div class="row">
-      <button data-svc="radio">Restart radio stream</button>
-      <button data-svc="sdr-fm">Restart sdr-fm</button>
-      <button data-svc="icecast2">Restart Icecast</button>
-      <button data-svc="nginx">Restart nginx</button>
-      <button data-svc="sdr-web" class="danger">Restart web UI</button>
-      <button data-svc="all" class="danger">Restart all</button>
-    </div>
-    <p class="note">Restart web UI / all will briefly disconnect this page. Restart all keeps the current dongle mode; "Restart radio stream" and "Restart sdr-fm" switch the dongle back to FM.</p>
-  </div>
   <p class="status" id="msg"></p>
 </div>
 <script src="/mode.js"></script>
@@ -106,7 +104,7 @@
 <script>
 const $ = id => document.getElementById(id);
 let NET = {};
-function setMsg(t,k){ const el=$('msg'); el.className='status '+(k||''); el.textContent=t||''; }
+function setMsg(t,k){ const el=$('msg'); el.className='status '+(k||''); el.textContent=(window.traceErr ? traceErr.clean(t) : t)||''; }
 async function jfetch(url, opt){
   const r = await fetch(url, Object.assign({cache:'no-store'}, opt||{}));
   const t = await r.text();
@@ -128,21 +126,18 @@ function renderNet(n){
   NET = n || {};
   const mode = NET.mode || 'unknown';
   let label = mode;
-  if (mode==='ap') label = 'Hotspot “'+apSsid()+'” (10.42.0.1)';
-  else if (mode==='wifi') label = 'Wi‑Fi “'+(NET.home_ssid || NET.active_connection || '?')+'”';
+  if (mode==='ap') label = 'Hotspot · '+apSsid();
+  else if (mode==='wifi') label = 'Connected · '+(NET.home_ssid || NET.active_connection || '?');
   else if (mode==='offline') label = 'Not connected';
-  $('netnow').textContent = 'Network: ' + label + (NET.switching ? ' · switching…' : '');
-  const bits = [];
-  if (mode==='wifi') bits.push('open http://'+host()+'.local/' + (NET.wifi_ip ? ' or http://'+NET.wifi_ip+'/' : ''));
-  if (mode==='ap') bits.push('join '+apSsid()+' and open http://10.42.0.1/');
-  if (NET.saved_mode==='ap') bits.push('after a reboot: hotspot');
-  else if (NET.saved_mode==='wifi') bits.push('after a reboot: rejoins ' + (NET.home_ssid || 'saved Wi‑Fi'));
-  if (NET.addresses && NET.addresses.length) bits.push('addresses ' + NET.addresses.join(', '));
-  $('netdetail').textContent = bits.join(' · ');
-  const L = NET.last;
-  $('netlast').textContent = L ? ('Last switch ('+(L.time||'').replace('T',' ').slice(0,16)+'): '+(L.ok?'OK – ':'FAILED – ')+(L.message||'')) : '';
-  $('netlast').className = 'note ' + (L ? (L.ok ? 'ok' : 'err') : '');
-  $('apinfo').textContent = 'Hotspot “'+apSsid()+'” · open http://10.42.0.1/ after joining it' + (mode==='ap' ? ' (on now)' : '');
+  $('netnow').textContent = label + (NET.switching ? ' · switching…' : '');
+  // 1.3: the address is shown once
+  $('netdetail').textContent = mode==='ap' ? 'Open http://10.42.0.1/' : mode==='wifi' ? 'Open http://'+host()+'.local/' : '';
+  const on = NET.wifi_enabled !== false; $('nWifi').classList.toggle('on', on); $('nWifi').setAttribute('aria-checked', on);
+  // 1.3: a failed switch is one line; the details open on tap
+  const L = NET.last, bad = L && !L.ok;
+  $('netlast').classList.toggle('hide', !bad);
+  if (bad) { $('netlastT').textContent = /hotspot|\bap\b/i.test(L.message||'') && !/join|wi-?fi/i.test(L.message||'') ? "Hotspot didn't start" : "Couldn't join"; $('netlastD').textContent = (L.time||'').replace('T',' ').slice(0,16) + ' · ' + (L.message||''); }
+  else { $('netlastD').classList.add('hide'); $('netlast').setAttribute('aria-expanded', 'false'); }
   try { apPaint(); } catch (e) {}
 }
 
@@ -173,7 +168,7 @@ async function loadSaved(){
       const meta = [n.active ? 'connected' : '', n.name !== n.ssid ? 'profile '+n.name : '', 'saved'].filter(Boolean).join(' · ');
       box.appendChild(netButton(n.ssid || n.name, meta, true, () => pick(n.ssid || n.name, true), n.active));
     });
-  } catch(e) { box.textContent=''; box.appendChild(el('p','note err', 'Saved networks: '+e.message)); }
+  } catch(e) { box.textContent=''; box.appendChild(el('p','note err', traceErr.clean('Saved networks: '+e.message, 'Saved networks: not available right now.'))); }
 }
 $('scanwifi').onclick = async () => {
   const box = $('wifis');
@@ -186,8 +181,14 @@ $('scanwifi').onclick = async () => {
       box.appendChild(netButton(n.ssid, meta, n.saved, () => pick(n.ssid, n.saved)));
     });
     if (!(j.networks||[]).length) box.appendChild(el('p','note', j.note || 'No networks found.'));
-  } catch(e){ box.textContent=''; box.appendChild(el('p','note err', e.message)); }
+  } catch(e){ box.textContent=''; box.appendChild(el('p','note err', traceErr.clean(e.message, 'Nearby networks: not available right now.'))); }
 };
+$('netlast').onclick = () => { const d = $('netlastD'), open = d.classList.toggle('hide') === false; $('netlast').setAttribute('aria-expanded', open); };
+// 1.3: Wi-Fi on/off moved here from Settings (confirm before turning off)
+const radio = on => jfetch('/api/net/radio', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({on})});
+$('nWifi').onclick = () => { if ($('nWifi').classList.contains('on')) $('wfm').hidden = false; else radio(true).then(() => { $('netnow').textContent = 'Turning on…'; setTimeout(refresh, 2500); }).catch(e => setMsg(e.message, 'err')); };
+$('wfmNo').onclick = () => $('wfm').hidden = true;
+$('wfmYes').onclick = () => { $('wfm').hidden = true; radio(false).then(() => { $('netnow').textContent = 'Turning off…'; $('nWifi').classList.remove('on'); }).catch(e => setMsg(e.message, 'err')); };
 $('pskshow').onclick = () => {
   const i = $('psk'); const show = i.type === 'password';
   i.type = show ? 'text' : 'password'; $('pskshow').textContent = show ? 'Hide' : 'Show';
@@ -300,7 +301,7 @@ $('apSave').onclick = async () => {
     m.textContent = 'Saved: ' + j.ap_ssid + ' · ' + (j.ap_band === 'a' ? '5 GHz' : '2.4 GHz') + (j.saved_mode === 'ap' ? ' · starts at boot' : '') + (j.restarted ? '. The hotspot is restarting: rejoin ' + j.ap_ssid + '.' : '.');
     try { await refresh(); } catch (e) {}
     apPaint(true);
-  } catch (e) { m.className = 'status err'; m.textContent = e.message; }
+  } catch (e) { m.className = 'status err'; m.textContent = traceErr.clean(e.message); }
   finally { $('apSave').disabled = false; }
 };
 // ---- hotspot password (only on request) ----
@@ -316,35 +317,44 @@ $('appwshow').onclick = async () => {
 };
 
 async function refresh(){
-  try { renderNet(await jfetch('/api/net')); } catch(e) { setMsg(e.message,'err'); }
-  try {
-    const s = await jfetch('/api/services');
-    const units = s.units || {};
-    $('svcnow').textContent = Object.keys(units).map(k=>k+': '+units[k]).join('  ·  ') || 'no status';
-  } catch(e) {}
+  try { renderNet(await jfetch('/api/net')); traceErr.hide($('netErr')); }
+  catch(e) { traceErr.show($('netErr'), 'Wi‑Fi status', 'The network service didn’t answer. Wi‑Fi and the hotspot keep working; this page just can’t show them right now.', e.message, refresh); }
 }
-document.querySelectorAll('button[data-svc]').forEach(btn => {
-  btn.onclick = async () => {
-    const which = btn.getAttribute('data-svc');
-    setMsg('Restarting '+which+'…','ok');
-    try {
-      const j = await jfetch('/api/services/restart',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({which})});
-      setMsg(j.message||('restarted '+which),'ok');
-      setTimeout(refresh, 1500);
-    } catch(e){ setMsg(e.message,'err'); }
-  };
-});
-$('showlog').onclick = async () => {
-  const pre = $('netlog');
-  pre.style.display = 'block';
-  pre.textContent = 'Loading…';
-  try {
-    const j = await jfetch('/api/net/log');
-    pre.textContent = j.log || JSON.stringify(j, null, 2);
-  } catch(e) { pre.textContent = e.message; }
-};
 refresh();
 loadSaved();
+
+// 1.3.2 auto-join known Wi-Fi (no passwords here: only names, dBm and state)
+const AJS = {joined:'Joined', weak:'Too weak', unseen:'Not seen', ok:'In range'};
+function ajBars(d){ return d == null ? 0 : d >= -55 ? 4 : d >= -67 ? 3 : d >= -75 ? 2 : 1; }
+let ajArm = null;
+function ajPaint(a){
+  const sw = $('aj'); sw.classList.toggle('on', !!a.enabled); sw.setAttribute('aria-checked', String(!!a.enabled));
+  const now = $('ajNow'); now.classList.toggle('hide', !a.current);
+  if (a.current) now.textContent = 'Connected · ' + a.current + (a.auto ? ' · joined automatically' : '');
+  const L = $('ajList'); L.textContent = '';
+  if (!a.networks || !a.networks.length) { L.appendChild(el('p','note','No saved networks yet. Join one below and Trace remembers it.')); }
+  for (const n of a.networks || []) {
+    const r = el('div', 'aj-row' + (n.state === 'joined' ? ' on' : '')); r.appendChild(el('span','aj-n',n.ssid));
+    const m = el('span','aj-m'); const b = el('span','aj-bars'); const k = ajBars(n.signal);
+    for (let i = 0; i < 4; i++) { const x = el('i', i < k ? (k < 3 ? 'w' : 'g') : ''); x.style.height = (4 + i * 3) + 'px'; b.appendChild(x); }
+    m.appendChild(b); m.appendChild(el('span', 'aj-s ' + n.state, (n.signal != null ? n.signal + ' dBm · ' : '') + (AJS[n.state] || n.state)));
+    r.appendChild(m);
+    const f = el('button', 'sm', ajArm === n.ssid ? 'Tap again' : 'Forget'); f.type = 'button';
+    f.onclick = async () => {
+      if (ajArm !== n.ssid) { ajArm = n.ssid; ajPaint(a); setTimeout(() => { if (ajArm === n.ssid) { ajArm = null; ajPaint(a); } }, 3500); return; }
+      ajArm = null; try { ajPaint(await jfetch('/api/net/wifi-auto', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({forget: n.ssid})})); loadSaved(); setMsg('Forgotten.', 'ok'); } catch (e) { setMsg(e.message, 'err'); }
+    };
+    r.appendChild(f); L.appendChild(r);
+  }
+  const h = a.hostname ? a.hostname.toLowerCase() : '';
+  $('ajNote').textContent = 'Strong = 3 bars or more (about ' + String(a.threshold || -67).replace('-', '−') + ' dBm). If Wi‑Fi drops for 30 s, the hotspot comes back.' + (h ? ' On home Wi‑Fi, put your phone on the same network and open http://' + h + '.local/' : '');
+}
+async function ajLoad(body){
+  try { ajPaint(await jfetch('/api/net/wifi-auto', body ? {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {})); } catch (e) { $('ajList').textContent = ''; $('ajList').appendChild(el('p','note',traceErr.clean('Auto-join status unavailable: ' + e.message, 'Auto-join status: not available right now.'))); }
+}
+$('aj').onclick = () => ajLoad({enabled: !$('aj').classList.contains('on')});
+$('ajScan').onclick = async () => { $('ajScan').disabled = true; await ajLoad({rescan: true}); $('ajScan').disabled = false; };
+ajLoad();
 </script>
 </body>
 </html>

@@ -1,7 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#000;color-scheme:dark">
 <head>
+<style id="noflash">html,body{background:#000}</style>
 <meta charset="utf-8">
+<meta name="color-scheme" content="dark">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f0c">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -26,6 +28,30 @@ tr.pick td { background:rgba(74,222,128,.18); color:var(--signal); }
 #map { width:100%; height:420px; }
 .mapnote { position:absolute; left:8px; right:8px; bottom:30px; z-index:2; background:rgba(11,15,12,.92); border:1px solid var(--line);
   border-radius:10px; padding:.45rem .65rem; color:var(--muted); line-height:1.35; }
+/* 1.3.4: basic-map notice is a compact amber pill under the aircraft count (approved mockup 1.3.4-mapnote); clears the right-hand pills */
+.mapnote.mn-basic { left:12px; right:auto; bottom:auto; top:64px; z-index:8; display:inline-flex; align-items:center; gap:10px; max-width:calc(100% - 210px); box-sizing:border-box;
+  padding:6px 6px 6px 14px; border-radius:999px; background:rgba(11,15,12,.94); border:1px solid #f5a524; font:700 12px/1.2 var(--mono); letter-spacing:.1em;
+  text-transform:uppercase; color:var(--paper); white-space:nowrap; }
+html.kiosk .mapnote.mn-basic { top:80px; }
+.mapnote.mn-basic.hide { display:none; }
+/* 1.3.5: GET MAP downloads the LA street map right here (approved mockups 1.3.5-maps): progress, cancel, retry, auto-reload */
+.mapnote.mn-dl { left:12px; right:auto; bottom:auto; top:64px; z-index:8; box-sizing:border-box; width:min(560px, calc(100% - 24px)); padding:12px 14px; border-radius:14px;
+  background:rgba(11,15,12,.95); border:1px solid #f5a524; font:700 12px/1.3 var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--paper); }
+html.kiosk .mapnote.mn-dl { top:80px; }
+.mapnote.mn-dl .r { display:flex; align-items:center; gap:10px; } .mapnote.mn-dl .t { flex:1; min-width:0; }
+.mapnote.mn-dl b { color:#f5a524; } .mapnote.mn-dl.ok { border-color:#4ade80; } .mapnote.mn-dl.ok b { color:#4ade80; } .mapnote.mn-dl.err { border-color:#f87171; } .mapnote.mn-dl.err b { color:#f87171; }
+.mapnote.mn-dl .go { flex:none; color:var(--night); background:#f5a524; border:0; border-radius:999px; padding:12px 16px; font:inherit; min-height:44px; white-space:nowrap; cursor:pointer; text-decoration:none; }
+.mapnote.mn-dl .gh { flex:none; background:transparent; color:var(--paper); border:1px solid rgba(255,255,255,.35); border-radius:999px; padding:12px 16px; font:inherit; min-height:44px; white-space:nowrap; cursor:pointer; text-decoration:none; }
+.mapnote.mn-dl .bar { height:10px; border-radius:5px; background:rgba(255,255,255,.12); margin:10px 0 6px; overflow:hidden; } .mapnote.mn-dl .bar i { display:block; height:100%; background:#f5a524; transition:width .4s; }
+.mapnote.mn-dl .s { font-weight:400; letter-spacing:.04em; text-transform:none; color:var(--static); font-size:12px; margin-top:4px; }
+.mapnote.mn-dl .x { flex:none; background:transparent; border:0; color:var(--static); font-size:16px; padding:6px 8px; min-height:0; cursor:pointer; }
+.maptoast { position:absolute; left:50%; transform:translateX(-50%); top:64px; z-index:9; padding:12px 20px; border-radius:999px; background:rgba(11,15,12,.95); border:1px solid #4ade80;
+  color:#4ade80; font:700 13px var(--mono); letter-spacing:.12em; white-space:nowrap; pointer-events:none; transition:opacity .6s; }
+html.kiosk .maptoast { top:80px; }
+
+.mapnote.mn-basic b { color:#f5a524; } .mapnote.mn-basic .t { overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.mapnote.mn-basic a { flex:none; color:var(--night); background:#f5a524; border-radius:999px; padding:9px 12px; text-decoration:none; }
+.mapnote.mn-basic .x { flex:none; background:transparent; border:0; color:var(--static); font-size:16px; padding:6px 8px; min-height:0; cursor:pointer; }
 .mapctl { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:.45rem; margin:.45rem 0 0; }
 .mapctl button { padding:.4rem .3rem; line-height:1.15; min-height:48px; }
 .ahead { display:flex; align-items:center; gap:.5rem; }
@@ -71,7 +97,7 @@ html.kiosk .rseg button, html.kiosk .rshead button { min-height:var(--tap-touch)
 
   <div class="card hide" id="off">
     <b id="offtxt">The dongle is busy with another mode.</b>
-    <p class="note">Starting ADS-B stops the FM stream (or spectrum / detect) until you switch back.</p>
+    <p class="note">Starting ADS-B stops the FM stream (or spectrum) until you switch back.</p>
     <button class="primary" id="start">Start ADS-B</button>
   </div>
 
@@ -93,12 +119,24 @@ html.kiosk .rseg button, html.kiosk .rshead button { min-height:var(--tap-touch)
       </div>
       <div id="map" aria-label="Live aircraft map"></div>
       <div class="mapnote hide" id="mapnote"></div>
+      <div class="acard bcard hide" id="bcard" aria-live="polite">
+        <div class="ahead"><b id="bTitle">—</b><button id="bClose" aria-label="Close boat details">✕</button></div>
+        <dl class="agrid">
+          <div><dt>Type</dt><dd id="bKind">—</dd></div>
+          <div><dt>Speed</dt><dd id="bSog">—</dd></div>
+          <div><dt>Course</dt><dd id="bCog">—</dd></div>
+          <div><dt>MMSI</dt><dd id="bMmsi">—</dd></div>
+          <div><dt>Bound for</dt><dd id="bDest">—</dd></div>
+          <div><dt>Seen</dt><dd id="bSeen">—</dd></div>
+        </dl>
+      </div>
       <div class="acard hide" id="acard" aria-live="polite">
         <div class="ahead">
           <b id="aTitle">—</b>
           <button id="aFollow" aria-pressed="false">Follow</button>
           <button id="aClose" aria-label="Close details">✕</button>
         </div>
+        <div class="amodel hide" id="aModel"></div>
         <dl class="agrid">
           <div><dt>Altitude</dt><dd id="aAlt">—</dd></div>
           <div><dt>Speed</dt><dd id="aSpd">—</dd></div>
@@ -112,10 +150,11 @@ html.kiosk .rseg button, html.kiosk .rshead button { min-height:var(--tap-touch)
       </div>
     </div>
     <div class="mapctl">
-      <button id="cLax">Center<br>LAX</button>
+      <button id="cLax">Center<br>airport</button>
       <button id="cMe">Center<br>me</button>
       <button id="tRings" class="on" aria-expanded="false" aria-controls="ringset">Rings <span id="tRingsV">3</span></button>
       <button id="tLabels" class="on" aria-pressed="true">Labels</button>
+      <button id="tShow" class="hide" aria-label="Show on map">All</button>
     </div>
     <div class="legend altbar" aria-label="Altitude colors: ground, under 1k, 1-3k, 3-6k, 6-10k, 10-20k, 20-30k, 30k+ ft"><span class="lk">// ALT FT</span><span class="ab"><span class="abar"><i style="background:#5f7a68"></i><i style="background:#1c6b3c"></i><i style="background:#26904f"></i><i style="background:#33b866"></i><i style="background:#4ade80"></i><i style="background:#97f0b8"></i><i style="background:#c8f8d9"></i><i style="background:#f4fff7"></i></span><span class="alabs"><b>GND</b><b>&lt;1K</b><b>1–3K</b><b>3–6K</b><b>6–10K</b><b>10–20K</b><b>20–30K</b><b>30K+</b></span></span><span class="unk"><i></i>?</span></div>
   </section>
@@ -153,9 +192,10 @@ html.kiosk .rseg button, html.kiosk .rshead button { min-height:var(--tap-touch)
 <script src="/maplib/pmtiles.js" defer></script>
 <script src="/maplib/basemaps.js" defer></script>
 <script type="module">
-import { AircraftMap, webglOK } from '/maplib/adsb-map.js';
+// 1.2.1: loaded inside boot() (dynamic import) so a missing/broken map library cannot take the whole page down
+let AircraftMap, webglOK;
 const $ = id => document.getElementById(id);
-function setMsg(t, k){ const el = $('msg'); el.className = 'status ' + (k || ''); el.textContent = t || ''; }
+function setMsg(t, k){ const el = $('msg'); el.className = 'status ' + (k || ''); el.textContent = (window.traceErr ? traceErr.clean(t) : t) || ''; }
 const v = (x, d) => (x === null || x === undefined || x === '') ? '' : (typeof x === 'number' ? x.toFixed(d || 0) : String(x));
 const fmt = n => n.toLocaleString('en-US');
 let map = null, last = null, timer = null, busy = false, on = false, receiver = null;
@@ -197,6 +237,19 @@ function showReceiver(r){
   if (map) map.setReceiver(r);
 }
 
+// 1.2.5: aircraft model from the offline DB (Mictronics via tar1090-db): "N12345 · Boeing 737-800 · B738", "Unknown type" when not listed
+function modelText(a){
+  if (!a.model && !a.type) return '';
+  return a.model ? a.model + (a.type ? ' · ' + a.type : '') : a.type;
+}
+function modelLine(el, a, withReg){
+  const db = !!(last && last.model_db), t = modelText(a);
+  if (!db && !t) { el.classList.add('hide'); el.textContent = ''; return; }
+  el.classList.remove('hide');
+  el.innerHTML = '';
+  if (withReg && a.reg) { const r = document.createElement('span'); r.className = 'mreg'; r.textContent = a.reg + ' · '; el.appendChild(r); }
+  const m = document.createElement('span'); m.className = 'mdl' + (t ? '' : ' unk'); m.textContent = t || 'Unknown type'; el.appendChild(m);
+}
 function renderTable(j){
   const tb = $('planes'); tb.innerHTML = '';
   j.aircraft.forEach(a => {
@@ -204,13 +257,14 @@ function renderTable(j){
     if (a.seen > 20) tr.className = 'stale';
     if (map && map.selected === a.hex) tr.classList.add('pick');
     const alt = a.alt === 'ground' ? 'ground' : v(a.alt);
-    tr.innerHTML = `<td class="flight">${v(a.flight) || '—'}</td><td>${v(a.hex)}</td><td>${alt}</td><td>${v(a.gs)}</td><td class="opt">${v(a.track)}</td><td>${v(a.dist_nm, 1)}</td><td class="opt">${v(a.squawk)}</td><td class="opt">${v(a.rssi, 1)}</td><td>${v(a.seen, 0)} s</td>`;
+    tr.innerHTML = `<td class="flight">${v(a.flight) || (a.reg ? v(a.reg) : '—')}<span class="mrow2"></span></td><td>${v(a.hex)}</td><td>${alt}</td><td>${v(a.gs)}</td><td class="opt">${v(a.track)}</td><td>${v(a.dist_nm, 1)}</td><td class="opt">${v(a.squawk)}</td><td class="opt">${v(a.rssi, 1)}</td><td>${v(a.seen, 0)} s</td>`;
+    const m2 = tr.querySelector('.mrow2'); if (m2) modelLine(m2, a, false);
     tb.appendChild(tr);
   });
   if (!j.aircraft.length) tb.innerHTML = '<tr><td colspan="9" class="note">No aircraft yet. Give it a minute, and check the antenna.</td></tr>';
 }
 function render(j){
-  if (!j.ok) { $('summary').textContent = j.error || 'ADS-B is not running'; $('planes').innerHTML = ''; return; }
+  if (!j.ok) { $('summary').textContent = (window.traceErr ? traceErr.clean(j.error, 'ADS-B is not running') : j.error) || 'ADS-B is not running'; $('planes').innerHTML = ''; return; }
   const onMap = map ? map.onMapCount() : j.with_pos;
   $('summary').textContent = j.count + ' aircraft · ' + onMap + ' on map' + (j.running ? '' : ' · decoder output is stale');
   if (view === 'list') renderTable(j);
@@ -218,20 +272,45 @@ function render(j){
 
 function showCard(p){
   const card = $('acard');
-  if (!p) { card.classList.add('hide'); setFollowBtn(false); return; }
+  if (!p) { card.classList.add('hide'); document.documentElement.classList.remove('cardopen'); setFollowBtn(false); return; }
   const a = p.a;
-  card.classList.remove('hide');
+  card.classList.remove('hide'); document.documentElement.classList.add('cardopen');
   $('aTitle').textContent = (a.flight || a.hex.toUpperCase()) + (a.flight ? '  ·  ' + a.hex.toUpperCase() : '');
   $('aAlt').textContent = a.alt === 'ground' ? 'ground' : (typeof a.alt === 'number' ? fmt(a.alt) + ' ft' : '—');
   $('aSpd').textContent = typeof a.gs === 'number' ? Math.round(a.gs) + ' kt' : '—';
   $('aTrk').textContent = typeof a.track === 'number' ? Math.round(a.track) + '°' : '—';
   $('aVr').textContent = typeof a.vr === 'number' ? (a.vr > 0 ? '+' : a.vr < 0 ? '−' : '') + fmt(Math.abs(a.vr)) + ' fpm' : '—';
   $('aHex').textContent = a.hex.toUpperCase();
+  modelLine($('aModel'), a, true);
   $('aSq').textContent = a.squawk || '—';
   $('aDist').textContent = typeof a.dist_nm === 'number' ? a.dist_nm.toFixed(1) + ' nm' : '—';
   const age = a.seen_pos != null ? a.seen_pos : a.seen;
   $('aSeen').textContent = typeof age === 'number' ? Math.round(age) + ' s ago' : '—';
 }
+// 1.3.1 AIS boats: polled every 5 s; the ALL / AIRCRAFT / BOATS toggle appears once a boat has been heard
+const SHOWS = ['all', 'aircraft', 'boats'], SHOW_TXT = { all: 'All', aircraft: 'Aircraft', boats: 'Boats' };
+let show = SHOWS.includes(localStorage.getItem('sdr-map-show')) ? localStorage.getItem('sdr-map-show') : 'all', boatTimer = null, boatsSeen = false;
+function showBoat(b){
+  const c = $('bcard'); if (!c) return;
+  if (!b) { c.classList.add('hide'); if ($('acard').classList.contains('hide')) document.documentElement.classList.remove('cardopen'); return; }
+  c.classList.remove('hide'); document.documentElement.classList.add('cardopen');
+  $('bTitle').textContent = b.name.length > 22 ? b.name.slice(0, 21) + '…' : b.name;
+  $('bKind').textContent = b.kind.charAt(0).toUpperCase() + b.kind.slice(1);
+  $('bSog').textContent = typeof b.sog === 'number' && b.sog < 102 ? b.sog.toFixed(1) + ' kt' : '—';
+  $('bCog').textContent = typeof b.cog === 'number' && b.cog < 360 ? Math.round(b.cog) + '°' : '—';
+  $('bMmsi').textContent = b.mmsi || '—';
+  $('bDest').textContent = b.dest || '—';
+  $('bSeen').textContent = Math.round(b.seen) + ' s ago';
+}
+async function pollBoats(){
+  if (document.hidden || !map) return;
+  try { const j = await (await fetch('/api/boats', { cache: 'no-store' })).json();
+    if (j.live || (j.boats || []).length) boatsSeen = true;
+    $('tShow').classList.toggle('hide', !boatsSeen);
+    map.updateBoats(j.boats || []);
+  } catch (e) {}
+}
+function setShow(v){ show = map ? map.setShow(v) : v; localStorage.setItem('sdr-map-show', show); $('tShow').textContent = SHOW_TXT[show]; $('tShow').classList.toggle('on', show !== 'all'); }
 function setFollowBtn(f){ $('aFollow').classList.toggle('on', f); $('aFollow').setAttribute('aria-pressed', f); }
 
 async function poll(){
@@ -256,8 +335,8 @@ function stopPolling(){
 }
 
 document.addEventListener('sdr-mode', e => {
-  const s = e.detail; on = !!(s && s.mode === 'adsb');
-  $('off').classList.toggle('hide', on);
+  const s = e.detail; on = !!(s && (s.mode === 'adsb' || (s.dual && s.adsb_live)));   // 1.2.5: two radios: the map runs on SDR 1 while SDR 2 plays
+  $('off').classList.toggle('hide', on || boatsLive);
   if (s && !s.adsb_available) {
     $('offtxt').textContent = 'No ADS-B decoder is installed. Re-run install.sh with internet, or: sudo apt-get install --no-install-recommends dump1090-mutability';
     $('start').disabled = true;
@@ -270,6 +349,8 @@ document.addEventListener('sdr-mode', e => {
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && on) poll(); });
 $('start').onclick = () => window.sdrMode.set('adsb').catch(() => {});
+$('tShow').onclick = () => setShow(SHOWS[(SHOWS.indexOf(show) + 1) % 3]);
+$('bClose').onclick = () => map && map.selectBoat(null);
 $('vMap').onclick = () => setView('map');
 $('vList').onclick = () => setView('list');
 window.addEventListener('resize', () => requestAnimationFrame(fitMap));
@@ -323,25 +404,88 @@ $('rSave').onclick = () => {
 };
 $('rLax').onclick = () => saveReceiver({ clear: true });
 
+
+// ---- 1.3.5 GET MAP banner states: idle -> downloading (progress, cancel) -> done (auto-reload) | error (retry, Wi-Fi)
+const MB1 = n => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n / 1e6)) + ' MB';
+const escH = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+let bnT = null;
+function mapToast(t){ const d = document.createElement('div'); d.className = 'maptoast'; d.textContent = t; ($('map').parentElement || document.body).appendChild(d); setTimeout(() => { d.style.opacity = '0'; }, 2600); setTimeout(() => d.remove(), 3400); }
+function bnPaint(j){
+  const n = $('mapnote'); n.classList.remove('mn-basic', 'hide', 'ok', 'err'); n.classList.add('mn-dl'); n.title = '';
+  const st = j && j.state;
+  if (st === 'running' || st === 'retrying' || st === 'checking') {
+    const tot = j.total || 58e6, have = Math.min(j.have || 0, tot), pct = Math.min(100, Math.floor(have / tot * 100));
+    const eta = j.eta == null ? '' : 'about ' + (j.eta > 90 ? Math.round(j.eta / 60) + ' min' : j.eta + ' s') + ' left';
+    n.innerHTML = '<div class="r"><span class="t"><b>Downloading</b> · Los Angeles map</span><button type="button" class="gh" data-b="cancel">Cancel</button></div>' +
+      '<div class="bar"><i style="width:' + pct + '%"></i></div><div class="r s"><span class="t">' + (st === 'retrying' ? 'Connection lost, retrying…' : MB1(have) + ' of ' + MB1(tot) + ' · ' + pct + '%') + '</span><span>' + eta + '</span></div>' +
+      '<div class="s">Keep Wi‑Fi on. You can keep using Trace.</div>';
+  } else if (st === 'done') {
+    n.classList.add('ok');
+    n.innerHTML = '<div class="r"><span class="t"><b>Map installed</b> · Los Angeles metro</span></div><div class="s">' + MB1(j.total || j.have || 0) + ' · reloading the map…</div>';
+  } else if (st === 'failed') {
+    n.classList.add('err');
+    const off = j.reason === 'offline', ns = j.reason === 'nospace';
+    n.innerHTML = '<div class="r"><span class="t"><b>Download stopped</b> · ' + (off ? 'no internet' : ns ? 'not enough space' : 'try again') + '</span>' +
+      (ns ? '<a class="gh" href="/maps">Maps ›</a>' : '<button type="button" class="go" data-b="start">Retry</button>' + (off ? '<a class="gh" href="/network">Wi‑Fi ›</a>' : '')) + '</div>' +
+      '<div class="s">' + escH(off ? 'Connect to Wi‑Fi with internet, then tap Retry.' : (j.message || 'Tap Retry.')) + '</div>';
+  } else {
+    n.classList.remove('mn-dl'); n.classList.add('mn-basic');
+    n.innerHTML = '<span class="t"><b>Basic map</b> · full map not installed</span><button type="button" class="go" data-b="start" style="padding:9px 12px;min-height:0">Get map ›</button><button type="button" class="x" aria-label="Dismiss">✕</button>';
+    n.querySelector('.x').onclick = () => { n.classList.add('hide'); clearTimeout(bnT); try { sessionStorage.setItem('traceBasicMapNote', 'x'); } catch (e) {} };
+  }
+  n.querySelectorAll('[data-b]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    const r = await fetch('/api/maps/job', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: b.dataset.b, id: 'la' }) }).then(r => r.json()).catch(() => null);
+    if (r && r.job) bnPaint(r.job); else if (r && r.ok === false) bnPaint({ state: 'failed', reason: r.reason, message: r.error });
+    bnPoll(600);
+  });
+}
+async function bnPoll(ms){
+  clearTimeout(bnT);
+  bnT = setTimeout(async () => {
+    let s = null; try { s = await (await fetch('/api/maps/job', { cache: 'no-store' })).json(); } catch (e) {}
+    const j = s && s.jobs && s.jobs.la;
+    if (s && s.la && s.la.street && j && j.state === 'done') {
+      bnPaint(j); try { sessionStorage.setItem('traceMapReady', '1'); sessionStorage.removeItem('traceBasicMapNote'); } catch (e) {}
+      setTimeout(() => location.reload(), 1800); return;            // auto-reload with the new map (toast after)
+    }
+    if (s && s.la && s.la.street) { location.reload(); return; }
+    if (j && j.state === 'cancelled') { bnPaint(null); return; }
+    if (j) bnPaint(j);
+    bnPoll(j && /^(running|retrying|checking)$/.test(j.state) ? 1000 : 5000);
+  }, ms);
+}
+function mapBanner(){
+  let gone = false; try { gone = sessionStorage.getItem('traceBasicMapNote') === 'x'; } catch (e) {}
+  fetch('/api/maps/job', { cache: 'no-store' }).then(r => r.json()).then(s => {
+    const j = s && s.jobs && s.jobs.la, live = j && /^(running|retrying|checking|failed)$/.test(j.state);
+    if (gone && !live) return;
+    bnPaint(live ? j : null); if (live) bnPoll(1000);
+  }).catch(() => { if (!gone) bnPaint(null); });
+}
+
 async function boot(){
   setView(view);
   let info = null;
   try { info = await (await fetch('/api/maps', { cache: 'no-store' })).json(); } catch (e) {}
   if (info && info.receiver) showReceiver(info.receiver);
   if (info && info.rings) rings = cleanRings(info.rings);
+  try { ({ AircraftMap, webglOK } = await import('/maplib/adsb-map.js')); }
+  catch (e) { $('mapnote').textContent = 'The map library could not be loaded (' + e.message + '). The List view still works.'; $('mapnote').classList.remove('hide'); setView('list'); return; }
   if (!webglOK()) {
     $('mapnote').textContent = 'This browser cannot draw the map (no WebGL). The List view still works.';
     $('mapnote').classList.remove('hide'); setView('list'); return;
   }
-  if (!info || !info.installed) {
-    $('mapnote').textContent = 'Basic map only: the detailed offline map is not installed. Re-run install.sh from the package, or run: sudo sdr-maps fetch (needs internet once).';
-    $('mapnote').classList.remove('hide');
-  }
+  // 1.3.5: no street map (LA or USA) -> GET MAP banner that downloads the LA street map on the box (no keyboard / SSH)
+  const hasUSA = info && (info.packs || []).some(p => p.id === 'usa');
+  if (!info || !(info.street || hasUSA)) mapBanner();
+  try { if (sessionStorage.getItem('traceMapReady') === '1') { sessionStorage.removeItem('traceMapReady'); mapToast('\u2713 Map ready'); } } catch (e) {}
   try {
-    map = await new AircraftMap($('map'), { receiver: receiver, rings: ringPrefs(), onSelect: p => { showCard(p); }, onFollow: setFollowBtn }).start(info);
+    map = await new AircraftMap($('map'), { receiver: receiver, rings: ringPrefs(), onSelect: p => { if (p) showBoat(null); showCard(p); }, onBoat: b => { if (b) showCard(null); showBoat(b); }, onFollow: setFollowBtn }).start(info);
     paintRings(); map.map.on('zoomend', () => { if (!$('ringset').classList.contains('hide')) paintRings(); });
     window._fieldnoteMap = map;
     fitMap();
+    setShow(show); pollBoats(); if (!boatTimer) boatTimer = setInterval(pollBoats, 5000);
     if (last) { map.update(last.ok ? last.aircraft : []); render(last); }
   } catch (e) {
     $('mapnote').textContent = 'Map failed to start: ' + e.message + '. The List view still works.';
@@ -350,11 +494,15 @@ async function boot(){
 }
 // 1.2.0: the map (MapLibre + tiles) only loads once ADS-B is started (START button); nothing loads while idle
 let booted = false;
-function maybeBoot(){ if (!booted && on) { booted = true; boot(); } }
+let boatsLive = false;   // 1.3.1: an AIS dongle alone also opens the map (boats only, ADS-B may be off)
+function maybeBoot(){ if (!booted && (on || boatsLive)) { booted = true; boot(); } }
+fetch('/api/boats', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j && j.live) { boatsLive = true; $('off').classList.add('hide'); maybeBoot(); } }).catch(() => {});
 document.addEventListener('sdr-mode', maybeBoot);
 setView(view);
 try { const s0 = window.sdrMode && window.sdrMode.get(); if (s0) document.dispatchEvent(new CustomEvent('sdr-mode', { detail: s0 })); } catch (e) {}
 </script>
 <script src="/map108.js"></script>
+<script src="/airmap.js"></script>
+<script src="/towers.js"></script>
 </body>
 </html>

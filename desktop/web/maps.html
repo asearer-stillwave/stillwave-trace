@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en" style="background:#000;color-scheme:dark">
+<head>
+<style id="noflash">html,body{background:#000}</style>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0c">
+<title>Stillwave Trace · Download maps</title>
+<link rel="stylesheet" href="/fieldnote.css">
+<link rel="stylesheet" href="/content.css">
+</head>
+<body class="page-maps">
+<script src="/nav.js"></script>
+<div class="wrap">
+  <div class="pre-back-h nav-back"><a class="btn sm fm-edit" href="/settings" aria-label="Back to Settings"><span aria-hidden="true">‹</span> Settings</a></div>
+  <div class="brand"><h1>Download <span class="acc">maps</span></h1></div>
+  <p class="lead">Maps work offline once they are on the SD card.</p>
+  <div id="warn"></div>
+  <div class="card mp-store" id="store"><div class="st-h"><span>SD card</span><span id="stH">—</span></div><div class="mp-bar" id="stBar"></div><p class="note" style="margin:0" id="stN">—</p></div>
+  <div id="job"></div>
+  <h2 class="mgrp">My maps</h2>
+  <div class="mp-list" id="mine"></div>
+  <h2 class="mgrp">USA</h2>
+  <div class="mp-list" id="usa"></div>
+  <h2 class="mgrp" id="brH">Get more maps</h2>
+  <div id="crumb"></div>
+  <div id="browse"></div>
+  <details class="card" id="srcBox" style="margin-top:1rem"><summary>Content source</summary>
+    <p class="note">Where map packs and the station bank download from: a home Raspberry Pi now, the Stillwave server later. Everything is checked against the Stillwave signature before it is used.</p>
+    <div class="mp-src"><input id="srcIn" placeholder="http://192.168.1.60:8080/" autocomplete="off" spellcheck="false"><button type="button" id="srcSave">Save</button></div>
+  </details>
+  <p class="status mp-msg" id="msg"></p>
+  <p class="note">Map data © OpenStreetMap contributors (ODbL 1.0) · Protomaps basemap. The Los Angeles map can't be deleted; it is the fallback when nothing else covers an area.</p>
+</div>
+<script src="/mode.js"></script>
+<script src="/kbd.js"></script>
+<script>
+(function(){
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+const MB = n => n >= 1e9 ? (n/1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n/1e6)) + ' MB';
+const DETAIL = {street:'Streets', towns:'Towns', overview:'Overview'};
+let ST = null, CAT = null, path = [], armed = null, lastErr = null;
+function msg(t, k){ const m = $('msg'); m.className = 'status mp-msg ' + (k || ''); m.textContent = (window.traceErr ? traceErr.clean(t) : t) || ''; }
+async function J(url, opt){ const r = await fetch(url, Object.assign({cache:'no-store'}, opt || {})); const d = await r.json().catch(() => ({})); if (!r.ok || d.ok === false) { const e = new Error(d.error || d.message || ('HTTP ' + r.status)); e.d = d; throw e; } return d; }
+const post = (u, b) => J(u, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b || {})});
+const row = (t, s, sz, end, attrs) => `<div class="mp-row${attrs ? ' click' : ''}" ${attrs || ''}><span class="mt">${t}<span class="ms">${s}</span></span><span class="mp-sz">${sz || ''}</span>${end == null ? '<span class="chev">›</span>' : end}</div>`;
+
+function renderStore(){
+  if (!ST) return;
+  // 1.3.2: the whole SD card: system + other | maps | downloading | free
+  const used = ST.maps_bytes, free = ST.free, tot = ST.disk_total || (used + free), other = Math.max(0, tot - free - used);
+  const dl = ST.queue.length && CAT ? ST.queue.reduce((a, id) => a + ((CAT.packs.find(p => p.id === id) || {}).bytes || 0), 0) : 0;
+  const pc = n => Math.max(n > 0 ? 1 : 0, n / tot * 100).toFixed(1);
+  $('stH').textContent = MB(Math.max(0, free - ST.reserve)) + ' free for maps';
+  $('stBar').innerHTML = `<i class="sys" style="width:${pc(other)}%"></i><i style="width:${pc(used)}%"></i>${dl ? `<i class="dl" style="width:${pc(dl)}%"></i>` : ''}`;
+  $('stN').innerHTML = `<span class="k sys"></span>System ${MB(other)} · <span class="k"></span>Maps ${MB(used)}${dl ? ' · <span class="k dl"></span>' + MB(dl) + ' coming' : ''} · ${MB(free)} free of ${MB(tot)} (1 GB kept spare)`;
+}
+function renderJob(){
+  const j = ST.job || {}, q = ST.queue || [], name = id => ((CAT && CAT.packs.find(p => p.id === id)) || {}).name || id;
+  let h = '';
+  if (q.length) {
+    const id = q[0], have = j.id === id ? (j.have || 0) : (ST.partial[id] || 0), tot = j.id === id && j.total ? j.total : (((CAT && CAT.packs.find(p => p.id === id)) || {}).bytes || 1);
+    const pct = Math.min(100, Math.floor(have / tot * 100)), paused = j.state === 'paused' || !ST.worker;
+    const st = j.state === 'checking' ? (j.estimate || ((CAT && CAT.packs.find(p => p.id === id)) || {}).estimate ? 'Finishing…' : 'Checking signature and checksum…') : j.state === 'retrying' ? 'Connection lost, retrying…' : paused ? 'Paused · resumes where it stopped' :
+      (j.eta != null ? 'about ' + (j.eta > 90 ? Math.round(j.eta/60) + ' min' : j.eta + ' s') + ' left' : 'starting…');
+    h += `<div class="card mp-prog"><div class="pp-h"><span>${esc(name(id))}</span><span class="mp-sz">${pct}%</span></div><div class="mp-bar"><i style="width:${pct}%"></i></div>
+      <div class="pp-s"><span>${MB(have)} of ${j.estimate ? '~' : ''}${MB(tot)}</span><span>${esc(st)}</span></div>
+      <div class="mp-act"><button type="button" data-a="${paused ? 'resume' : 'pause'}">${paused ? 'Resume' : 'Pause'}</button><button type="button" class="v-warn" data-a="cancel" data-id="${esc(id)}">Cancel</button></div>
+      <p class="note">The map and radio keep working. The new area appears on the map when it is checked and done.</p></div>`;
+    if (q.length > 1) h += `<h2 class="mgrp">Waiting</h2><div class="mp-list">${q.slice(1).map(id => row(esc(name(id)), 'Starts after ' + esc(name(q[0])), MB(((CAT && CAT.packs.find(p => p.id === id)) || {}).bytes || 0), `<button type="button" class="sm" data-a="cancel" data-id="${esc(id)}">Remove</button>`)).join('')}</div>`;
+  } else if (j.state === 'failed') {
+    h += `<div class="mp-warn"><b>Download stopped.</b> ${esc(j.message || '')}</div>`;
+  }
+  $('job').innerHTML = h;
+}
+// 1.3.5: LA + USA street maps download right here (sdr-maps job); MJ = /api/maps/job
+let MJ = null;
+const left = s => s == null ? '' : ' · about ' + (s > 90 ? Math.round(s / 60) + ' min' : s + ' s') + ' left';
+const busy = j => j && /^(running|retrying|checking)$/.test(j.state);
+function dlRow(title, j, fallbackTotal, id){
+  const tot = j.total || fallbackTotal, have = Math.min(j.have || 0, tot), pct = Math.min(100, Math.floor(have / tot * 100));
+  const sub = j.state === 'checking' ? esc(j.message || 'Checking the map…') : j.state === 'retrying' ? esc(j.message || 'Connection lost, retrying…')
+    : 'Downloading · ' + MB(have) + ' of ' + MB(tot) + ' · ' + pct + '%' + left(j.eta) + (id === 'usa' ? '<br>Resumes by itself if Wi‑Fi drops' : '');
+  return `<div class="mp-row dlr"><span class="mt">${title}<span class="ms">${sub}</span></span><button type="button" class="sm" data-a="mjcancel" data-id="${id}"${j.state === 'checking' ? ' disabled' : ''}>Cancel</button><div class="mpdl"><i style="width:${pct}%"></i></div></div>`;
+}
+function errRow(title, j, sz, id){
+  const ns = j.reason === 'nospace', off = j.reason === 'offline';
+  const btn = ns ? '<span class="mp-tag err">No space</span>' : `<span class="mp-btns"><button type="button" class="sm primary" data-a="mjstart" data-id="${id}">Retry</button>${off ? '<a class="btn sm" href="/network">Wi‑Fi ›</a>' : ''}</span>`;
+  const m = String(j.message || '').replace(/^(No internet|Not enough space)[.:]\s*/i, '');
+  const why = ns ? esc(m.replace(/^./, c => c.toUpperCase())) + ' Delete a city map or use a bigger SD card.' : off ? esc(m || 'Connect to Wi‑Fi with internet, then tap Retry.') : esc(m || 'Tap Retry.');
+  return row(title, `<span class="e">${ns ? 'Not enough space' : off ? 'Download stopped · no internet' : 'Download stopped'}</span> · ${why}`, sz, btn);
+}
+function laRows(){
+  const la = (MJ && MJ.la) || {street: (ST.builtin_bytes || 0) >= 1e7, bytes: ST.builtin_bytes || 0}, j = MJ && MJ.jobs && MJ.jobs.la;
+  if (la.street && !busy(j)) return row('Los Angeles metro', 'Full map installed' + (la.build ? ' · build ' + esc(la.build) : ''), MB(la.bytes), '<span class="mp-tag">Installed</span>');
+  let h = row('Los Angeles metro', 'Outline only · full map not installed', MB(la.bytes || 1e6), '<span class="mp-tag warn">Outline only</span>');
+  const est = (la && la.estimate) || 58e6;
+  if (busy(j)) h += dlRow('Los Angeles map', j, est, 'la');
+  else if (j && j.state === 'failed') h += errRow('Los Angeles map', j, MB(est), 'la');
+  else h += row('Los Angeles map', 'Cities, major roads, airports', MB(est), '<button type="button" class="sm primary" data-a="mjstart" data-id="la">Get map</button>');   // 1.3.8: no "street" wording (the map stops at zoom 10)
+  return h;
+}
+function renderUSA(){
+  const el = $('usa'); if (!el) return;
+  if (!MJ || !MJ.usa) { el.innerHTML = row('USA map', 'Checking…', '', ''); return; }
+  const u = MJ.usa, j = MJ.jobs && MJ.jobs.usa, T = 'USA map', GB = n => (n / 1e9).toFixed(1) + ' GB';
+  if (busy(j)) { el.innerHTML = dlRow(T, j, u.estimate, 'usa'); return; }
+  if (u.installed) {
+    const del = armed === 'usa' ? 'Tap again' : 'Delete';
+    el.innerHTML = row(T, 'Lower 48 · cities and major roads' + (u.build ? ' · build ' + esc(u.build.replace(/(\d{4})(\d\d)(\d\d)/, '$1-$2-$3')) : ''), GB(u.bytes),
+      `<span class="mp-btns"><span class="mp-tag">Installed</span><button type="button" class="sm v-warn" data-a="mjdelete" data-id="usa">${del}</button></span>`); return;
+  }
+  if (j && j.state === 'failed') { el.innerHTML = errRow(T, j, GB(u.estimate), 'usa'); return; }
+  const kept = u.pieces_done ? ' · ' + GB(u.kept_bytes) + ' already downloaded' : '';
+  el.innerHTML = row(T, 'Lower 48 · cities and major roads · needs ~' + GB(u.need) + ' free' + kept, GB(u.estimate),
+    `<button type="button" class="sm primary" data-a="mjstart" data-id="usa">${u.pieces_done ? 'Resume' : 'Download'}</button>`);
+}
+let mjWas = {};
+async function mjStatus(){
+  try { MJ = await J('/api/maps/job'); } catch (e) { MJ = MJ || null; }
+  const js = (MJ && MJ.jobs) || {};
+  for (const id of ['la', 'usa']) {
+    const s = js[id] && js[id].state;
+    if (mjWas[id] && busy({state: mjWas[id]}) && s === 'done') { msg((id === 'la' ? 'Los Angeles' : 'USA') + ' map installed. The map reloads with it.', 'ok'); try { sessionStorage.setItem('traceMapReady', '1'); localStorage.setItem('traceMapsChanged', String(Date.now())); } catch (e) {} }
+    mjWas[id] = s;
+  }
+  if (ST) { renderMine(); renderUSA(); }
+}
+function renderMine(){
+  let h = laRows();
+  for (const p of ST.packs.filter(p => p.id !== 'usa')) {
+    const del = armed === p.id ? 'Tap again' : 'Delete';
+    h += row(esc(p.name), esc(DETAIL[p.detail] || 'Map'), MB(p.bytes),
+      `<span class="mp-btns"><button type="button" class="sm" data-a="view" data-id="${esc(p.id)}">View</button><button type="button" class="sm v-warn" data-a="delete" data-id="${esc(p.id)}">${del}</button></span>`);
+  }
+  $('mine').innerHTML = h;
+}
+function kids(id){ return (CAT.regions || []).filter(r => (r.parent || null) === id); }
+function packsIn(id){ return (CAT.packs || []).filter(p => p.parent === id); }
+function countPacks(id){ return packsIn(id).length + kids(id).reduce((a, r) => a + countPacks(r.id), 0); }
+function renderBrowse(){
+  const b = $('browse');
+  if (!ST.content_url && !CAT) { $('crumb').innerHTML = ''; b.innerHTML = `<div class="card mp-off"><div class="big">⌁</div><h2>No content source yet</h2><p class="note">Open Content source below and enter the address of the map server (your home Pi now, the Stillwave server later).</p></div>`; $('srcBox').open = true; return; }
+  if (!CAT) {
+    b.innerHTML = lastErr ? `<div class="card mp-off"><div class="big">⌁</div><h2>${lastErr.reason === 'offline' ? 'No internet' : 'Map list unavailable'}</h2><p class="note">${esc(lastErr.message)} Join Wi‑Fi in Settings › Network, or use the phone hotspot. Maps you already have keep working.</p><div class="mp-act" style="justify-content:center"><a class="btn primary" href="/network">Open Network</a><button type="button" data-a="retry">Try again</button></div></div>` : '<p class="note">Loading the map list…</p>';
+    $('crumb').innerHTML = ''; return;
+  }
+  const cur = path.length ? path[path.length - 1] : null;
+  const names = [['World', null], ...path.map(id => [((CAT.regions.find(r => r.id === id)) || {}).name || id, id])];
+  $('crumb').innerHTML = path.length ? `<div class="mp-crumb">${names.map(([n, id], i) => i < names.length - 1 ? `<a href="#" data-a="up" data-i="${i}">${esc(n)}</a><span>›</span>` : `<span>${esc(n)}</span>`).join('')}</div>` : '';
+  const have = new Set(ST.packs.map(p => p.id)), q = new Set(ST.queue);
+  // 1.3.1: built-in region list (cut on this box from the public Protomaps build) needs Wi-Fi with internet
+  const net = (ST && ST.net) || CAT.net, canGet = net === 'online' || (CAT.source !== 'protomaps' && CAT.online !== false);
+  let h = net === 'hotspot' ? `<div class="mp-warn"><b>On the hotspot.</b> Connect to Wi‑Fi to download maps. Maps already on the box keep working.</div><div class="mp-act" style="margin-bottom:.9rem"><a class="btn primary" href="/network">Open Network</a></div>`
+    : net === 'offline' ? `<div class="mp-warn"><b>No internet.</b> Connect to Wi‑Fi to download maps.</div>`
+    : CAT.online === false ? `<div class="mp-warn"><b>Offline.</b> Showing the last map list. ${esc(CAT.message || '')}</div>` : '';
+  if (CAT.source === 'protomaps' && CAT.note) h += `<p class="note">${esc(CAT.note)}</p>`;
+  // 1.3.2: one Download button per pack; a pack bigger than the free space (minus the 1 GB spare) says so before you tap
+  const room = Math.max(0, ST.free - ST.reserve - (ST.queue || []).reduce((a, id) => a + (((CAT.packs.find(p => p.id === id)) || {}).bytes || 0), 0));
+  const ps = packsIn(cur);
+  const tooBig = ps.filter(p => !have.has(p.id) && !q.has(p.id) && p.bytes > room);
+  if (tooBig.length) h += `<div class="mp-warn"><b>Won't fit.</b> ${tooBig.length === 1 ? esc(tooBig[0].name) + ' needs ' + MB(tooBig[0].bytes) + '; ' + MB(room) + ' is free.' : tooBig.length + ' maps here are bigger than the ' + MB(room) + ' free.'} Delete a map above to make room.</div>`;
+  if (ps.length) h += `<div class="mp-list">${ps.map(p => row(esc(p.name), esc((p.sub ? p.sub + ' · ' : '') + (DETAIL[p.detail] || '')), (p.estimate ? '~' : '') + MB(p.bytes),
+      have.has(p.id) ? '<span class="mp-tag">On SD</span>' : q.has(p.id) ? '<span class="mp-tag">Queued</span>' : p.bytes > room ? '<span class="mp-tag warn">Too big</span>' : `<button type="button" class="sm primary" data-a="get" data-id="${esc(p.id)}"${canGet ? '' : ' disabled'}>Download</button>`)).join('')}</div>`;
+  const ks = kids(cur);
+  if (ks.length) h += (ps.length ? '<h2 class="mgrp">Areas inside</h2>' : '') + `<div class="mp-list">${ks.map(r => { const n = countPacks(r.id); return row(esc(r.name), esc(r.sub || (n + (n === 1 ? ' map' : ' maps'))), '', null, `data-a="open" data-id="${esc(r.id)}" role="button" tabindex="0"`); }).join('')}</div>`;
+  if (!ps.length && !ks.length) h += '<p class="note">Nothing to download here yet.</p>';
+  b.innerHTML = h;
+}
+function render(){ if (!ST) return; renderStore(); renderJob(); renderMine(); renderUSA(); renderBrowse(); }   // 1.3.4: nothing to draw until storage is read
+// 1.3.4: storage could not be read -> one clean card instead of a half-drawn page
+function storeFail(raw){ traceErr.show($('store'), 'map storage', 'The map service didn\u2019t answer. Your installed maps still work on the Map page.', raw, () => { $('store').innerHTML = '<div class="st-h"><span>SD card</span><span id="stH">\u2014</span></div><div class="mp-bar" id="stBar"></div><p class="note" style="margin:0" id="stN">Checking\u2026</p>'; return status(); });
+  ['job','mine','usa','crumb','browse'].forEach(id => { const el = $(id); if (el) el.innerHTML = ''; }); document.querySelectorAll('h2.mgrp').forEach(h => h.classList.add('hide')); }
+let packSig = null;
+async function status(){ try { ST = await J('/api/content'); const sig = ST.packs.map(p => p.id + p.sha256).join(); if (packSig !== null && sig !== packSig) { try { localStorage.setItem('traceMapsChanged', String(Date.now())); } catch (e) {} } packSig = sig; if (document.activeElement !== $('srcIn')) $('srcIn').value = ST.content_url || ''; document.querySelectorAll('h2.mgrp').forEach(h => h.classList.remove('hide')); render(); } catch (e) { if (!ST) storeFail(e.message); else msg(traceErr.clean('Could not read map status: ' + e.message, 'Could not read map status right now.'), 'err'); } }
+async function catalog(){ try { CAT = await J('/api/content/catalog'); lastErr = null; } catch (e) { CAT = null; lastErr = {reason: (e.d || {}).reason, message: e.message}; } render(); }
+document.addEventListener('click', async e => {
+  const el = e.target.closest('[data-a]'); if (!el) return;
+  const a = el.dataset.a, id = el.dataset.id; e.preventDefault();
+  try {
+    if (a === 'open') { path.push(id); renderBrowse(); window.scrollTo(0, $('brH').offsetTop - 10); return; }
+    if (a === 'up') { path = path.slice(0, +el.dataset.i); renderBrowse(); return; }
+    if (a === 'rstatus') { $('store').innerHTML = '<div class="st-h"><span>SD card</span><span id="stH">\u2014</span></div><div class="mp-bar" id="stBar"></div><p class="note" style="margin:0" id="stN">Checking\u2026</p>'; await status(); return; }
+    if (a === 'retry') { msg('Checking…'); await catalog(); msg(''); return; }
+    if (a === 'view') { const p = ST.packs.find(x => x.id === id); if (p) { const b = p.bbox, c = p.center || [(b[0]+b[2])/2, (b[1]+b[3])/2]; localStorage.setItem('traceMapGoto', JSON.stringify({center: c, zoom: p.detail === 'street' ? 10 : 6})); location.href = '/adsb'; } return; }
+    if (a === 'delete') {
+      if (armed !== id) { armed = id; renderMine(); setTimeout(() => { if (armed === id) { armed = null; renderMine(); } }, 3500); return; }
+      armed = null; await post('/api/content/delete', {id}); msg('Deleted. The map page reloads its regions next time you open it.', 'ok'); await status(); return;
+    }
+    if (a === 'mjstart' || a === 'mjcancel' || a === 'mjdelete') {
+      if (a === 'mjdelete' && armed !== id) { armed = id; renderUSA(); setTimeout(() => { if (armed === id) { armed = null; renderUSA(); } }, 3500); return; }
+      armed = null; el.disabled = true; msg('');
+      const r = await fetch('/api/maps/job', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action: a.slice(2), id})}).then(r => r.json()).catch(() => ({ok:false, error:'The map helper did not answer.'}));
+      if (!r.ok && r.reason !== 'nospace' && r.reason !== 'offline') msg(r.error || 'Could not start the download.', 'err');
+      if (a === 'mjstart' && r.ok) { MJ = MJ || {jobs:{}}; MJ.jobs = MJ.jobs || {}; MJ.jobs[id] = Object.assign({state:'running', phase:'starting', have:0}, r.job || {}); if (ST) { renderMine(); renderUSA(); } }   // 1.3.6: straight to the progress row (dlRow)
+      await mjStatus(); await status(); return;
+    }
+    if (a === 'get') { el.disabled = true; msg(''); await post('/api/content/download', {id}); await status(); return; }
+    if (a === 'pause' || a === 'resume') { await post('/api/content/' + a); await status(); return; }
+    if (a === 'cancel') { await post('/api/content/cancel', {id}); await status(); return; }
+  } catch (err) {
+    const d = err.d || {};
+    if (d.reason === 'no_space') { $('warn').innerHTML = `<div class="mp-warn"><b>Not enough space.</b> ${esc(err.message)}</div><div class="mp-act" style="margin-bottom:.9rem"><button type="button" data-a="mine">Manage my maps</button></div>`; window.scrollTo(0, 0); }
+    else msg(err.message, 'err');
+    if (el.disabled) el.disabled = false;
+  }
+});
+$('srcSave').onclick = async () => { try { const d = await post('/api/content/url', {url: $('srcIn').value}); $('srcIn').value = d.content_url || ''; msg(d.content_url ? 'Content source saved.' : 'Content source cleared.', 'ok'); await status(); await catalog(); } catch (e) { msg(e.message, 'err'); } };
+document.addEventListener('click', e => { if (e.target.closest('[data-a="mine"]')) { $('warn').innerHTML = ''; $('mine').scrollIntoView(); } });
+let t = null;
+async function loop(){ await mjStatus(); await status(); const mb = MJ && MJ.jobs && (busy(MJ.jobs.la) || busy(MJ.jobs.usa)); clearTimeout(t); t = setTimeout(loop, (mb || (ST && ST.queue && ST.queue.length)) ? 1000 : 5000); }
+loop().then(catalog);
+})();
+</script>
+</body>
+</html>

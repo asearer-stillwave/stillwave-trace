@@ -2,6 +2,7 @@
 Description=Stillwave Trace kiosk screen (turn-off timeout, wake on touch, brightness)
 # Stopped BEFORE the web app and the kiosk at shutdown (reverse of this order), so its ExecStop can
 # put "Shutting down…" on the kiosk while the page is still there.
+# 1.2.3: on a reboot neither ExecStop nor ExecStopPost writes the backlight (an I2C write on the Touch Display 2).
 After=local-fs.target systemd-udevd.service sdr-web.service nginx.service fieldnote-kiosk.service
 
 [Service]

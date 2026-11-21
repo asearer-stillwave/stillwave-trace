@@ -1,0 +1,3 @@
+Stillwave Trace station bank, built 2026-10-23 with tools/build_station_bank.py
+FM: FCC FM Query (fmq, licensed + CP), pulled 2026-10-23. Airband/airports/runways: FAA NASR 28-day subscription, cycle 2026-10-01 (next 2026-10-29). ZIP positions: US Census 2024 ZCTA gazetteer.
+All US government works, public domain. Receive only, not for navigation.

@@ -26,12 +26,29 @@ LAST_FILE="${SDR_NET_LAST:-/var/lib/sdr-station/net-last.json}"
 LOCK="${SDR_NET_LOCK:-/run/sdr-netswitch.lock}"
 RUNDIR="${SDR_NET_RUNDIR:-/run}"
 AP_NAME="${SDR_AP_NAME:-Fieldnote-AP}"   # internal NM profile name for the fallback path (kept for in-place upgrades)
-# Hotspot SSID: "Trace" only for a NEW install. An existing hotspot keeps its name and password
-# (see resolve_ap: existing NM hotspot profile > /etc/sdr/net.env > default).
-AP_SSID_DEFAULT="Trace"
+# Hotspot SSID: 1.3: a unique default per unit, TRACE-XXXX (last 4 hex of the board serial; printed on the box
+# label: "sdr-net-mode default-ssid"). Before 1.3 the default was "Trace" for every unit, which made phones and Macs
+# mix units up. A hotspot the user renamed on the Network page (AP_CUSTOM=1) is never touched; a unit still on the old
+# shared default "Trace" moves to its own TRACE-XXXX the next time its hotspot starts (password kept).
+# (see resolve_ap: Network page > existing NM hotspot profile > /etc/sdr/net.env > default).
+unit_suffix() {
+  local sn=""
+  for f in /sys/firmware/devicetree/base/serial-number /proc/device-tree/serial-number; do
+    [[ -r "$f" ]] && sn="$(tr -d '\0' <"$f" 2>/dev/null)" && [[ -n "$sn" ]] && break
+  done
+  [[ -z "$sn" ]] && sn="$(awk -F': *' '/^Serial/{print $2; exit}' /proc/cpuinfo 2>/dev/null)"
+  [[ -z "$sn" || "$sn" =~ ^0+$ ]] && sn="$(cat /etc/machine-id 2>/dev/null)"
+  sn="$(printf '%s' "$sn" | tr -cd '0-9A-Fa-f' | tr 'a-f' 'A-F')"
+  [[ ${#sn} -ge 4 ]] && printf '%s' "${sn: -4}" || printf '0000'
+}
+AP_SSID_OLD_DEFAULT="Trace"
+AP_SSID_DEFAULT="${SDR_AP_SSID_DEFAULT:-TRACE-$(unit_suffix)}"
 AP_SSID_ENV="${SDR_AP_SSID:-}"
 AP_SSID="$AP_SSID_ENV"     # provisional until resolve_ap (set below once get_kv exists)
 AP_PASS="${SDR_AP_PASS:-}"
+# 1.3.1: every unit ships with the hotspot password "stillwave" (Searer's call; shared-password risk accepted).
+# A password set on the Network page (AP_CUSTOM=1) is always kept. Never logged.
+AP_PASS_DEFAULT="${SDR_AP_PASS_DEFAULT:-stillwave}"
 WIFI_IF="${SDR_WIFI_IF:-}"
 CONFIRM_SECS="${SDR_NET_CONFIRM_SECS:-40}"
 DETACH_DELAY="${SDR_NET_DETACH_DELAY:-2}"
@@ -371,6 +388,10 @@ resolve_ap() {
   fi
   AP_SSID="${AP_SSID_ENV:-${found_ssid:-$(get_kv AP_SSID)}}"
   [[ -z "$AP_SSID" ]] && AP_SSID="$AP_SSID_DEFAULT"
+  if [[ -z "$AP_SSID_ENV" && "$AP_SSID" == "$AP_SSID_OLD_DEFAULT" ]]; then   # 1.3: old shared default -> this unit's own name
+    log "hotspot identity: moving from the shared default '$AP_SSID_OLD_DEFAULT' to '$AP_SSID_DEFAULT' (never renamed by the user)"
+    AP_SSID="$AP_SSID_DEFAULT"
+  fi
   if [[ -z "$AP_PASS" && -n "$found_uuid" ]]; then
     local psk
     psk="$(nmcli -s -e no -g 802-11-wireless-security.psk connection show uuid "$found_uuid" 2>/dev/null | head -n1)"
@@ -395,14 +416,20 @@ ensure_pass() {
   if [[ -z "$AP_PASS" ]]; then
     AP_PASS="$(get_kv AP_PASS)"
   fi
+  # 1.3.1: not set by the user -> the shipping default, once (an older auto-generated random password moves to it)
+  if [[ "$(get_kv AP_CUSTOM)" != 1 && -z "${SDR_AP_PASS:-}" && "$(get_kv AP_PASS_DEFAULTED)" != 1 ]]; then
+    AP_PASS="$AP_PASS_DEFAULT"; set_kv AP_PASS "$AP_PASS"; set_kv AP_PASS_DEFAULTED 1
+    log "hotspot password: set to the shipping default (not changed on the Network page)"
+  fi
   if [[ -z "$AP_PASS" || ${#AP_PASS} -lt 8 ]]; then
-    AP_PASS="$(python3 -c 'import secrets,string; a=string.ascii_letters+string.digits; print("".join(secrets.choice(a) for _ in range(12)))')"
+    AP_PASS="$AP_PASS_DEFAULT"
     set_kv AP_PASS "$AP_PASS"
   fi
   set_kv AP_SSID "$AP_SSID"
 }
 
-ap_band() {   # sets AP_BAND_NM (bg|a), AP_CHAN, AP_HW (g|a) from net.env AP_BAND
+ap_band() {   # sets AP_BAND_NM (bg|a), AP_CHAN, AP_HW (g|a) from net.env AP_BAND (AP_FORCE_BG=1: 2.4 GHz for a retry)
+  if [[ "${AP_FORCE_BG:-0}" == 1 ]]; then AP_BAND_NM=bg; AP_CHAN=6; AP_HW=g; return; fi
   case "$(get_kv AP_BAND)" in
     a|5|5g|5GHz) AP_BAND_NM=a; AP_CHAN=36; AP_HW=a ;;
     *) AP_BAND_NM=bg; AP_CHAN=6; AP_HW=g ;;
@@ -424,8 +451,8 @@ ap_config() {   # ap_config SSID BAND(bg|a) BOOT(1|0|keep) ; password on stdin (
   if [[ ${#pass} -lt 8 ]]; then json_err "set a hotspot password (8-63 characters)"; return 2; fi
   set_kv AP_SSID "$ssid"; set_kv AP_PASS "$pass"; set_kv AP_BAND "$band"; set_kv AP_CUSTOM 1
   case "$boot" in
-    1) set_kv MODE ap ;;
-    0) [[ "$(get_kv MODE)" == ap ]] && set_kv MODE wifi ;;
+    1) set_kv MODE ap; set_kv BOOT_AP 1 ;;
+    0) [[ "$(get_kv MODE)" == ap ]] && set_kv MODE wifi; set_kv BOOT_AP 0 ;;
   esac
   AP_SSID="$ssid"; AP_PASS="$pass"
   log "hotspot settings saved: ssid=$ssid band=$band boot=$boot"
@@ -462,13 +489,21 @@ bring_up_nm_ap() {
 
   # NM's own hotspot helper; creates the "Hotspot" profile (2.4 GHz so every phone sees it)
   ap_band   # 1.2.0: AP_BAND=bg (2.4 GHz, default) or a (5 GHz) from the Network page
-  if nmcli device wifi hotspot ifname "$ifc" ssid "$AP_SSID" password "$AP_PASS" band "$AP_BAND_NM" channel "$AP_CHAN" >>"$LOG" 2>>"$ERRFILE"; then
+  if [[ "${AP_PROFILE_ONLY:-0}" != 1 ]] && nmcli device wifi hotspot ifname "$ifc" ssid "$AP_SSID" password "$AP_PASS" band "$AP_BAND_NM" channel "$AP_CHAN" >>"$LOG" 2>>"$ERRFILE"; then
     log "nmcli device wifi hotspot ok (ssid=$AP_SSID)"
-    nmcli connection modify Hotspot connection.autoconnect yes connection.autoconnect-priority 200 >/dev/null 2>&1
+    # 1.3: pin WPA2-PSK (AES/CCMP, no PMF) so the security never drifts to WPA3/SAE or mixed modes with an NM update;
+    # every phone and Mac can join WPA2. The profile is re-activated so the pinned settings take effect.
+    if nmcli connection modify Hotspot connection.autoconnect yes connection.autoconnect-priority 200 \
+         wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn wifi-sec.pairwise ccmp wifi-sec.group ccmp wifi-sec.pmf disable >>"$LOG" 2>>"$ERRFILE"; then
+      nmcli connection up Hotspot ifname "$ifc" >>"$LOG" 2>>"$ERRFILE" || log "Hotspot re-activation after pinning WPA2 failed"
+      log "hotspot security pinned: wpa-psk/rsn/ccmp, pmf disable"
+    else
+      log "could not pin WPA2 on the Hotspot profile"
+    fi
     set_kv BACKEND nm
     return 0
   fi
-  log "hotspot helper failed, trying connection profile"
+  [[ "${AP_PROFILE_ONLY:-0}" == 1 ]] && log "WPA2 2.4 GHz profile retry" || log "hotspot helper failed, trying connection profile"
 
   nmcli connection add type wifi ifname "$ifc" con-name "$AP_NAME" ssid "$AP_SSID" \
     802-11-wireless.mode ap \
@@ -480,6 +515,8 @@ bring_up_nm_ap() {
     wifi-sec.key-mgmt wpa-psk \
     wifi-sec.proto rsn \
     wifi-sec.pairwise ccmp \
+    wifi-sec.group ccmp \
+    wifi-sec.pmf disable \
     wifi-sec.psk "$AP_PASS" \
     connection.autoconnect yes \
     connection.autoconnect-priority 200 \
@@ -905,7 +942,7 @@ print_status() {
   iface="$(wifi_iface || true)"
   local running=false
   switch_running && running=true
-  python3 - "$AP_NAME" "$iface" "$(ips)" "$STATE" "$(client_ipv4 "$iface")" "$running" "$LAST_FILE" "$(hostname)" <<'PY'
+  AP_SSID_DEFAULT="$AP_SSID_DEFAULT" python3 - "$AP_NAME" "$iface" "$(ips)" "$STATE" "$(client_ipv4 "$iface")" "$running" "$LAST_FILE" "$(hostname)" <<'PY'
 import json, subprocess, sys, os
 ap_name, iface, ips, state, wlan_ip, running, last_file, host = sys.argv[1:9]
 kv = {}
@@ -949,10 +986,10 @@ print(json.dumps({
     "wifi_ip": wlan_ip,
     "home_connection": kv.get("HOME_CON", ""),
     "home_ssid": kv.get("HOME_SSID", ""),
-    "ap_ssid": kv.get("AP_SSID", "") or "Trace",
+    "ap_ssid": kv.get("AP_SSID", "") or os.environ.get("AP_SSID_DEFAULT", "Trace"),
     "ap_password_set": bool(kv.get("AP_PASS")),
     "ap_band": "a" if kv.get("AP_BAND") == "a" else "bg",
-    "ap_boot": kv.get("MODE", "") == "ap",
+    "ap_boot": kv.get("BOOT_AP", "0") == "1",   # 1.3.4: matches boot (home Wi-Fi first unless BOOT_AP=1)
     "ap_ip": "10.42.0.1",
     "hostname": host,
     "addresses": addrs,
@@ -1112,8 +1149,12 @@ retry_home() {
 
 boot_restore() {
   log "boot restore begin saved_mode=$(get_kv MODE)"
+  # 1.3.1: Trace ALWAYS boots into its hotspot (TRACE-XXXX), so the radio has to be on. BOOT_AP=0 in net.env opts out.
+  # 1.3.3 (Searer): default is now home Wi-Fi first (restore the saved mode; hotspot only as the fallback). BOOT_AP=1 restores always-hotspot.
+  local always=0; [[ "$(get_kv BOOT_AP)" == 1 ]] && always=1
   if [[ "$(get_kv WIFI)" == off ]]; then
-    nmcli radio wifi off >/dev/null 2>&1; log "boot: Wi-Fi is turned off by the user; leaving it off"; return 0
+    if [[ $always -eq 1 ]]; then nmcli radio wifi on >/dev/null 2>&1; set_kv WIFI on; log "boot: Wi-Fi radio was off; turned on for the boot hotspot"
+    else nmcli radio wifi off >/dev/null 2>&1; log "boot: Wi-Fi is turned off by the user; leaving it off"; return 0; fi
   fi
   if ! wait_for_iface; then
     json_err "no wifi interface at boot"
@@ -1126,12 +1167,24 @@ boot_restore() {
     seed_mode_from_live
     saved="$(get_kv MODE)"
   fi
+  set_kv AUTO_ACTIVE 0
+  if [[ $always -eq 1 ]] && autojoin_on && hotspot_allowed; then   # 1.3.2: strong saved Wi-Fi first, else the hotspot
+    if autojoin_boot "$IFACE"; then return 0; fi
+  fi
+  if [[ $always -eq 1 && "$saved" != ap ]]; then log "boot: always-hotspot (saved mode $saved is used when you switch to Wi-Fi)"; saved=ap; fi
   if [[ "$saved" == "ap" ]]; then
     if start_ap_now "$IFACE"; then
       result boot true "$AP_SSID" "boot: hotspot $AP_SSID up" "10.42.0.1"
       return 0
     fi
-    result boot false "$AP_SSID" "boot: hotspot failed; see $LOG"
+    # 1.3: do not give up: retry once with the plain WPA2 profile on 2.4 GHz channel 6 (the saved band is kept for later)
+    log "boot: hotspot failed; retrying with a WPA2 2.4 GHz fallback profile"
+    sleep 5
+    if AP_FORCE_BG=1 AP_PROFILE_ONLY=1 start_ap_now "$IFACE"; then
+      result boot true "$AP_SSID" "boot: hotspot $AP_SSID up (WPA2 2.4 GHz fallback)" "10.42.0.1"
+      return 0
+    fi
+    result boot false "$AP_SSID" "boot: hotspot failed (also the WPA2 2.4 GHz fallback); see $LOG"
     return 1
   fi
   if [[ "$saved" == "wifi" ]]; then
@@ -1181,6 +1234,105 @@ boot_restore() {
   return 0
 }
 
+# ---------- 1.3.2 auto-join known Wi-Fi ----------
+# net.env AUTOJOIN=1 (default) | 0. At boot (always-hotspot units) Trace scans once; if a SAVED network is heard at
+# AUTOJOIN_DBM (default -67 dBm, about 3 bars) or better it joins that one, else it starts the TRACE-XXXX hotspot.
+# Any failure on the way (no scan, join timeout, no address) -> hotspot. While auto-joined, `sdr-net-mode watch`
+# (sdr-net-watch.service) brings the hotspot back after 30 s without a Wi-Fi address. Passwords are never printed:
+# they stay inside NetworkManager's profiles.
+# nmcli reports signal as 0-100 %; NetworkManager maps dBm to % as 2*(dBm+100), so dBm = %/2 - 100.
+AUTOJOIN_DBM_DEFAULT=-100   # 1.3.3: home Wi-Fi first at any signal (Searer); set AUTOJOIN_DBM to require a minimum
+autojoin_on() { [[ "$(get_kv AUTOJOIN)" != 0 ]]; }
+autojoin_dbm() { local t; t="$(get_kv AUTOJOIN_DBM)"; [[ "$t" =~ ^-[0-9]{2}$ ]] && echo "$t" || echo "$AUTOJOIN_DBM_DEFAULT"; }
+# prints "dBm<TAB>ssid" for every heard network (best reading per SSID)
+scan_dbm() {
+  local ifc="$1"
+  nmcli device wifi rescan ifname "$ifc" >/dev/null 2>&1; sleep "${SDR_NET_SCAN_WAIT:-3}"
+  nmcli -t -e yes -f SSID,SIGNAL device wifi list ifname "$ifc" 2>/dev/null | python3 -c '
+import re, sys
+best = {}
+for line in sys.stdin:
+    p = [x.replace("\\:", ":").replace("\\\\", "\\") for x in re.split(r"(?<!\\):", line.rstrip("\n"))]
+    if len(p) < 2 or not p[0]: continue
+    try: d = int(p[1]) // 2 - 100
+    except ValueError: continue
+    best[p[0]] = max(d, best.get(p[0], -200))
+for s, d in best.items(): print("%d\t%s" % (d, s))
+'
+}
+autojoin_boot() {   # returns 0 when joined; anything else -> caller starts the hotspot
+  local ifc="$1" thr uuid name ssid auto d bestd=-200 bestu="" bests="" heard
+  autojoin_on || return 1
+  thr="$(autojoin_dbm)"
+  ensure_nm_owns_wifi "$ifc" >/dev/null 2>&1
+  local try; for try in 1 2 3; do   # 1.3.3: the first scan right after boot is often empty
+    heard="$(scan_dbm "$ifc")"; [[ -n "$heard" ]] && break; sleep 3
+  done
+  printf '%s\n' "$heard" > /run/sdr-net-scan.tsv 2>/dev/null; chmod 600 /run/sdr-net-scan.tsv 2>/dev/null
+  while IFS=$'\t' read -r uuid name ssid auto; do
+    [[ -z "$ssid" ]] && continue
+    d="$(awk -F'\t' -v s="$ssid" '$2==s {print $1; exit}' <<<"$heard")"
+    [[ -z "$d" ]] && continue
+    if (( d >= thr && d > bestd )); then bestd=$d; bestu=$uuid; bests=$ssid; fi
+  done < <(list_client_profiles)
+  if [[ -z "$bestu" ]]; then   # 1.3.3: nothing heard -> still try the newest saved network directly before the hotspot
+    IFS=$'\t' read -r bestu name bests auto < <(list_client_profiles | head -1)
+    [[ -z "$bestu" ]] && { log "autojoin: no saved Wi-Fi; hotspot"; return 1; }
+    bestd="?"; log "autojoin: no saved network heard at ${thr} dBm or better; trying '$bests' anyway"
+  fi
+  log "autojoin: joining saved '$bests' at ${bestd} dBm (threshold ${thr})"
+  hotspot_down "$ifc"
+  if activate_and_confirm "$ifc" "$bestu" "${SDR_NET_AUTOJOIN_SECS:-30}"; then
+    remember_home "$ifc"; set_kv AUTO_ACTIVE 1
+    result boot true "$bests" "boot: auto-joined saved Wi-Fi '$bests' (${bestd} dBm) as $CLIENT_IP" "$CLIENT_IP"
+    return 0
+  fi
+  log "autojoin: '$bests' did not give an address; hotspot"
+  return 1
+}
+watch_loop() {   # 30 s without a Wi-Fi address while auto-joined -> hotspot
+  local lost=0 ifc
+  while :; do
+    sleep 5
+    [[ "$(get_kv AUTO_ACTIVE)" == 1 ]] || { lost=0; continue; }
+    ifc="$(wifi_iface || true)"; [[ -z "$ifc" ]] && continue
+    if [[ -n "$(client_ipv4 "$ifc")" ]]; then lost=0; continue; fi
+    lost=$((lost + 5))
+    if (( lost >= ${SDR_NET_DROP_SECS:-30} )); then
+      log "watch: Wi-Fi lost for ${lost}s while auto-joined; starting hotspot"
+      set_kv AUTO_ACTIVE 0
+      if start_ap_now "$ifc" >/dev/null; then result watch true "$AP_SSID" "Wi-Fi dropped for 30 s; hotspot $AP_SSID is up" "10.42.0.1"
+      else result watch false "$AP_SSID" "Wi-Fi dropped and the hotspot failed; see $LOG"; fi
+      lost=0
+    fi
+  done
+}
+autojoin_status() {   # JSON for the Network page: no passwords, only SSIDs, dBm and state
+  local ifc="$1" heard="" cur=""
+  [[ -n "$ifc" && "$(get_kv BACKEND)" != hostapd && "${2:-}" == rescan ]] && heard="$(scan_dbm "$ifc")"
+  [[ -z "$heard" && -r /run/sdr-net-scan.tsv ]] && heard="$(cat /run/sdr-net-scan.tsv)"
+  [[ -n "$ifc" ]] && cur="$(pfield "$(active_wifi_uuid "$ifc")" 802-11-wireless.ssid 2>/dev/null)"
+  [[ -n "$ifc" && -z "$(client_ipv4 "$ifc")" ]] && cur=""
+  python3 - "$(autojoin_on && echo 1 || echo 0)" "$(autojoin_dbm)" "$cur" "$(get_kv AUTO_ACTIVE)" "$(hostname -s 2>/dev/null)" "$heard" "$(list_client_profiles | cut -f3)" <<'PY'
+import json, sys
+on, thr, cur, auto, host, heard, saved = sys.argv[1:8]
+thr = int(thr); dbm = {}
+for l in heard.splitlines():
+    p = l.split("\t", 1)
+    if len(p) == 2:
+        try: dbm[p[1]] = int(p[0])
+        except ValueError: pass
+nets, seen = [], set()
+for s in saved.splitlines():
+    if not s or s in seen: continue
+    seen.add(s); d = dbm.get(s)
+    st = "joined" if s == cur else "unseen" if d is None else "weak" if d < thr else "ok"
+    nets.append({"ssid": s, "signal": d, "state": st})
+print(json.dumps({"ok": True, "enabled": on == "1", "threshold": thr, "current": cur or None, "auto": auto == "1" and bool(cur),
+                  "hostname": host, "networks": nets}))
+PY
+}
+
 # ---------- main ----------
 
 cmd="${1:-status}"
@@ -1205,7 +1357,7 @@ done
 [[ -n "${SDR_NET_UNIT:-}" ]] && UNIT_TAG=" ${SDR_NET_UNIT}"
 IFACE="$(wifi_iface || true)"
 case "$cmd" in
-  status|last|log|saved) ;;   # read-only and frequent: keep the log quiet
+  status|last|log|saved|autojoin|watch) ;;   # read-only and frequent: keep the log quiet
   *) log "cmd=$cmd iface=${IFACE:-none} foreground=$FOREGROUND args=${#ARGS[@]}" ;;
 esac
 
@@ -1221,6 +1373,9 @@ case "$cmd" in
     ;;
   saved)
     print_saved
+    ;;
+  default-ssid)   # 1.3: this unit's default hotspot name (for the box label)
+    printf '%s\n' "$AP_SSID_DEFAULT"
     ;;
   ap-pass)
     require_root ap-pass
@@ -1250,6 +1405,28 @@ case "$cmd" in
         sleep "${DETACH_DELAY}"; wifi_power "${ARGS[0]}"; exit 0 ;;
       *) json_obj ok=true "wifi=$([[ "$(get_kv WIFI)" == off ]] && echo off || echo on)"; exit 0 ;;
     esac
+    ;;
+  watch)
+    require_root watch
+    watch_loop
+    ;;
+  autojoin)
+    case "${ARGS[0]:-status}" in
+      on|off) require_root autojoin; set_kv AUTOJOIN "$([[ ${ARGS[0]} == on ]] && echo 1 || echo 0)"; log "autojoin ${ARGS[0]}"; autojoin_status "$IFACE" ;;
+      rescan) require_root autojoin; autojoin_status "$IFACE" rescan ;;
+      *) autojoin_status "$IFACE" ;;
+    esac
+    exit 0
+    ;;
+  forget)
+    require_root forget
+    fs="${ARGS[0]:-}"; [[ -z "$fs" ]] && { json_err "which network?"; exit 2; }
+    fu="$(find_profile_by_ssid "$fs")" || { json_err "not a saved network"; exit 2; }
+    [[ "$fu" == "$(active_wifi_uuid "$IFACE")" ]] && set_kv AUTO_ACTIVE 0
+    nmcli connection delete uuid "$fu" >/dev/null 2>&1 || { json_err "could not forget that network"; exit 1; }
+    [[ "$(get_kv HOME_SSID)" == "$fs" ]] && { set_kv HOME_SSID ""; set_kv HOME_CON ""; }
+    log "forgot saved network"
+    autojoin_status "$IFACE"; exit 0
     ;;
   retry)
     require_root retry
@@ -1306,6 +1483,7 @@ print(json.dumps({"ok": True, "networks": nets, "note": note}))
     ;;
   wifi|ap)
     require_root "$cmd"
+    set_kv AUTO_ACTIVE 0   # 1.3.2: a manual switch ends auto-join (and its 30 s watchdog)
     command -v nmcli >/dev/null || { json_err "NetworkManager (nmcli) not installed"; exit 1; }
     SSID_ARG=""
     PASS_ARG=""

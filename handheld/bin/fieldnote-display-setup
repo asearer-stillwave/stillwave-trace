@@ -9,6 +9,10 @@
 #            --url URL        page to open (default http://localhost/?kiosk=1)
 #            --force-overlay  write dtoverlay=vc4-kms-dsi-ili9881-5inch instead of relying on
 #                             auto-detect (always on for Ubuntu)
+#            --dsi-port 0|1   Pi 5 / CM5 only: which DSI connector the ribbon is in. 1 (default) = DISP1, the overlay's own
+#                             default, nothing extra is written. 0 = DISP0 (next to the camera ports): writes
+#                             dtoverlay=vc4-kms-dsi-ili9881-5inch,dsi0. The port cannot be detected from software, so
+#                             if the panel stays dark on a Pi 5 try --dsi-port 0. (ignored with a warning on a Pi 4)
 #            --rotate DEG     0 (portrait, default) | 180 (portrait, flipped); 90/270 refused: handheld is portrait only  (implies --force-overlay; untested)
 #            --desktop | --lite   override the kiosk type detection
 #            --no-kiosk       only touch config.txt
@@ -27,6 +31,11 @@
 #    must sit under [all] or [pi4]. Ubuntu ships vc4-kms-v3d only under [pi3+]/[pi02].
 #  * A reboot is required for config.txt changes.
 #
+#  * Pi 5 (1.2.2): two DSI ports (DISP0 / DISP1), see --dsi-port. The panel's touch chip is reset by the display's own
+#    microcontroller and can miss the touch driver's first look at boot; install.sh therefore also installs
+#    sdr-touch-reload.service (reloads goodix_ts when no touch device exists). --undo removes it. (1.2.3: the 1.2.2
+#    sdr-panel-off.service is gone: install.sh removes it on upgrade, and --undo still cleans up a leftover one.)
+#
 # Every line this script disables is prefixed "#fieldnote# " and every line it adds sits in one
 # marked block at the end of config.txt, so --undo restores the file byte for byte.
 set -euo pipefail
@@ -43,12 +52,16 @@ PAMFILE="$R/etc/pam.d/fieldnote-kiosk"
 CURSOR_THEME_DIR="$R/usr/share/icons/fieldnote-blank"     # fully transparent Xcursor theme
 CURSOR_PATH_DIR="$R/usr/local/share/fieldnote-cursor"     # XCURSOR_PATH for the kiosk only
 CURSOR_DROPIN="$R/etc/systemd/system/fieldnote-kiosk.service.d/fieldnote-cursor.conf"
+UNIT_TOUCH="$R/etc/systemd/system/sdr-touch-reload.service"     # 1.2.2, Pi 5 only (installed by install.sh)
+UNIT_POFF="$R/etc/systemd/system/sdr-panel-off.service"         # 1.2.2 leftover only (1.2.3 removes it; --undo cleans it up too)
+MODLOAD_I2C="$R/etc/modules-load.d/sdr-i2c-dev.conf"
 TS="$(date +%Y%m%d-%H%M%S)"
 
 say()  { echo "[display] $*"; }
 warn() { echo "[display] WARNING: $*" >&2; }
 run()  { if [[ "$DRY" == "1" ]]; then echo "[dry-run] $*"; else "$@"; fi; }
 
+DSI_PORT=""
 UNDO=0; KUSER=""; URL="http://localhost/?kiosk=1"; FORCE_OVERLAY=0; ROTATE=0; KIND=""; NO_KIOSK=0
 CURSOR_ONLY=""; NO_RESTART=0
 while [[ $# -gt 0 ]]; do
@@ -58,17 +71,21 @@ while [[ $# -gt 0 ]]; do
     --url) URL="${2:?}"; shift ;;
     --force-overlay) FORCE_OVERLAY=1 ;;
     --rotate) ROTATE="${2:?}"; shift ;;
+    --dsi-port) DSI_PORT="${2:?}"; shift ;;
+    --dsi-port=*) DSI_PORT="${1#--dsi-port=}" ;;
     --desktop) KIND=desktop ;;
     --lite) KIND=lite ;;
     --no-kiosk) NO_KIOSK=1 ;;
     --hide-cursor) CURSOR_ONLY=hide ;;
     --show-cursor) CURSOR_ONLY=show ;;
     --no-restart) NO_RESTART=1 ;;
-    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    --refresh-launcher) CURSOR_ONLY=launcher ;;   # 1.3.6: rewrite /usr/local/bin/fieldnote-kiosk only (used by --upgrade)
+    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
   shift
 done
+case "$DSI_PORT" in ""|0|1) ;; *) echo "--dsi-port must be 0 (DISP0) or 1 (DISP1)" >&2; exit 2 ;; esac
 case "$ROTATE" in 0) ;; 180) FORCE_OVERLAY=1 ;; 90|270) echo "Trace handheld is portrait only (1.0.8.2): use --rotate 0 or 180" >&2; exit 2 ;; *) echo "--rotate must be 0, 90, 180 or 270" >&2; exit 2 ;; esac
 
 if [[ ${EUID} -ne 0 && "$DRY" != "1" ]]; then
@@ -95,6 +112,11 @@ IS_UBUNTU=0
 [[ "$OS_ID" == "ubuntu" ]] && IS_UBUNTU=1
 [[ $IS_UBUNTU -eq 1 ]] && FORCE_OVERLAY=1   # auto-detect alone did not bring the panel up on Ubuntu
 
+MODEL="$(cat "$R/proc/device-tree/model" 2>/dev/null | tr -d '\0' || true)"
+BOARD=pi4                                  # config.txt section filter that applies to this board
+IS_PI5=0
+if [[ "$MODEL" == *"Raspberry Pi 5"* || "$MODEL" == *"Compute Module 5"* ]]; then BOARD=pi5; IS_PI5=1; fi
+
 CONFIG="$R/boot/firmware/config.txt"
 CMDLINE="$R/boot/firmware/cmdline.txt"
 if [[ ! -f "$CONFIG" && -f "$R/boot/config.txt" ]]; then
@@ -110,6 +132,7 @@ set_state() {
   echo "$1=$2" >>"$tmp"
   if [[ "$(get_state "$1")" != "$2" ]]; then mv "$tmp" "$STATE"; chmod 644 "$STATE"; else rm -f "$tmp"; fi
 }
+unset_state() { [[ -f "$STATE" ]] && sed -i "/^$1=/d" "$STATE" || true; }
 # remember the original value only once, so re-running never records our own changes as "before"
 set_state_once() { [[ -n "$(get_state "$1")" ]] || set_state "$1" "$2"; }
 
@@ -138,8 +161,8 @@ install_if_changed() {
 # usage: cfg_edit apply|undo IN OUT FORCE DSI_LINE ROTATE_GIVEN
 # Prints KEY=VALUE results on stdout and what it did on stderr.
 cfg_edit() {
-  python3 - "$@" "$BLOCK_BEGIN" "$BLOCK_END" <<'PY'
-import re, sys
+  FN_TARGET="$BOARD" FN_PORT_GIVEN="$([[ -n "$DSI_PORT" ]] && echo 1 || echo 0)" python3 - "$@" "$BLOCK_BEGIN" "$BLOCK_END" <<'PY'
+import os, re, sys
 mode, src, dst, force, dsi_want, rotate_given, BEGIN, END = sys.argv[1:9]
 force = force == "1"; rotate_given = rotate_given == "1"
 PFX = "#fieldnote# "
@@ -147,6 +170,17 @@ text = open(src, newline="").read()
 lines = text.split("\n")
 
 def note(msg): print("[display] config.txt: " + msg, file=sys.stderr)
+
+# 0 (1.2.2). A ",dsi0" the panel line in OUR OWN block already has (written by --dsi-port 0, or edited in by hand on a Pi 5
+# whose cable is in DISP0) must survive a re-run that gives no --dsi-port: the block is rebuilt below, so remember it first.
+carry_dsi0 = False
+if os.environ.get("FN_PORT_GIVEN") != "1":
+    inblk = False
+    for l in lines:
+        if l == BEGIN: inblk = True
+        elif l == END: inblk = False
+        elif inblk and re.match(r"^\s*dtoverlay=vc4-kms-dsi-ili9881-5inch\b.*,dsi0(,|\s*$)", l):
+            carry_dsi0 = True
 
 # 1. back to the original: drop our block (plus the blank separator we added), un-comment our lines
 out, i = [], 0
@@ -168,7 +202,8 @@ if mode == "undo":
     print("CHANGED=%d" % (res != text))
     sys.exit(0)
 
-# 2. section of every line: [all] and [pi4] apply to a Pi 4; any other filter does not
+# 2. section of every line: [all] and the board's own filter ([pi4] on a Pi 4, [pi5] on a Pi 5 / CM5) apply; any other does not
+TARGET = os.environ.get("FN_TARGET", "pi4")
 SEC = re.compile(r"^\s*\[([^\]]+)\]\s*(#.*)?$")
 sec, cur = [], "all"
 for l in lines:
@@ -176,7 +211,7 @@ for l in lines:
     if m:
         cur = m.group(1).strip().lower()
     sec.append(cur)
-def applies(i): return sec[i] in ("all", "pi4")
+def applies(i): return sec[i] in ("all", TARGET)
 def where(i): return "line %d [%s]" % (i + 1, sec[i])
 
 VC4 = re.compile(r"^\s*dtoverlay=vc4-kms-v3d(-pi4)?\s*(,|$)")
@@ -203,10 +238,13 @@ else:
         m = re.match(r"^\s*dtoverlay=vc4-kms-v3d(?:-pi4)?\s*(,\S*)?\s*$", lines[vc4[0]])
         opts = (m.group(1) or "") if m else ""
         for i in vc4:   # they only applied to other boards; one line under [all] replaces them
-            disable.add(i); note("%s at %s does not apply to a Pi 4; moved under [all]" % (lines[i].strip(), where(i)))
+            disable.add(i); note("%s at %s does not apply to a %s; moved under [all]" % (lines[i].strip(), where(i), "Pi 5" if TARGET == "pi5" else "Pi 4"))
     block.append("dtoverlay=vc4-kms-v3d" + opts)
 
 # 4. panel overlay
+if carry_dsi0 and mode == "apply" and ",dsi0" not in dsi_want:
+    dsi_want += ",dsi0"; rotate_given = True
+    note("keeping the DSI port DISP0 (,dsi0) already in the managed block")
 dsi_ok = [i for i, l in enumerate(lines) if DSI.match(l) and applies(i)]
 auto_ok = [i for i, l in enumerate(lines) if AUTO.match(l) and applies(i)]
 want_overlay = force or not auto_ok
@@ -251,11 +289,16 @@ setup_config() {
     warn "no /boot/firmware/config.txt or /boot/config.txt found; is this a Raspberry Pi?"
     return 1
   fi
-  local model=""
-  model="$(tr -d '\0' <"$R/proc/device-tree/model" 2>/dev/null || true)"
+  local model="$MODEL"
   [[ -n "$model" ]] && say "board: $model"
-  if [[ -n "$model" && "$model" != *"Raspberry Pi 4"* ]]; then
-    warn "this script is written for a Pi 4 (found: $model). Pi 5 needs the 22-way to 15-way cable; Compute Modules need --force-overlay."
+  if [[ $IS_PI5 -eq 1 ]]; then
+    say "Pi 5: needs the 22-way (Pi 5) to 15-way (display) ribbon; two DSI ports: DISP1 is the default, --dsi-port 0 for DISP0"
+  elif [[ -n "$model" && "$model" != *"Raspberry Pi 4"* ]]; then
+    warn "this script is written for a Pi 4 or Pi 5 (found: $model). Compute Modules need --force-overlay."
+  fi
+  if [[ -n "$DSI_PORT" && $IS_PI5 -eq 0 ]]; then
+    warn "--dsi-port ignored: only a Raspberry Pi 5 / CM5 has two DSI ports (this board: ${model:-unknown})"
+    DSI_PORT=""
   fi
   local odir
   odir="$(dirname "$CONFIG")/overlays"
@@ -270,6 +313,12 @@ setup_config() {
     180) dsi+=",rotation=180,invx,invy"; rot=1 ;;
     270) dsi+=",rotation=270,swapxy,invy"; rot=1 ;;
   esac
+  # Pi 5: --dsi-port 0 = DISP0 -> ",dsi0". 1 = the overlay's default (DISP1): nothing extra, but an explicit --dsi-port 1 also
+  # replaces an existing ",dsi0" line (rot=1 means "the wanted line replaces an existing one"). No option: an existing line is kept.
+  if [[ -n "$DSI_PORT" ]]; then
+    rot=1
+    if [[ "$DSI_PORT" == 0 ]]; then dsi+=",dsi0"; say "Pi 5: DSI port DISP0 (dsi0)"; else say "Pi 5: DSI port DISP1 (overlay default)"; fi
+  fi
   [[ $IS_UBUNTU -eq 1 ]] && say "Ubuntu: panel overlay written explicitly (auto-detect alone does not bring the panel up)"
 
   local tmp out
@@ -312,10 +361,23 @@ browser_bin() {
   done
 }
 
+# 1.2.1: the Chromium snap needs snapd running. A box where snapd was turned off (1.2.0 boot trim ran before Chromium
+# was installed) is switched back on and waited for here, so a retry never needs manual snapd fixes.
+ensure_snapd() {
+  command -v snap >/dev/null 2>&1 || return 0
+  if ! systemctl is-active --quiet snapd.socket 2>/dev/null || ! systemctl is-enabled --quiet snapd.service 2>/dev/null; then
+    say "turning snapd on (Chromium is a snap)"
+    systemctl unmask snapd.service snapd.socket snapd.seeded.service >/dev/null 2>&1 || true
+    systemctl enable --now snapd.socket snapd.service snapd.seeded.service >/dev/null 2>&1 || warn "could not start snapd"
+  fi
+  timeout 300 snap wait system seed.loaded >/dev/null 2>&1 || warn "snapd is not fully seeded yet (continuing)"
+}
+
 install_browser() {
   [[ -n "$(browser_bin)" ]] && return 0
   if [[ $IS_UBUNTU -eq 1 ]]; then
     say "installing Chromium (snap)"
+    ensure_snapd
     # 1.0.8: show download progress (Chromium is ~180 MB; it used to look frozen)
     say "downloading snap Chromium (~180 MB); progress below"
     if chg="$(snap install --no-wait chromium 2>/dev/null)"; then
@@ -410,12 +472,22 @@ fi
 mkdir -p "$PROFILE/Default"
 say "starting $BROWSER (snap=$SNAP) profile=$PROFILE url=$URL"
 
+# 1.3.6: exact panel geometry, 1:1 pixels, no white/edge gap. Portrait 720x1280 (rotation is applied by the
+# kernel/overlay before this runs). Touch kiosk: invisible pointer for Chromium too.
+W=720; H=1280
+m="$(for c in /sys/class/drm/card*-DSI-*/; do [[ "$(cat "$c/status" 2>/dev/null)" == connected ]] && head -n1 "$c/modes" 2>/dev/null && break; done)"
+[[ "$m" =~ ^([0-9]+)x([0-9]+) ]] && { W=${BASH_REMATCH[1]}; H=${BASH_REMATCH[2]}; }
+(( W > H )) && { t=$W; W=$H; H=$t; }            # handheld is portrait
+export XCURSOR_THEME=fieldnote-blank XCURSOR_SIZE=1
 # shellcheck disable=SC2054  # the comma in --disable-features is intended
 FLAGS=(--kiosk --user-data-dir="$PROFILE" --noerrdialogs --disable-infobars --no-first-run
        --disable-session-crashed-bubble --disable-features=Translate,TranslateUI
        --password-store=basic --check-for-update-interval=31536000
+       --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' --disable-component-update   # 1.3.8: no "Chromium is out of date / Update" bubble on the kiosk (OS updates come from apt)
        --overscroll-history-navigation=0 --disable-pinch --touch-events=enabled
-       --autoplay-policy=no-user-gesture-required)
+       --autoplay-policy=no-user-gesture-required
+       --default-background-color=000000ff --force-dark-mode --blink-settings=preferredColorScheme=0
+       --start-fullscreen --window-position=0,0 --window-size="$W,$H" --force-device-scale-factor=1)  # 1.3.4: no white frame before the page paints
 [[ -n "${WAYLAND_DISPLAY:-}" ]] && FLAGS+=(--ozone-platform=wayland)
 # 1.2.0 keyboard: make sure the US keymap env reaches the browser too (see desktop K830 Shift fix; kbd.js fallback)
 export XKB_DEFAULT_RULES="${XKB_DEFAULT_RULES:-evdev}" XKB_DEFAULT_MODEL="${XKB_DEFAULT_MODEL:-pc105}" XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-us}"
@@ -443,6 +515,29 @@ EOF
   else
     say "launcher already up to date"
   fi
+  write_policy
+}
+
+# 1.3.8: Chromium policy for the kiosk (Debian/Pi OS Chromium reads /etc/chromium/policies/managed, the snap reads
+# /etc/chromium-browser/policies/managed). BrowserThemeColor black: the browser's own window is black instead of the
+# dark-mode grey it shows between cage taking the screen and the first page paint (cage/wlroots itself clears to black).
+# No component updates: nothing in the kiosk asks to update Chromium (OS packages come from apt / the Trace installer).
+POLICY_NAME="stillwave-trace-kiosk.json"
+POLICY_DIRS=("$R/etc/chromium/policies/managed" "$R/etc/chromium-browser/policies/managed")
+write_policy() {
+  local d tmp
+  for d in "${POLICY_DIRS[@]}"; do
+    tmp="$(mktemp)"
+    cat >"$tmp" <<'JSON'
+{
+  "BrowserThemeColor": "#000000",
+  "ComponentUpdatesEnabled": false,
+  "TranslateEnabled": false,
+  "PromotionsEnabled": false
+}
+JSON
+    if install_if_changed "$d/$POLICY_NAME" "$tmp" 644; then say "Chromium kiosk policy installed: ${d#"$R"}/$POLICY_NAME"; fi
+  done
 }
 
 setup_desktop() {
@@ -553,6 +648,10 @@ UtmpMode=user
 Environment=XDG_SESSION_TYPE=wayland
 # 1.1.0: explicit US keyboard map; without it some Bluetooth keyboards (Logitech K830) lost Shift in cage
 Environment=XKB_DEFAULT_RULES=evdev XKB_DEFAULT_MODEL=pc105 XKB_DEFAULT_LAYOUT=us XKB_DEFAULT_OPTIONS=
+# 1.3.4: wait for the UI BEFORE cage takes the screen, so the boot splash stays up (plymouth quit --retain-splash)
+# instead of cage's gray background and a white browser page. Gives up after 120 s and starts anyway.
+ExecStartPre=-/bin/sh -c 'i=0; while [ \$\$i -lt 120 ]; do curl -sf --max-time 2 http://localhost/health >/dev/null 2>&1 && exit 0; i=\$\$((i+1)); sleep 1; done; exit 0'
+TimeoutStartSec=200
 ExecStart=$cage_bin -d -s -- /usr/local/bin/fieldnote-kiosk
 Restart=always
 RestartSec=3
@@ -697,7 +796,7 @@ hide_cursor() { # returns 0 if anything changed
 ExecStartPre=-/usr/local/bin/fieldnote-kiosk-cursor
 Environment=XCURSOR_PATH=/var/snap/chromium/common/fieldnote-cursor:/usr/local/share/fieldnote-cursor
 Environment=XCURSOR_THEME=fieldnote-blank
-Environment=XCURSOR_SIZE=24
+Environment=XCURSOR_SIZE=1
 EOF
   if install_if_changed "$CURSOR_DROPIN" "$tmp" 644; then changed=1; fi
   set_state CURSOR hidden
@@ -737,6 +836,14 @@ undo() {
       say "config.txt: nothing of ours in it"
     fi
     rm -f "$tmp"
+    # 1.2.4: Trace's Pi 5 power block (usb_max_current_enable=1, written by install.sh via sdr-psu) goes too
+    local psu="$R/usr/local/sbin/sdr-psu"
+    [[ -x "$psu" ]] || psu="$(dirname "$(readlink -f "$0")")/sdr-psu"
+    if [[ -x "$psu" ]]; then
+      SDR_PSU_CONFIG="$CONFIG" "$psu" config undo | sed 's/^/[display] /' || warn "could not remove the Trace power block from config.txt"
+    elif grep -q '^# >>> stillwave-trace-power >>>' "$CONFIG"; then
+      warn "config.txt still has the Trace power block (usb_max_current_enable); remove it by hand"
+    fi
   fi
   if [[ "$(get_state ADDED_CONSOLEBLANK)" == "1" && -f "$CMDLINE" ]]; then   # set by older versions
     backup "$CMDLINE"
@@ -744,6 +851,7 @@ undo() {
     say "cmdline.txt: removed consoleblank=0"
   fi
   rm -f "$KHOME/.config/autostart/fieldnote-kiosk.desktop"
+  rm -f "$R/etc/chromium/policies/managed/stillwave-trace-kiosk.json" "$R/etc/chromium-browser/policies/managed/stillwave-trace-kiosk.json"   # 1.3.8
   [[ -f "$KHOME/.config/labwc/autostart" ]] && sed -i '/fieldnote-kiosk/d' "$KHOME/.config/labwc/autostart"
   [[ -f "$KHOME/.config/wayfire.ini" ]] && sed -i '/fieldnote-kiosk/d' "$KHOME/.config/wayfire.ini"
   if [[ -f "$UNIT" ]]; then
@@ -767,6 +875,14 @@ undo() {
     run systemctl daemon-reload || true
   fi
   rm -rf "$CURSOR_THEME_DIR" "$CURSOR_PATH_DIR"
+  # 1.2.2: the Pi 5 helper units (touch reload; a leftover panel power-off unit) belong to the display setup too. No --now:
+  # stopping a leftover sdr-panel-off would run its ExecStop (display off) right now.
+  if [[ -f "$UNIT_TOUCH" || -f "$UNIT_POFF" || -f "$MODLOAD_I2C" ]]; then
+    run systemctl disable sdr-touch-reload.service sdr-panel-off.service >/dev/null 2>&1 || true
+    rm -f "$UNIT_TOUCH" "$UNIT_POFF" "$MODLOAD_I2C"
+    run systemctl daemon-reload || true
+    say "removed sdr-touch-reload.service, sdr-panel-off.service and the i2c-dev autoload file (Pi 5 helpers)"
+  fi
   rm -f "$LAUNCHER" "$STATE"
   say "done. Chromium/cage packages and the kiosk browser profile in the user's home were left in place."
 }
@@ -784,6 +900,10 @@ banner() {
   echo "=================================================================="
 }
 
+if [[ "$CURSOR_ONLY" == launcher ]]; then
+  [[ -f "$LAUNCHER" ]] && write_launcher || say "no kiosk launcher installed; nothing to refresh"
+  exit 0
+fi
 if [[ -n "$CURSOR_ONLY" ]]; then
   # cursor only: config.txt, the kiosk unit, the launcher and everything else stay exactly as they are
   if [[ "$CURSOR_ONLY" == hide ]]; then
@@ -805,6 +925,13 @@ CONFIG_CHANGED=0
 KIOSK_CHANGED=0
 CFG_MODE=""
 say "OS: ${OS_PRETTY:-unknown}   kiosk user: $KUSER   config: ${CONFIG#"$R"}"
+if [[ "$(get_state DISPLAY_MODE)" == hdmi ]]; then
+  # box converted from Trace Desktop (HDMI monitor): the old HDMI block in config.txt is replaced below; forget the HDMI
+  # settings so the launcher forces touch again and the pointer is hidden again
+  say "this box was set up for an HDMI monitor (Trace Desktop): switching its display settings to the handheld panel"
+  unset_state DISPLAY_MODE
+  [[ "$(get_state CURSOR)" == shown ]] && unset_state CURSOR
+fi
 setup_config
 set_state KIOSK_USER "$KUSER"
 set_state KIOSK_URL "$URL"
@@ -820,8 +947,12 @@ if [[ $NO_KIOSK -eq 0 ]]; then
 fi
 echo
 say "Summary:"
-say "  panel: Touch Display 2 5\" (720x1280 portrait) on the Pi 4 DISPLAY connector, 15-way ribbon, GPIO 5V/GND power"
-say "  overlay: $CFG_MODE ($( [[ "$CFG_MODE" == auto ]] && echo "display_auto_detect=1" || echo "dtoverlay=$OVERLAY" )); vc4-kms-v3d applies to the Pi 4"
+if [[ $IS_PI5 -eq 1 ]]; then
+  say "  panel: Touch Display 2 5\" (720x1280 portrait) on a Pi 5 DSI port ($(grep -qE '^dtoverlay=vc4-kms-dsi-ili9881-5inch.*dsi0' "$CONFIG" 2>/dev/null && echo "DISP0, dsi0" || echo "DISP1, default")), 22-to-15-way ribbon"
+else
+  say "  panel: Touch Display 2 5\" (720x1280 portrait) on the Pi 4 DISPLAY connector, 15-way ribbon, GPIO 5V/GND power"
+fi
+say "  overlay: $CFG_MODE ($( [[ "$CFG_MODE" == auto ]] && echo "display_auto_detect=1" || echo "dtoverlay=$OVERLAY" )); vc4-kms-v3d applies to the $( [[ $IS_PI5 -eq 1 ]] && echo "Pi 5" || echo "Pi 4" )"
 [[ $NO_KIOSK -eq 0 ]] && say "  kiosk: $KIND, user $KUSER, opens $URL"
 say "  undo: sudo fieldnote-display-setup --undo"
 if [[ $CONFIG_CHANGED -eq 1 || $KIOSK_CHANGED -eq 1 ]]; then banner needed; else banner; fi

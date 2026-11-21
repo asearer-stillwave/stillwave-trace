@@ -1,0 +1,7 @@
+aircraft.csv.gz — ICAO 24-bit address -> registration / type code / model
+Source:   https://github.com/wiedehopf/tar1090-db (branch csv), commit 522f3da995fcd52ea7a84583fbcd6e8f43197407 (2026-10-19)
+Data:     Mictronics aircraft database, https://www.mictronics.de/aircraft-database/
+License:  Open Data Commons Attribution License (ODC-By) v1.0, https://opendatacommons.org/licenses/by/1-0/
+Credit:   "Aircraft data: Mictronics aircraft database (ODC-By 1.0), via wiedehopf/tar1090-db"
+Format:   hex;registration;type;flags;description;...  (semicolon separated, gzip)
+Update:   sudo sdr-aircraft-db fetch   (or More > About & licenses > Update aircraft database)

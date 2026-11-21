@@ -1,0 +1,105 @@
+{
+ "ok": true,
+ "_source": "FAA Chart Supplement data as published by AOPA (Kneeboard KLAX) and airnav.com/airport/KLAX, checked 2026-10-23. Approach = SoCal Approach sectors by bearing from LAX. Voice frequencies, AM, receive only.",
+ "airports": [
+  {
+   "icao": "KLAX",
+   "name": "Los Angeles Intl",
+   "lat": 33.9425,
+   "lon": -118.4081,
+   "zoom": 11.2,
+   "runways_deg": [
+    69,
+    249,
+    71,
+    251
+   ],
+   "groups": [
+    {
+     "id": "tower",
+     "label": "Tower",
+     "freqs": [
+      {
+       "mhz": 133.9,
+       "name": "LAX Tower North",
+       "tag": "TWR NORTH"
+      },
+      {
+       "mhz": 120.95,
+       "name": "LAX Tower South",
+       "tag": "TWR SOUTH"
+      },
+      {
+       "mhz": 119.8,
+       "name": "LAX Tower Heli",
+       "tag": "TWR HELI"
+      }
+     ]
+    },
+    {
+     "id": "ground",
+     "label": "Ground",
+     "freqs": [
+      {
+       "mhz": 121.65,
+       "name": "LAX Ground North",
+       "tag": "GND NORTH"
+      },
+      {
+       "mhz": 121.75,
+       "name": "LAX Ground South",
+       "tag": "GND SOUTH"
+      },
+      {
+       "mhz": 121.4,
+       "name": "LAX Ground West",
+       "tag": "GND WEST"
+      }
+     ]
+    },
+    {
+     "id": "approach",
+     "label": "Approach",
+     "freqs": [
+      {
+       "mhz": 124.5,
+       "name": "SoCal App 225-044",
+       "tag": "APP NW"
+      },
+      {
+       "mhz": 124.9,
+       "name": "SoCal App 090-224",
+       "tag": "APP SE"
+      },
+      {
+       "mhz": 128.5,
+       "name": "SoCal App 045-089",
+       "tag": "APP NE"
+      }
+     ]
+    },
+    {
+     "id": "atis",
+     "label": "ATIS",
+     "freqs": [
+      {
+       "mhz": 133.8,
+       "name": "LAX ATIS Arrival",
+       "tag": "ATIS ARR"
+      },
+      {
+       "mhz": 135.65,
+       "name": "LAX ATIS Departure",
+       "tag": "ATIS DEP"
+      },
+      {
+       "mhz": 120.35,
+       "name": "LAX Clearance",
+       "tag": "CLR"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

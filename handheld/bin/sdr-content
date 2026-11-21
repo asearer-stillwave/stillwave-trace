@@ -1,0 +1,533 @@
+#!/usr/bin/env python3
+"""Stillwave Trace 1.2.6: downloadable content (map packs + station bank) from CONTENT_URL.
+  sdr-content status [--json]            content source, installed packs, free space, download queue, station bank
+  sdr-content get-url | set-url URL      CONTENT_URL in /etc/sdr/update.env (home Pi now, Cloudflare R2 later)
+  sdr-content catalog [--json]           fetch + verify CONTENT_URL/catalog.json (signed); falls back to the cached copy offline
+  sdr-content download ID                queue a map pack (resumes a partial download), starts the worker
+  sdr-content pause | resume             stop the worker keeping the partial file / start it again
+  sdr-content cancel ID                  drop ID from the queue and delete its partial file
+  sdr-content delete ID                  delete an installed pack (the built-in LA map can't be deleted)
+  sdr-content bank-update [--json]       fetch the newest station bank (signed manifest + sha256)
+  sdr-content bank-install-local FILE    install the bundled station bank (stations.sqlite.gz)
+  sdr-content worker                     (internal) download the queue one pack at a time
+Server layout (same on the home Pi and on R2):
+  catalog.json + catalog.json.sig        Ed25519 signature (Stillwave update key) over the exact catalog bytes
+  maps/<id>.pmtiles (+ .sig)             sha256 + bytes are listed in the signed catalog
+  bank/stations.json + .sig              {file, sha256, bytes, cycle, ...}; bank/<file> = stations-<cycle>.sqlite.gz
+  updates/handheld/ , updates/desktop/   latest.json folders (sdr-update uses them when UPDATE_URL is empty)
+1.3.1: without a content source (or for regions it doesn't list) the built-in region list (config/regions.json) is used.
+Those packs are cut on this box from the public Protomaps daily build over Wi-Fi (sdr-maps region); sizes are estimates.
+Nothing here runs by itself: only when a button is tapped."""
+import fcntl, gzip, hashlib, importlib.machinery, importlib.util, json, os, re, shutil, signal, sqlite3, subprocess, sys, tempfile, time
+import urllib.error, urllib.parse, urllib.request
+
+E = os.environ.get
+CONF = E("SDR_UPDATE_CONF", "/etc/sdr/update.env")
+MAPS = E("SDR_MAPS_DIR", "/var/lib/sdr/maps")
+PACKS = os.path.join(MAPS, "packs")
+STATE = E("SDR_CONTENT_DIR", "/var/lib/sdr/content")
+RUN = E("SDR_CONTENT_RUN", "/run/sdr-content")
+BANK_DIR = E("SDR_BANK_DIR", "/var/lib/sdr/bank")
+BANK = os.path.join(BANK_DIR, "stations.sqlite")
+UPDATE_BIN = E("SDR_UPDATE_BIN", "/usr/local/sbin/sdr-update")
+RESERVE = int(E("SDR_CONTENT_RESERVE", str(1024 ** 3)))      # keep 1 GB free for recordings, updates and the OS
+DETACH = E("SDR_CONTENT_DETACH", "systemd-run")              # systemd-run | fork (tests)
+SELF = os.path.realpath(E("SDR_CONTENT_SELF", sys.argv[0]))
+MAX_CATALOG = 2 * 1024 * 1024
+ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+UA = "stillwave-trace-content"
+JSON_OUT = "--json" in sys.argv
+REGIONS = E("SDR_REGIONS_FILE", "/usr/local/lib/sdr-station/config/regions.json")
+MAPS_BIN = E("SDR_MAPS_BIN", "/usr/local/sbin/sdr-maps")
+CHILD = {"p": None}
+
+
+class Fail(Exception):
+    def __init__(self, reason, message, detail=""):
+        super().__init__(message); self.reason, self.message, self.detail = reason, message, detail
+
+
+def out(o, text=None):
+    print(json.dumps(o) if JSON_OUT or text is None else text)
+
+
+def rj(p, default=None):
+    try:
+        with open(p) as f: return json.load(f)
+    except (OSError, ValueError): return default
+
+
+def wj(p, o, mode=0o644):
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    tmp = p + ".tmp"
+    with open(tmp, "w") as f: json.dump(o, f)
+    os.chmod(tmp, mode); os.replace(tmp, p)
+
+
+def conf():
+    kv = {}
+    try:
+        for line in open(CONF):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1); kv[k.strip()] = v.strip().strip('"').strip("'")
+    except OSError: pass
+    return kv
+
+
+def content_url():
+    u = conf().get("CONTENT_URL", "")
+    return (u.rstrip("/") + "/") if u else ""
+
+
+def updater():
+    """Reuse sdr-update's verifier (same key, same openssl / cryptography / pure-Python fallbacks)."""
+    ld = importlib.machinery.SourceFileLoader("sdr_update", UPDATE_BIN)
+    spec = importlib.util.spec_from_loader("sdr_update", ld); m = importlib.util.module_from_spec(spec); ld.exec_module(m)
+    return m
+
+
+def verify_bytes(data, sig):
+    u = updater()
+    with tempfile.NamedTemporaryFile(delete=False) as f: f.write(data); p = f.name
+    try: return u.verify_sig(p, sig)
+    except u.Fail: return False
+    finally: os.unlink(p)
+
+
+def verify_file(path, sig):
+    u = updater()
+    try: return u.verify_sig(path, sig)
+    except u.Fail: return False
+
+
+def fetch(url, limit=None, timeout=30):
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = r.read((limit + 1) if limit else -1)
+    except urllib.error.HTTPError as e:
+        raise Fail("http", "The map server answered %d for %s." % (e.code, url.rsplit("/", 1)[-1]), url)
+    except (urllib.error.URLError, OSError) as e:
+        raise Fail("offline", "No internet, or the map server can't be reached.", "%s: %s" % (url, e))
+    if limit and len(data) > limit: raise Fail("too_big", "The server's file is too large.", url)
+    return data
+
+
+def sha256_file(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""): h.update(b)
+    return h.hexdigest()
+
+
+def free_bytes():
+    os.makedirs(MAPS, exist_ok=True)
+    return shutil.disk_usage(MAPS).free
+
+
+# ---------------------------------------------------------------- catalog
+def _remote_catalog(online=True):
+    cached = os.path.join(STATE, "catalog.json")
+    base = content_url()
+    if online and base:
+        try:
+            raw = fetch(base + "catalog.json", MAX_CATALOG)
+            sig = fetch(base + "catalog.json.sig", 4096)
+            if not verify_bytes(raw, sig):
+                raise Fail("bad_signature", "The map list isn't signed by Stillwave, so it was ignored.")
+            cat = json.loads(raw)
+            if cat.get("product") != "stillwave-trace-content":
+                raise Fail("bad_catalog", "That address doesn't hold a Stillwave map list.")
+            os.makedirs(STATE, exist_ok=True)
+            with open(cached + ".tmp", "wb") as f: f.write(raw)
+            os.replace(cached + ".tmp", cached)
+            return dict(cat, online=True, source=base)
+        except Fail as e:
+            c = rj(cached)
+            if c and e.reason == "offline":
+                return dict(c, online=False, source=base, message=e.message)
+            raise
+    c = rj(cached)
+    if c: return dict(c, online=False, source=base, message="Showing the last map list." if base else "No content source is set.")
+    if not base: raise Fail("no_url", "No content source is set. Add one under Content source on this page.")
+    raise Fail("offline", "No internet, or the map server can't be reached.")
+
+
+def builtin_catalog():
+    c = rj(REGIONS)
+    return c if c and c.get("packs") else None
+
+
+def net_state():
+    """1.3.1: 'online' (a default route that is not our own hotspot), 'hotspot' or 'offline'. SDR_CONTENT_NET overrides (tests)."""
+    if E("SDR_CONTENT_NET"): return E("SDR_CONTENT_NET")
+    hot = False
+    try: hot = "10.42.0.1/" in subprocess.run(["ip", "-4", "-o", "addr"], capture_output=True, text=True, timeout=5).stdout
+    except Exception: pass
+    try:
+        for line in open("/proc/net/route").read().splitlines()[1:]:
+            f = line.split()
+            if len(f) > 2 and f[1] == "00000000": return "online"
+    except OSError: pass
+    return "hotspot" if hot else "offline"
+
+
+def get_catalog(online=True):
+    """Signed CONTENT_URL catalog (R2 / home Pi) when set, plus the built-in region list for anything it doesn't have."""
+    b = builtin_catalog(); c = None; msg = None
+    try:
+        c = _remote_catalog(online)
+    except Fail as e:
+        if not b: raise
+        msg = e.message if content_url() else None
+    if not c:
+        return dict(b, online=net_state() == "online", source="protomaps", net=net_state(), **({"message": msg} if msg else {}))
+    if b:
+        have = {p.get("id") for p in c.get("packs", [])}; regs = {r.get("id") for r in c.get("regions", [])}
+        c = dict(c, packs=list(c.get("packs", [])) + [p for p in b["packs"] if p["id"] not in have],
+                 regions=list(c.get("regions", [])) + [r for r in b.get("regions", []) if r["id"] not in regs])
+    return dict(c, net=net_state())
+
+
+def pack_entry(cat, pid):
+    for p in cat.get("packs", []):
+        if p.get("id") == pid: return p
+    raise Fail("unknown", "That map isn't in the map list.", pid)
+
+
+def installed():
+    res = []
+    if os.path.isdir(PACKS):
+        for f in sorted(os.listdir(PACKS)):
+            if f.endswith(".json") and ID.match(f[:-5]):
+                m = rj(os.path.join(PACKS, f))
+                t = os.path.join(PACKS, f[:-5] + ".pmtiles")
+                if m and os.path.isfile(t): res.append(dict(m, bytes=os.path.getsize(t)))
+    return res
+
+
+# ---------------------------------------------------------------- queue + worker
+def lock(name):
+    os.makedirs(RUN, exist_ok=True)
+    fd = os.open(os.path.join(RUN, name), os.O_CREAT | os.O_RDWR, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX); return fd
+
+
+def queue_get(): return rj(os.path.join(RUN, "queue.json"), []) or []
+def queue_set(q): wj(os.path.join(RUN, "queue.json"), q)
+def job_set(**kw): wj(os.path.join(RUN, "job.json"), dict(kw, t=time.time()))
+
+
+def worker_pid():
+    try:
+        pid = int(open(os.path.join(RUN, "worker.pid")).read())
+        os.kill(pid, 0); return pid
+    except (OSError, ValueError): return None
+
+
+def start_worker():
+    if worker_pid(): return
+    if os.path.exists(os.path.join(RUN, "paused")): return
+    if DETACH == "fork":
+        if os.fork() == 0:
+            os.setsid(); devnull = os.open(os.devnull, os.O_RDWR)
+            for fd in (0, 1, 2): os.dup2(devnull, fd)
+            os.execv(sys.executable, [sys.executable, SELF, "worker"])
+        return
+    subprocess.run(["systemd-run", "--quiet", "--collect", "--unit", "sdr-content-dl-%d" % int(time.time()),
+                    "--property=Nice=10", "--property=IOSchedulingClass=idle", SELF, "worker"], check=False, timeout=20)
+
+
+def cmd_download(pid):
+    if not ID.match(pid): raise Fail("bad_id", "That isn't a map name.")
+    cat = get_catalog(online=False)
+    p = pack_entry(cat, pid)
+    if p.get("extract"):
+        if any(i["id"] == pid for i in installed()): return {"ok": True, "message": "Already on this box."}
+        st = net_state()
+        if st != "online":
+            raise Fail("offline", "On the hotspot: connect to Wi-Fi to download maps." if st == "hotspot" else "No internet: connect to Wi-Fi to download maps.")
+    elif any(i["id"] == pid for i in installed()) and rj(os.path.join(PACKS, pid + ".json"), {}).get("sha256") == p.get("sha256"):
+        return {"ok": True, "message": "Already on this box."}
+    need = int(int(p["bytes"]) * (1.3 if p.get("estimate") else 1)) - part_size(pid) + sum(int(pack_entry(cat, q)["bytes"]) for q in queue_get() if q != pid)
+    if free_bytes() - need < RESERVE:
+        raise Fail("no_space", "Not enough space: %s needs %s, and only %s is free after keeping 1 GB spare." % (
+            p["name"], mb(int(p["bytes"])), mb(max(0, free_bytes() - RESERVE))), str(need))
+    fd = lock("queue.lock")
+    try:
+        q = queue_get()
+        if pid not in q: q.append(pid); queue_set(q)
+    finally: os.close(fd)
+    try: os.unlink(os.path.join(RUN, "paused"))
+    except OSError: pass
+    start_worker()
+    return {"ok": True, "queued": queue_get()}
+
+
+def part_size(pid):
+    try: return os.path.getsize(os.path.join(PACKS, pid + ".pmtiles.part"))
+    except OSError: return 0
+
+
+def mb(n): return ("%.0f MB" % (n / 1e6)) if n < 1e9 else ("%.1f GB" % (n / 1e9))
+
+
+def extract_one(p):
+    """1.3.1: cut a region from the public Protomaps build (sdr-maps region), with progress against the size estimate."""
+    pid = p["id"]; os.makedirs(PACKS, exist_ok=True)
+    tmp = os.path.join(PACKS, pid + ".part.pmtiles"); x = p["extract"]; total = int(p["bytes"])
+    cmd = [MAPS_BIN, "region", ",".join(str(v) for v in x["bbox"]), str(x.get("minzoom", 0)), str(x.get("maxzoom", 14)), tmp]
+    for attempt in range(3):
+        if net_state() != "online":
+            raise Fail("offline", "Lost the internet connection while downloading %s. Connect to Wi-Fi and tap Resume." % p.get("name"))
+        job_set(state="downloading", id=pid, name=p.get("name"), have=0, total=total, estimate=True)
+        pr = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True); CHILD["p"] = pr
+        t0 = time.time()
+        while pr.poll() is None:
+            time.sleep(1)
+            try: have = os.path.getsize(tmp)
+            except OSError: have = 0
+            rate = have / max(1, time.time() - t0)
+            job_set(state="downloading", id=pid, name=p.get("name"), have=min(have, total), total=max(total, have), rate=int(rate),
+                    eta=int((total - have) / rate) if rate > 0 and have < total else None, estimate=True)
+        CHILD["p"] = None
+        o, err = pr.communicate()
+        res = None
+        try: res = json.loads(o.strip().splitlines()[-1])
+        except (ValueError, IndexError): pass
+        if pr.returncode == 0 and res and res.get("ok") and os.path.isfile(tmp):
+            job_set(state="checking", id=pid, name=p.get("name"), have=res["bytes"], total=res["bytes"])
+            meta = {k: p[k] for k in ("id", "name", "parent", "detail", "bbox", "minzoom", "maxzoom", "center", "airports") if k in p}
+            meta.update(build=res.get("build"), sha256=res.get("sha256"), source="protomaps", installed=time.strftime("%Y-%m-%d"))
+            os.replace(tmp, os.path.join(PACKS, pid + ".pmtiles")); os.chmod(os.path.join(PACKS, pid + ".pmtiles"), 0o644)
+            wj(os.path.join(PACKS, pid + ".json"), meta)
+            return
+        try: os.unlink(tmp)
+        except OSError: pass
+        job_set(state="retrying", id=pid, name=p.get("name"), have=0, total=total, message=(err or "")[-200:])
+        time.sleep(5 * (attempt + 1))
+    raise Fail("offline", "Couldn't build %s from the Protomaps download. It stays in the list; tap Resume to try again." % p.get("name"))
+
+
+def download_one(base, p):
+    if p.get("extract"): return extract_one(p)
+    pid = p["id"]; os.makedirs(PACKS, exist_ok=True)
+    part = os.path.join(PACKS, pid + ".pmtiles.part"); total = int(p["bytes"])
+    url = urllib.parse.urljoin(base, p.get("url") or ("maps/%s.pmtiles" % pid))
+    for attempt in range(6):
+        have = part_size(pid)
+        if have > total: os.unlink(part); have = 0
+        if have < total:
+            hdr = {"User-Agent": UA}
+            if have: hdr["Range"] = "bytes=%d-" % have
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=30) as r:
+                    if have and r.status != 206: have = 0          # server ignored Range: start over
+                    with open(part, "ab" if have else "wb") as f:
+                        last = 0; t0 = time.time(); start = have
+                        while True:
+                            b = r.read(256 * 1024)
+                            if not b: break
+                            f.write(b); have += len(b)
+                            if time.time() - last > 0.5:
+                                last = time.time(); rate = (have - start) / max(0.1, last - t0)
+                                job_set(state="downloading", id=pid, name=p.get("name"), have=have, total=total,
+                                        rate=int(rate), eta=int((total - have) / rate) if rate > 0 else None)
+            except (urllib.error.URLError, OSError) as e:
+                job_set(state="retrying", id=pid, name=p.get("name"), have=part_size(pid), total=total, message=str(e)[:200])
+                time.sleep(min(30, 3 * (attempt + 1))); continue
+        if part_size(pid) != total:
+            continue
+        job_set(state="checking", id=pid, name=p.get("name"), have=total, total=total)
+        if sha256_file(part) != p["sha256"]:
+            os.unlink(part); raise Fail("bad_hash", "%s didn't match its checksum, so it was deleted. Try again." % p.get("name"))
+        if p.get("sig_url") or p.get("signed"):
+            sig = fetch(urllib.parse.urljoin(base, p.get("sig_url") or (p.get("url", "maps/%s.pmtiles" % pid) + ".sig")), 4096)
+            if not verify_file(part, sig):
+                os.unlink(part); raise Fail("bad_signature", "%s isn't signed by Stillwave, so it was deleted." % p.get("name"))
+        meta = {k: p[k] for k in ("id", "name", "parent", "detail", "bbox", "minzoom", "maxzoom", "build", "sha256", "center", "airports") if k in p}
+        meta["installed"] = time.strftime("%Y-%m-%d")
+        os.replace(part, os.path.join(PACKS, pid + ".pmtiles")); os.chmod(os.path.join(PACKS, pid + ".pmtiles"), 0o644)
+        wj(os.path.join(PACKS, pid + ".json"), meta)
+        return
+    raise Fail("offline", "The download of %s kept failing. It will resume where it stopped." % p.get("name"))
+
+
+def cmd_worker():
+    fd = os.open(os.path.join(RUN, "worker.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+    try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError: return 0
+    with open(os.path.join(RUN, "worker.pid"), "w") as f: f.write(str(os.getpid()))
+    def _term(*a):
+        if CHILD["p"] is not None:
+            try: CHILD["p"].terminate()
+            except OSError: pass
+        job_set(state="paused", id=(queue_get() or [None])[0]); os._exit(0)
+    signal.signal(signal.SIGTERM, _term)
+    try:
+        base = content_url(); cat = get_catalog(online=False)
+        last_fail = None
+        while True:
+            q = queue_get()
+            if not q:
+                if last_fail: job_set(**last_fail)        # keep the last error on screen until the next action
+                else: job_set(state="idle")
+                break
+            pid = q[0]
+            try:
+                download_one(base, pack_entry(cat, pid)); job_set(state="done", id=pid, name=pack_entry(cat, pid).get("name"))
+            except Fail as e:
+                last_fail = dict(state="failed", id=pid, reason=e.reason, message=e.message)
+                job_set(**last_fail)
+                if e.reason == "offline": break                    # keep it queued; Resume continues
+            l = lock("queue.lock")
+            try: queue_set([x for x in queue_get() if x != pid])
+            finally: os.close(l)
+    finally:
+        try: os.unlink(os.path.join(RUN, "worker.pid"))
+        except OSError: pass
+    return 0
+
+
+def cmd_pause():
+    open(os.path.join(RUN, "paused"), "w").close()
+    pid = worker_pid()
+    if pid: os.kill(pid, signal.SIGTERM)
+    for _ in range(30):
+        if not worker_pid(): break
+        time.sleep(0.1)
+    j = rj(os.path.join(RUN, "job.json"), {}) or {}
+    job_set(**dict({k: v for k, v in j.items() if k != "t"}, state="paused"))
+    return {"ok": True}
+
+
+def cmd_resume():
+    try: os.unlink(os.path.join(RUN, "paused"))
+    except OSError: pass
+    start_worker(); return {"ok": True}
+
+
+def cmd_cancel(pid):
+    if not ID.match(pid): raise Fail("bad_id", "That isn't a map name.")
+    head = (queue_get() or [None])[0]
+    if head == pid and worker_pid():
+        os.kill(worker_pid(), signal.SIGTERM)
+        for _ in range(30):
+            if not worker_pid(): break
+            time.sleep(0.1)
+    l = lock("queue.lock")
+    try: queue_set([x for x in queue_get() if x != pid])
+    finally: os.close(l)
+    for ext in (".pmtiles.part", ".part.pmtiles"):
+        try: os.unlink(os.path.join(PACKS, pid + ext))
+        except OSError: pass
+    job_set(state="idle")
+    if queue_get() and not os.path.exists(os.path.join(RUN, "paused")): start_worker()
+    return {"ok": True}
+
+
+def cmd_delete(pid):
+    if not ID.match(pid) or pid == "la": raise Fail("bad_id", "The built-in Los Angeles map can't be deleted.")
+    gone = False
+    for ext in (".pmtiles", ".json", ".pmtiles.part", ".part.pmtiles"):
+        try: os.unlink(os.path.join(PACKS, pid + ext)); gone = True
+        except OSError: pass
+    if not gone: raise Fail("unknown", "That map isn't on this box.")
+    return {"ok": True, "free": free_bytes()}
+
+
+def cmd_status():
+    j = rj(os.path.join(RUN, "job.json"), {}) or {}
+    if j.get("state") in ("downloading", "checking", "retrying") and not worker_pid():
+        j["state"] = "paused"
+    if os.path.exists(os.path.join(RUN, "paused")) and j.get("state") not in ("failed",): j["state"] = "paused"
+    la = os.path.join(MAPS, "la.pmtiles")
+    used = sum(i["bytes"] for i in installed()) + (os.path.getsize(la) if os.path.isfile(la) else 0)
+    parts = {f[:-13]: os.path.getsize(os.path.join(PACKS, f)) for f in (os.listdir(PACKS) if os.path.isdir(PACKS) else []) if f.endswith(".pmtiles.part")}
+    return {"ok": True, "content_url": content_url(), "packs": installed(), "builtin_bytes": os.path.getsize(la) if os.path.isfile(la) else 0,
+            "maps_bytes": used, "free": free_bytes(), "disk_total": shutil.disk_usage(MAPS).total, "reserve": RESERVE, "queue": queue_get(), "job": j, "partial": parts,
+            "worker": bool(worker_pid()), "bank": bank_meta(), "net": net_state()}
+
+
+# ---------------------------------------------------------------- station bank
+def bank_meta(path=BANK):
+    try:
+        c = sqlite3.connect("file:%s?mode=ro" % path, uri=True)
+        m = dict(c.execute("select k, v from meta").fetchall())
+        m["fm"] = c.execute("select count(*) from fm").fetchone()[0]
+        m["airports"] = c.execute("select count(*) from airport").fetchone()[0]
+        c.close(); return m
+    except Exception: return None
+
+
+def bank_install(gz, origin):
+    os.makedirs(BANK_DIR, exist_ok=True)
+    tmp = BANK + ".new"
+    with gzip.open(gz, "rb") as s, open(tmp, "wb") as d: shutil.copyfileobj(s, d)
+    m = bank_meta(tmp)
+    if not m or m.get("fm", 0) < 5000 or m.get("airports", 0) < 3000:
+        os.unlink(tmp); raise Fail("bad_bank", "That station bank looks incomplete, so the old one was kept.")
+    os.chmod(tmp, 0o644); os.replace(tmp, BANK)
+    wj(os.path.join(BANK_DIR, "source.json"), {"origin": origin, "installed": time.strftime("%Y-%m-%d %H:%M")})
+    return m
+
+
+def cmd_bank_local(path):
+    cur = bank_meta()
+    new_cycle = None
+    try:
+        with gzip.open(path, "rb") as s, tempfile.NamedTemporaryFile(delete=False) as d: shutil.copyfileobj(s, d); t = d.name
+        new_cycle = (bank_meta(t) or {}).get("nasr_cycle"); os.unlink(t)
+    except OSError: pass
+    if cur and new_cycle and cur.get("nasr_cycle", "") >= new_cycle:
+        return {"ok": True, "message": "Station bank already current (%s)." % cur.get("nasr_cycle"), "bank": cur}
+    return {"ok": True, "bank": bank_install(path, "bundled")}
+
+
+def cmd_bank_update():
+    base = content_url()
+    if not base: raise Fail("no_url", "No content source is set. Add one under More › Download maps.")
+    raw = fetch(base + "bank/stations.json", 65536); sig = fetch(base + "bank/stations.json.sig", 4096)
+    if not verify_bytes(raw, sig): raise Fail("bad_signature", "The station bank isn't signed by Stillwave, so it was ignored.")
+    m = json.loads(raw); cur = bank_meta() or {}
+    if cur.get("nasr_cycle", "") >= m.get("cycle", "") and cur.get("fcc_pulled", "") >= m.get("fcc_pulled", ""):
+        return {"ok": True, "updated": False, "message": "Station bank is up to date (FAA cycle %s)." % cur.get("nasr_cycle"), "bank": cur}
+    if int(m.get("bytes", 0)) > 64 * 1024 * 1024: raise Fail("too_big", "The station bank is too large.")
+    with tempfile.NamedTemporaryFile(delete=False, dir=STATE if os.path.isdir(STATE) else None, suffix=".gz") as f:
+        f.write(fetch(urllib.parse.urljoin(base + "bank/", m["file"]), int(m["bytes"]), timeout=120)); p = f.name
+    try:
+        if sha256_file(p) != m["sha256"]: raise Fail("bad_hash", "The station bank download was damaged. Try again.")
+        b = bank_install(p, base)
+    finally: os.unlink(p)
+    return {"ok": True, "updated": True, "message": "Station bank updated (FAA cycle %s)." % b.get("nasr_cycle"), "bank": b}
+
+
+def main(argv):
+    args = [a for a in argv if a != "--json"]
+    cmd = args[0] if args else "help"; rest = args[1:]
+    try:
+        if cmd == "status": return out(cmd_status()) or 0
+        if cmd == "get-url": return out({"content_url": content_url()}, content_url()) or 0
+        if os.geteuid() != 0 and not E("SDR_CONTENT_NOROOT"): raise Fail("root", "run with sudo")
+        if cmd == "set-url":
+            u = updater(); v = u.normalize_url(" ".join(rest))
+            if v and not u.valid_url(v): raise Fail("bad_url", "That isn't a valid http:// or https:// address.", v)
+            u.CONF = CONF; u.write_conf_key("CONTENT_URL", v)
+            return out({"ok": True, "content_url": v}) or 0
+        if cmd == "catalog": return out(dict(get_catalog(), ok=True)) or 0
+        if cmd == "download": return out(cmd_download(rest[0] if rest else "")) or 0
+        if cmd == "pause": return out(cmd_pause()) or 0
+        if cmd == "resume": return out(cmd_resume()) or 0
+        if cmd == "cancel": return out(cmd_cancel(rest[0] if rest else "")) or 0
+        if cmd == "delete": return out(cmd_delete(rest[0] if rest else "")) or 0
+        if cmd == "bank-update": return out(cmd_bank_update()) or 0
+        if cmd == "bank-install-local": return out(cmd_bank_local(rest[0])) or 0
+        if cmd == "worker": return cmd_worker()
+        print(__doc__); return 2
+    except Fail as e:
+        out({"ok": False, "reason": e.reason, "error": e.message, "detail": e.detail}, "ERROR: " + e.message); return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

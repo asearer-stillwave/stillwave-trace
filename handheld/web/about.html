@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en" style="background:#000;color-scheme:dark">
+<head>
+<style id="noflash">html,body{background:#000}</style>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f0c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trace">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Stillwave Trace · About</title>
+<link rel="icon" type="image/png" href="/img/trace-icon-192.png">
+<link rel="stylesheet" href="/fieldnote.css">
+</head>
+<body class="page-about">
+<script src="/nav.js"></script>
+<div class="wrap">
+  <div class="pre-back-h nav-back"><a class="btn sm fm-edit" href="/settings" aria-label="Back to Settings"><span aria-hidden="true">‹</span> Settings</a></div>
+  <div class="brand"><h1>About <span class="acc">&amp; licenses</span></h1></div>
+  <p class="lead">Stillwave Trace <span id="aVer">—</span>. Everything below works with no internet.</p>
+  <div class="card about-list">
+    <h2>Aircraft models</h2>
+    <p class="note" id="acStat">Looking…</p>
+    <p class="note">Aircraft data: Mictronics aircraft database, licensed under the Open Data Commons Attribution License (ODC-By 1.0), via github.com/wiedehopf/tar1090-db. Maps an aircraft's ICAO address to its registration and model. Models can be missing or out of date; the map then shows "Unknown type".</p>
+    <div class="row"><button type="button" id="acUpd">Update aircraft database</button></div>
+    <p class="note" id="acMsg">Needs internet (home Wi‑Fi), about 8 MB. Nothing is sent about you or the aircraft you see.</p>
+  </div>
+  <div class="card about-list">
+    <h2>Map</h2>
+    <p class="note">Map data © OpenStreetMap contributors, Open Database License (ODbL) 1.0. Basemap tiles: Protomaps (BSD-3 / CC0 basemap styles). Map library: MapLibre GL JS (BSD-3-Clause). PMTiles (BSD-3-Clause). Fonts: Noto Sans (SIL OFL 1.1). Icons: Tangrams (MIT). Full texts: /maplib/licenses/.</p>
+  </div>
+  <div class="card about-list">
+    <h2>Station bank</h2>
+    <p class="note" id="sbStat">Looking…</p>
+    <p class="note">FM stations: U.S. Federal Communications Commission (FCC) licensing data. Airband and airports: U.S. Federal Aviation Administration (FAA) NASR 28-day subscription, including runway headings. ZIP code positions: U.S. Census Bureau. U.S. government works, public domain. <b>Receive only, not for navigation.</b> Frequencies change; the FAA publishes a new cycle every 28 days.</p>
+    <div class="row"><button type="button" id="sbUpd">Update station bank</button></div>
+    <p class="note" id="sbMsg">Needs internet and a content source (Settings › Download maps), about 2 MB. Checked against the Stillwave signature.</p>
+  </div>
+  <div class="card about-list">
+    <h2>Radio frequencies</h2>
+    <p class="note">Built-in LAX airband presets: FAA Chart Supplement data (via AOPA and airnav.com), checked October 2026. Other airports come from the station bank above. Receive only, not for navigation.</p>
+  </div>
+</div>
+<script src="/mode.js"></script>
+<script src="/power.js"></script>
+<script src="/screen.js"></script>
+<script src="/kbd.js"></script>
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  fetch('/api/version').then(r => r.json()).then(j => { $('aVer').textContent = j.version + ' (' + j.edition + ')'; }).catch(() => {});
+  async function stat(){
+    try{ const j = await (await fetch('/api/aircraft-db', {cache:'no-store'})).json();
+      $('acStat').textContent = j.installed ? (Number(j.rows).toLocaleString() + ' aircraft · data from ' + (j.data_date || '?') + (j.source && j.source !== 'bundled' ? ' (downloaded)' : ' (built in)')) : 'Not installed yet. It is built when the package installs.';
+    }catch(e){ $('acStat').textContent = 'Could not read the aircraft database.'; }
+  }
+  $('acUpd').onclick = async () => {
+    $('acUpd').disabled = true; $('acMsg').textContent = 'Downloading and checking… (up to a minute)';
+    try{ const r = await fetch('/api/aircraft-db/update', {method:'POST'}); const j = await r.json(); $('acMsg').textContent = j.message || j.error || (r.ok ? 'Updated.' : 'Failed.'); }
+    catch(e){ $('acMsg').textContent = e.message; }
+    $('acUpd').disabled = false; stat();
+  };
+  stat();
+  async function sb(){
+    try{ const j = await (await fetch('/api/bank/meta', {cache:'no-store'})).json();
+      $('sbStat').textContent = j.ok === false ? (j.error || 'Not installed.') : (Number(j.counts.fm).toLocaleString() + ' FM stations · ' + Number(j.counts.airport).toLocaleString() + ' airports · FAA cycle ' + j.nasr_cycle + ' (next ' + j.nasr_next + ') · FCC ' + j.fcc_pulled);
+    }catch(e){ $('sbStat').textContent = 'Could not read the station bank.'; }
+  }
+  $('sbUpd').onclick = async () => {
+    $('sbUpd').disabled = true; $('sbMsg').textContent = 'Checking for a newer station bank…';
+    try{ const r = await fetch('/api/bank/update', {method:'POST'}); const j = await r.json(); $('sbMsg').textContent = j.message || j.error || (r.ok ? 'Updated.' : 'Failed.'); }
+    catch(e){ $('sbMsg').textContent = e.message; }
+    $('sbUpd').disabled = false; sb();
+  };
+  sb();
+})();
+</script>
+</body>
+</html>

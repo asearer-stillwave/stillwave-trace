@@ -1,8 +1,8 @@
 [Unit]
 Description=ADS-B aircraft decoder (readsb / dump1090) -> /run/sdr-adsb/aircraft.json
-After=network.target sdr-fm.service sdr-spectrum.service sdr-detect.service
-# One dongle: starting ADS-B stops FM / spectrum / detect (see sdr-mode)
-Conflicts=sdr-fm.service sdr-spectrum.service sdr-detect.service
+After=network.target sdr-fm.service sdr-spectrum.service
+# One dongle: starting ADS-B stops FM / spectrum (see sdr-mode)
+Conflicts=sdr-fm.service sdr-spectrum.service
 
 [Service]
 Type=simple

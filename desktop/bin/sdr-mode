@@ -3,25 +3,25 @@
 # There is one RTL-SDR, so only one of these units may run at a time:
 #   fm       -> sdr-fm.service        (rtl_fm -> Icecast stream)
 #   spectrum -> sdr-spectrum.service  (live spectrum + waterfall)
-#   detect   -> sdr-detect.service    (RF detection sweep)
+#   (1.3.2: detect / Scan was removed; a saved MODE=detect or BOOT_MODE=detect falls back to spectrum)
 #   adsb     -> sdr-adsb.service      (ADS-B aircraft decoder)
 # The units also declare Conflicts= on each other, so a plain "systemctl start sdr-fm"
 # (station buttons, tune, presets) still kicks out whatever held the dongle.
 # Last chosen mode is stored as MODE=... in /etc/sdr/mode.env and restored on boot (default fm).
 # 1.0.9: "off" stops every SDR service and releases the dongle (SDR_OFF=1, safe to swap the antenna; stays off across a
 # reboot); "on" resumes the last mode. Dual dongle (sdr-dongles): with STILLWAVE-ADSB + STILLWAVE-RADIO plugged in, the
-# map runs full time on its own dongle (sdr-adsb-dual.service, no Conflicts=) and fm/spectrum/detect use the radio dongle.
+# map runs full time on its own dongle (sdr-adsb-dual.service, no Conflicts=) and fm/spectrum use the radio dongle.
 set -u
 DONGLES="${SDR_DONGLES_BIN:-/usr/local/sbin/sdr-dongles}"
 DONGLES_ENV="${SDR_DONGLES_ENV:-/etc/sdr/dongles.env}"
 
 STATE="${SDR_MODE_FILE:-/etc/sdr/mode.env}"
 ADSB_RUN="${SDR_ADSB_RUN:-/usr/local/lib/sdr-station/bin/adsb_run.sh}"
-MODES="fm spectrum detect adsb"
+MODES="fm spectrum adsb"
 
 valid() {
   case "${1:-}" in
-    fm|spectrum|detect|adsb) return 0 ;;
+    fm|spectrum|adsb) return 0 ;;
   esac
   return 1
 }
@@ -29,6 +29,7 @@ valid() {
 saved_mode() {
   local m
   m="$(awk -F= '$1=="MODE"{print $2; exit}' "$STATE" 2>/dev/null || true)"
+  [[ "$m" == detect ]] && m=spectrum   # 1.3.2: Scan removed
   if valid "$m"; then echo "$m"; else echo fm; fi
 }
 
@@ -99,7 +100,7 @@ status_json() {
   systemctl is-active --quiet sdr-adsb-dual.service 2>/dev/null && live=true
   [[ "$active" == adsb ]] && live=true
   n="$(dongle_count)"
-  printf '{"ok":true,"mode":"%s","saved":"%s","units":{%s},"adsb_decoder":"%s","adsb_available":%s,"modes":["fm","spectrum","detect","adsb"],"off":%s,"resume":"%s","dual":%s,"adsb_live":%s,"dongles":%s}\n' \
+  printf '{"ok":true,"mode":"%s","saved":"%s","units":{%s},"adsb_decoder":"%s","adsb_available":%s,"modes":["fm","spectrum","adsb"],"off":%s,"resume":"%s","dual":%s,"adsb_live":%s,"dongles":%s}\n' \
     "$active" "$saved" "$units" "$dec" "$([[ -n "$dec" ]] && echo true || echo false)" "$off" "$(getkey OFF_RESUME)" "$dual" "$live" "$n"
 }
 
@@ -142,9 +143,10 @@ case "$ACTION" in
     ;;
   set)
     M="${2:-}"
-    valid "$M" || { echo "unknown mode '${M}'. Use: fm, spectrum, detect, adsb" >&2; exit 2; }
+    [[ "$M" == detect ]] && M=spectrum   # 1.3.2: Scan removed (old clients / saved resume)
+    valid "$M" || { echo "unknown mode '${M}'. Use: fm, spectrum, adsb" >&2; exit 2; }
     if [[ "$M" == "adsb" && -z "$(adsb_decoder)" ]]; then
-      echo "No ADS-B decoder installed (readsb or dump1090-mutability). Re-run install.sh with internet, or: sudo apt-get install --no-install-recommends dump1090-mutability" >&2
+      echo "No ADS-B decoder that can drive the RTL-SDR (readsb built with rtlsdr, or dump1090). Fix (needs internet once): sudo sdr-adsb-fix" >&2
       exit 3
     fi
     is_off && { setkey SDR_OFF ""; setkey OFF_RESUME ""; }
@@ -189,7 +191,7 @@ case "$ACTION" in
     refresh_dongles
     if is_off; then echo "sdr-mode boot: SDR is OFF (turn it on from More > SDR power or: sudo sdr-mode on)"; exit 0; fi
     # 1.2.0: boot default is IDLE: nothing tunes and no decoder starts; the UI opens on Map/ADS-B with a START button.
-    # BOOT_MODE=saved in mode.env restores the last mode, BOOT_MODE=fm|spectrum|detect|adsb always starts that one.
+    # BOOT_MODE=saved in mode.env restores the last mode, BOOT_MODE=fm|spectrum|adsb always starts that one.
     B="$(awk -F= '$1=="BOOT_MODE"{print $2; exit}' "$STATE" 2>/dev/null || true)"
     if [[ -z "$B" || "$B" == idle ]]; then mark adsb; echo "sdr-mode boot: idle (tap START on the Map tab)"; exit 0; fi
     if [[ "$B" == saved ]]; then M="$(saved_mode)"; elif valid "$B"; then M="$B"; else M=spectrum; fi
@@ -220,7 +222,7 @@ case "$ACTION" in
     echo "stopped all dongle users"
     ;;
   *)
-    echo "usage: sdr-mode status|set fm|spectrum|detect|adsb|off|on|boot|restart|stop-all|current|mark MODE" >&2
+    echo "usage: sdr-mode status|set fm|spectrum|adsb|off|on|boot|restart|stop-all|current|mark MODE" >&2
     exit 2
     ;;
 esac

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Stillwave Trace 1.2.8: make sure the ADS-B decoder can actually drive an RTL-SDR dongle.
+#   sudo sdr-adsb-fix            check; if no rtlsdr-capable decoder is installed, build readsb (pinned) into /usr/local/bin
+#   sdr-adsb-fix --check         only check (exit 0 = a capable decoder exists, 1 = none); no root needed
+#   sdr-adsb-fix --has-rtlsdr B  exit 0 if decoder binary B supports rtlsdr
+# Why: Raspberry Pi OS's readsb package (3.14.1630+git20240609) is built WITHOUT rtlsdr ("Unknown device type: rtlsdr"),
+# so sdr-adsb restart-loops and the Map flips back to FM. dump1090-mutability has no install candidate there.
+# readsb (wiedehopf) is GPL-3.0-or-later; we build the unmodified upstream source and only install the binary
+# (readsb's own systemd service is never installed). Needs internet once.
+set -u
+READSB_REPO="${SDR_READSB_REPO:-https://github.com/wiedehopf/readsb.git}"
+READSB_TAG="${SDR_READSB_TAG:-v3.16.18}"
+READSB_COMMIT="${SDR_READSB_COMMIT:-9460652952a62fcfd9bf11a2664d737147f266a5}"
+PREFIX="${SDR_ADSB_PREFIX:-/usr/local/bin}"
+SEARCH_PATH="${SDR_ADSB_SEARCH:-/usr/local/bin:/usr/bin:/usr/sbin:/usr/local/sbin:${PATH:-}}"
+
+has_rtlsdr() {   # $1 = decoder binary
+  local b="$1" n out
+  [[ -x "$b" ]] || return 1
+  n="$(basename "$b")"
+  case "$n" in
+    readsb*)
+      # an rtlsdr build prints "Build options: ENABLE_RTLSDR" and the rtlsdr option block; a build without it mentions rtlsdr nowhere
+      out="$("$b" --help 2>&1 | head -c 200000)"
+      grep -qi 'rtlsdr' <<<"$out" ;;
+    dump1090*) return 0 ;;   # dump1090-fa / -mutability / dump1090 always drive RTL-SDR
+    *) return 1 ;;
+  esac
+}
+capable() {   # print the first rtlsdr-capable decoder (search order: /usr/local/bin first)
+  local d c
+  IFS=: read -ra DIRS <<<"$SEARCH_PATH"
+  for c in readsb dump1090-fa dump1090-mutability dump1090; do
+    for d in "${DIRS[@]}"; do
+      if [[ -x "$d/$c" ]] && has_rtlsdr "$d/$c"; then echo "$d/$c"; return 0; fi
+    done
+  done
+  return 1
+}
+build_readsb() {
+  echo "Building readsb $READSB_TAG ($READSB_COMMIT) with RTLSDR=yes (a few minutes on a Pi 5, longer on a Pi 4)..."
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git build-essential pkg-config librtlsdr-dev libncurses-dev zlib1g-dev libzstd-dev || return 1
+  local t; t="$(mktemp -d /tmp/readsb-build.XXXXXX)"
+  ( set -e; cd "$t"
+    git init -q src && cd src
+    git remote add origin "$READSB_REPO"
+    git fetch -q --depth 1 origin "$READSB_COMMIT" 2>/dev/null || git fetch -q --depth 1 origin "refs/tags/$READSB_TAG"
+    git checkout -q FETCH_HEAD
+    got="$(git rev-parse HEAD)"; [[ "$got" == "$READSB_COMMIT" ]] || { echo "readsb source is $got, expected $READSB_COMMIT" >&2; exit 1; }
+    make -j"$(nproc 2>/dev/null || echo 2)" RTLSDR=yes >/tmp/readsb-build.log 2>&1 || { tail -20 /tmp/readsb-build.log >&2; exit 1; }
+    install -m 755 readsb "$PREFIX/readsb"
+    install -d /usr/local/share/doc/readsb; install -m 644 COPYING LICENSE /usr/local/share/doc/readsb/ 2>/dev/null || true
+    echo "$READSB_REPO $READSB_TAG $READSB_COMMIT (built $(date -u +%FT%TZ), RTLSDR=yes)" >/usr/local/share/doc/readsb/SOURCE.txt
+  ) ; local rc=$?; rm -rf "$t"; return $rc
+}
+
+case "${1:-}" in
+  --has-rtlsdr) has_rtlsdr "${2:?decoder path}"; exit $? ;;
+  --check) if b="$(capable)"; then echo "ADS-B decoder OK: $b (rtlsdr)"; exit 0; fi
+           echo "No rtlsdr-capable ADS-B decoder. Fix: sudo sdr-adsb-fix (needs internet once)"; exit 1 ;;
+  ""|--build) ;;
+  -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+  *) echo "unknown option: $1" >&2; exit 2 ;;
+esac
+if [[ "${1:-}" != --build ]] && b="$(capable)"; then echo "ADS-B decoder OK: $b (rtlsdr)"; exit 0; fi
+[[ ${EUID} -eq 0 ]] || { echo "Run: sudo sdr-adsb-fix" >&2; exit 1; }
+build_readsb || { echo "WARNING: could not build readsb (internet? see /tmp/readsb-build.log). ADS-B stays off; FM and Spectrum still work." >&2; exit 1; }
+systemctl disable --now readsb.service >/dev/null 2>&1 || true; systemctl mask readsb.service >/dev/null 2>&1 || true
+if b="$(capable)"; then echo "ADS-B decoder OK: $b (rtlsdr)"; exit 0; fi
+echo "WARNING: readsb built but does not report rtlsdr support" >&2; exit 1

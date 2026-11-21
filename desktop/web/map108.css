@@ -52,7 +52,7 @@ html.m108 .acard #aClose { width: 36px; padding: 0; }
 html.m108 .acard #aFollow.on, html.m108 .acard #aFollow[aria-pressed="true"] { background: var(--signal); color: #0b0f0c; box-shadow: 0 0 10px rgba(74, 222, 128, .55); }
 html.m108 .acard .agrid { display: grid; grid-template-columns: 1fr 1fr 1fr 1.3fr; gap: 4px 8px; margin: 0; }
 html.m108 .acard .agrid > div { min-width: 0; padding: 0; background: none; border: 0; }
-html.m108 .acard .agrid > div:nth-child(5) { display: none; }   /* hex is already in the title */
+html.m108 .acard:not(.bcard) .agrid > div:nth-child(5) { display: none; }   /* hex is already in the title */
 html.m108 .acard dt { font: 600 9.5px var(--mono, monospace); letter-spacing: .12em; text-transform: uppercase; color: rgba(163, 181, 169, .9); margin: 0; }
 html.m108 .acard dd { font: 700 13.5px var(--mono, monospace); color: #e7f5ec; margin: 0; white-space: nowrap; overflow: visible; text-shadow: 0 1px 2px #000; }
 @media (max-width: 480px) { html.m108 .acard dd { font-size: 12.5px; letter-spacing: -.01em; } html.m108 .acard .agrid { gap: 4px 6px; } }
@@ -69,3 +69,167 @@ html.m108 .acard { bottom: 132px; }
 html.kiosk .m-gain .m-gstep { min-width: 60px; min-height: 60px; font-size: 26px; }
 html.kiosk .m-gain { bottom: 70px; } html.kiosk.m108 .acard { bottom: 150px; }
 @media (max-width: 430px) { .m-gain .m-gk { display: none; } .m-gain .m-gv { min-width: 6em; } }
+
+/* ======================= Stillwave Trace 1.2.5: dual SDR on the map (listen strip, quick tune, airport focus, degraded notice) ======================= */
+:root { --ls-h: 64px; }
+html.kiosk { --ls-h: 76px; }
+/* stack: listen strip at the bottom, altitude legend + gain + follow card move up */
+html.dual .m-leg { bottom: calc(12px + var(--ls-h) + 8px); }
+html.dual .m-gain { bottom: calc(64px + var(--ls-h) + 8px); }
+html.kiosk.dual .m-gain { bottom: calc(70px + var(--ls-h) + 8px); }
+html.dual .maplibregl-ctrl-bottom-left, html.dual .maplibregl-ctrl-bottom-right { bottom: calc(52px + var(--ls-h) + 8px) !important; }
+html.dual.m108 .acard { bottom: calc(150px + var(--ls-h)); }
+.ls { position: absolute; z-index: 9; left: 12px; right: 12px; bottom: 12px; min-height: var(--ls-h); display: flex; align-items: center; gap: 12px;
+  padding: 8px 10px 8px 14px; border-radius: 16px; background: rgba(11, 15, 12, .86); border: 1px solid rgba(74, 222, 128, .38);
+  box-shadow: 0 0 14px rgba(74, 222, 128, .22); backdrop-filter: blur(6px); font-family: var(--mono); color: var(--paper); box-sizing: border-box; }
+.ls .ls-ico { flex: 0 0 auto; width: 26px; height: 26px; color: var(--signal); }
+.ls .ls-ico svg { width: 100%; height: 100%; }
+.ls .ls-id { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ls .ls-n { font-weight: 700; font-size: 14px; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ls .ls-f { font-size: 12px; letter-spacing: .08em; color: var(--static); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ls .ls-m { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 3px; height: 22px; }
+.ls .ls-m i { display: block; width: 5px; border-radius: 2px; background: rgba(163, 181, 169, .28); }
+.ls .ls-m i.on { background: var(--signal); box-shadow: 0 0 6px rgba(74, 222, 128, .6); }
+.ls .ls-sq { flex: 0 0 auto; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; padding: 6px 10px; border-radius: 999px;
+  border: 1px solid rgba(163, 181, 169, .35); color: var(--static); white-space: nowrap; }
+.ls .ls-go { flex: 0 0 auto; min-width: 48px; min-height: 48px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(74, 222, 128, .38); background: transparent; color: var(--signal); font-size: 20px; padding: 0; }
+.ls.talk { border-color: var(--signal); box-shadow: 0 0 0 3px rgba(74, 222, 128, .25), 0 0 26px rgba(74, 222, 128, .55); animation: lsPulse 1.2s ease-in-out infinite; }
+.ls.talk .ls-sq { background: var(--signal); color: var(--night); border-color: var(--signal); }
+@keyframes lsPulse { 50% { box-shadow: 0 0 0 6px rgba(74, 222, 128, .12), 0 0 34px rgba(74, 222, 128, .7); } }
+.ls.bad { border-color: #f5a524; box-shadow: 0 0 14px rgba(245, 165, 36, .3); }
+.ls.bad .ls-ico, .ls.bad .ls-n { color: #f5a524; }
+.ls.bad .ls-go { width: auto; padding: 0 14px; font-size: 12px; font-weight: 700; letter-spacing: .12em; border-color: #f5a524; color: #f5a524; text-transform: uppercase; white-space: nowrap; }
+html.kiosk .ls .ls-n { font-size: 15px; } html.kiosk .ls .ls-go { min-width: 56px; min-height: 56px; }
+/* quick frequency picker: sheet above the strip, map stays visible */
+.lsp { position: absolute; z-index: 10; left: 12px; right: 12px; bottom: calc(12px + var(--ls-h) + 8px); padding: 12px; border-radius: 16px;
+  background: rgba(11, 15, 12, .94); border: 1px solid var(--signal); box-shadow: 0 0 22px rgba(74, 222, 128, .35); font-family: var(--mono); max-width: 680px; margin: 0 auto; box-sizing: border-box; }
+.lsp .lsp-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; letter-spacing: .14em; color: var(--static); margin-bottom: 10px; text-transform: uppercase; }
+.lsp .lsp-h b { color: var(--signal); }
+.lsp .lsp-g { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.lsp .lsp-g button { min-height: 56px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px; padding: 6px 12px; border-radius: 12px;
+  border: 1px solid rgba(74, 222, 128, .3); background: rgba(20, 28, 23, .9); color: var(--paper); text-align: left; font-family: var(--mono); text-transform: none; letter-spacing: 0; }
+.lsp .lsp-g button b { font-size: 14px; letter-spacing: .04em; }
+.lsp .lsp-g button span { font-size: 11px; letter-spacing: .1em; color: var(--static); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.lsp .lsp-g button.on { border-color: var(--signal); background: rgba(74, 222, 128, .16); }
+.lsp .lsp-g button.on b { color: var(--signal); }
+/* airport focus chooser */
+.apf { position: absolute; z-index: 9; left: 12px; right: 12px; bottom: calc(12px + var(--ls-h) + 8px); padding: 10px 12px; border-radius: 16px; max-width: 680px; margin: 0 auto; box-sizing: border-box;
+  background: rgba(11, 15, 12, .9); border: 1px solid rgba(74, 222, 128, .5); font-family: var(--mono); }
+.apf .apf-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.apf .apf-h b { font-size: 14px; letter-spacing: .12em; color: var(--signal); white-space: nowrap; }
+.apf .apf-h span { font-size: 11px; letter-spacing: .1em; color: var(--static); text-transform: uppercase; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apf .m-seg { display: flex; width: 100%; box-sizing: border-box; }
+.apf .m-seg .m-pill { flex: 1; justify-content: center; }
+html.dual.apfocus .m-leg { bottom: calc(12px + var(--ls-h) + 8px + var(--apf-h, 110px) + 8px); }
+html.dual.apfocus .m-gain { display: none; }
+html.dual.apfocus .maplibregl-ctrl-bottom-left, html.dual.apfocus .maplibregl-ctrl-bottom-right { bottom: calc(52px + var(--ls-h) + 16px + var(--apf-h, 110px)) !important; }
+html.dual.picker .m-leg, html.dual.picker .m-gain, html.dual.picker .maplibregl-ctrl-bottom-left, html.dual.picker .maplibregl-ctrl-bottom-right { display: none; }
+.exdata-unused { position: absolute; z-index: 7; left: 12px; top: 72px; font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: .14em; color: #f5a524;
+  background: rgba(11, 15, 12, .85); border: 1px dashed #f5a524; border-radius: 8px; padding: 6px 10px; text-transform: uppercase; }
+html.kiosk .exdata-unused { top: 84px; }
+/* degraded notice on the map */
+.dgn { position: absolute; z-index: 7; left: 12px; top: 116px; max-width: 60%; font-family: var(--mono); font-size: 12px; letter-spacing: .06em; color: var(--paper);
+  background: rgba(11, 15, 12, .88); border: 1px solid #f5a524; border-radius: 12px; padding: 8px 12px; line-height: 1.35; }
+.dgn b { color: #f5a524; letter-spacing: .12em; text-transform: uppercase; }
+html.kiosk .dgn { top: 132px; }
+
+.ls.hide, .lsp.hide, .apf.hide, .dgn.hide, .apx.hide, .apn.hide, .m-pill.hide { display: none !important; }
+.ls .ls-f.err { color: #f5a524; }
+.ls-m.hide, .ls-sq.hide { display: none !important; }
+.lsp .lsp-tabs { display: flex; width: 100%; box-sizing: border-box; margin-bottom: 10px; }
+.lsp .lsp-tabs .m-pill { flex: 1; justify-content: center; }
+.lsp .lsp-sq { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 11px; letter-spacing: .14em; color: var(--static); text-transform: uppercase; }
+.lsp .lsp-n { margin: 8px 0 0; font-size: 11px; color: var(--static); letter-spacing: .04em; }
+.apx { left: 12px; top: 72px; } html.kiosk .apx { top: 84px; }
+.apn { position: absolute; z-index: 7; right: 12px; top: 72px; cursor: default; } html.kiosk .apn { top: 84px; }
+.apn .d { width: 9px; height: 9px; border-radius: 50%; border: 2px solid #f5a524; }
+.dgn { top: 72px; } html.kiosk .dgn { top: 84px; }
+/* short screens (desktop 1280x720): altitude key folds away, gain sits right on the strip, side pills hide while a sheet is open */
+@media (max-height: 800px) {
+  html.dual .m-leg { display: none; }
+  html.dual .m-gain, html.kiosk.dual .m-gain { bottom: calc(12px + var(--ls-h) + 8px); }
+  html.dual .maplibregl-ctrl-bottom-left, html.dual .maplibregl-ctrl-bottom-right { bottom: calc(12px + var(--ls-h) + 8px) !important; }
+  html.dual.m108 .acard, html.kiosk.dual.m108 .acard { bottom: calc(12px + var(--ls-h) + 8px); }
+  html.dual.cardopen .m-gain { display: none; }
+  html.dual.apfocus .maplibregl-ctrl-bottom-left, html.dual.apfocus .maplibregl-ctrl-bottom-right { display: none; }
+}
+html.dual.picker .m-r, html.dual.apfocus .m-r { display: none; }
+
+/* aircraft model line in the follow card (1.2.5) */
+html.m108 .acard .amodel { font: 600 12px/1.2 var(--mono, monospace); letter-spacing: .05em; color: rgba(163, 181, 169, .95); margin: -2px 0 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px #000; }
+html.m108 .acard .amodel .mdl { color: #e7f5ec; }
+html.m108 .acard .amodel .mdl.unk { color: rgba(163, 181, 169, .7); font-style: italic; }
+html.kiosk.m108 .acard .amodel { font-size: 13px; }
+html.apfocus-any .m-r { display: none; }
+
+/* 1.2.5: an open aircraft card never sits on top of gain / side buttons (dual strip leaves less room) */
+html.m108 .acard:not(.hide) { background: rgba(11, 15, 12, .97); }
+html.m108.cardopen .m-gain { visibility: hidden; }
+@media (max-height: 800px) { html.m108.cardopen .m-r { visibility: hidden; } }
+
+/* 1.3.2 airport button 'ICAO ▾' (follows the map) + nearby list */
+.apb { display: flex; gap: 0; }
+.apb .apb-c { border-top-right-radius: 0; border-bottom-right-radius: 0; padding-right: 8px; }
+.apb .apb-d { border-top-left-radius: 0; border-bottom-left-radius: 0; padding: 0 10px; border-left: 1px solid rgba(8,20,12,.45); }
+.apdd { position: absolute; z-index: 30; min-width: 180px; max-width: 70vw; background: rgba(10,18,14,.96); border: 1px solid #284a35; border-radius: 10px; padding: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+.apdd-h { color: #7a8a80; font-size: .72em; letter-spacing: .12em; text-transform: uppercase; padding: 4px 10px 6px; }
+.apdd button { display: flex; width: 100%; justify-content: space-between; gap: 16px; align-items: center; background: none; border: 1px solid transparent; border-radius: 7px; color: #d7e3dc; padding: 9px 10px; font: inherit; letter-spacing: .06em; min-height: 40px; }
+.apdd button.on { border-color: #4ade80; color: #4ade80; background: rgba(74,222,128,.08); }
+.apdd button small { color: #7a8a80; font-size: .78em; text-transform: uppercase; letter-spacing: .1em; }
+.apdd-e { color: #7a8a80; padding: 8px 10px; font-size: .85em; }
+.lsp-h { align-items: center; }
+.lsp-h .lsp-ap { padding: 4px 12px; min-height: 0; }
+.lsp-none { padding: 6px 2px 4px; }
+/* 1.3.2 desktop XL: the right-hand pill column never runs into the altitude legend (it wraps into a second
+   column to the left), and Quick Tune never grows over the MAP / LIST pill (it scrolls inside instead). */
+.lsp { max-height: calc(100% - 84px - 12px - var(--ls-h, 56px) - 8px); overflow-y: auto; overscroll-behavior: contain; }
+@media (min-width: 700px) and (max-height: 820px) {
+  html[data-ts="xl"] .m-r, html[data-ts="large"] .m-r { bottom: 84px; max-height: calc(100% - 64px - 84px); flex-wrap: wrap-reverse; align-content: flex-start; justify-content: flex-start; }
+  html.kiosk[data-ts="xl"] .m-r, html.kiosk[data-ts="large"] .m-r { max-height: calc(100% - 80px - 84px); }
+}
+.m-tl { max-width: calc(100% - 36px - var(--m-tr-w, 220px)); }
+.m-tl .m-count { min-width: 0; max-width: 100%; }
+.m-tl #mCnt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* 1.3.4: Quick Tune GAIN / SQ chips in the header row (approved mockup v4); a chip opens its row under the presets */
+.lsp .lsp-h .lsp-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lsp .qrow { display: flex; gap: 6px; flex: 0 0 auto; }
+.lsp .qchip b { color: var(--signal); margin: 0 2px; } .lsp .qchip.on b { color: inherit; }
+.lsp .lsp-sq .m-seg { min-width: 62%; } .lsp .lsp-sq .m-seg .m-pill { flex: 1; justify-content: center; }
+/* 1.3.4: one radio set up -> tapping the airport says how to get Quick Tune */
+.qtn { position: absolute; z-index: 11; left: 12px; right: 12px; bottom: 12px; max-width: 680px; margin: 0 auto; box-sizing: border-box; display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; border-radius: 14px; background: rgba(11, 15, 12, .94); border: 1px solid #f5a524; font-family: var(--mono); font-size: 14px; line-height: 1.45; letter-spacing: .06em; color: var(--paper); text-transform: uppercase; }
+.qtn b { color: #f5a524; letter-spacing: .12em; } .qtn span { flex: 1; min-width: 0; } .qtn .m-pill { white-space: nowrap; text-decoration: none; }
+.qtn.hide { display: none; }
+
+/* ---------- 1.3.6 #9: FM towers (towers.js) ---------- */
+.m-pill.tw .ti { width: 14px; height: 14px; display: inline-block; vertical-align: -2px; margin-right: 4px; }
+.m-pill.tw.on { color: #fb7185; border-color: #fb7185; box-shadow: 0 0 16px rgba(251,113,133,.45); }
+/* 1.3.8: solid tower card above the map labels and the ADS-B gain control (was see-through rgba .86, z-index 9) */
+html.m108 .tcard { position: absolute; left: 10px; right: 10px; bottom: 76px; z-index: 12; max-width: 640px; margin: 0 auto;
+  background: #0b0f0c; border: 1px solid #fb7185; border-radius: 14px; padding: 10px 12px 12px; box-shadow: 0 0 0 1px #fb7185, 0 6px 24px rgba(0,0,0,.65), 0 0 14px rgba(251,113,133,.28); font-family: var(--mono); }
+html.m108.tcardopen .m-gain, html.m108.tcardopen .qtn { visibility: hidden; }
+.tcard .th { display: flex; align-items: center; gap: 10px; }
+.tcard .th b { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 700 17px/1.1 var(--mono); letter-spacing: .06em; color: #e7f5ec; text-transform: uppercase; white-space: nowrap; }
+.tcard .th b em { font-style: normal; color: #fb7185; }
+.tcard .th button { flex: 0 0 auto; width: 36px; height: 36px; border-radius: 8px; background: rgba(11,15,12,.7); border: 1px solid #fb7185; color: #fb7185; font: 700 13px var(--mono); }
+.tcard .ts { margin: 4px 0 8px; font-size: 11px; letter-spacing: .12em; color: rgba(163,181,169,.95); text-transform: uppercase; }
+.tcard .tco { display: flex; gap: 6px; overflow: hidden; margin: 0 0 9px; }
+.tcard .tco.all { flex-wrap: wrap; max-height: 40vh; overflow-y: auto; }
+.tcard .tco button { flex: 0 0 auto; height: 40px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(251,113,133,.35); background: rgba(20,28,23,.9);
+  color: #e7f5ec; font: 700 12px var(--mono); letter-spacing: .06em; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; }
+.tcard .tco button small { font-size: 9.5px; letter-spacing: .1em; color: rgba(163,181,169,.9); }
+.tcard .tco button.on { border-color: #fb7185; color: #fb7185; box-shadow: 0 0 10px rgba(251,113,133,.4); }
+.tcard .tco .more { color: rgba(163,181,169,.95); }
+.tcard .agrid { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1.1fr; gap: 4px 8px; margin: 0 0 10px; }
+.tcard dt { font: 600 9.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: rgba(163,181,169,.9); margin: 0; }
+.tcard dd { font: 700 13.5px var(--mono); color: #e7f5ec; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tcard .tgo { display: flex; gap: 8px; align-items: stretch; }
+.tcard .tgo button { flex: 1 1 auto; min-height: 50px; border-radius: 12px; background: var(--signal); color: #06100a; border: 0;
+  font: 800 15px var(--mono); letter-spacing: .12em; text-transform: uppercase; box-shadow: 0 0 14px rgba(74,222,128,.45); }
+.tcard .tgo button.cn { flex: 0 0 auto; padding: 0 16px; background: rgba(20,28,23,.9); color: #e7f5ec; border: 1px solid rgba(163,181,169,.5); box-shadow: none; }
+.tcard .tnote { margin: 8px 0 0; font-size: 11px; line-height: 1.45; letter-spacing: .04em; color: rgba(163,181,169,.95); }
+.tcard .tnote:empty { display: none; }
+.tcard .tnote b { color: var(--signal); }

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Stillwave Trace scope: owns the RTL-SDR for the spectrum/waterfall page or the RF
-detection page and pushes frames to browsers with Server-Sent Events.
+"""Stillwave Trace scope: owns the RTL-SDR for the spectrum/waterfall page and pushes frames to browsers with
+Server-Sent Events.
 
   --mode spectrum  rtl_sdr IQ -> numpy FFT -> waterfall rows (~8/s)
-  --mode detect    rtl_power sweeps (wide ranges) or rtl_sdr FFT (<= 2 MHz)
-                   -> learned noise floor -> signals above threshold
+
+1.3.2: the Scan page's RF detection mode (rtl_power sweeps, noise floor, signal list, HOLD) was removed.
 
 Listens on 127.0.0.1:8081 (nginx proxies /api/scope/). Only one dongle user may
 run at a time; sdr-mode / systemd Conflicts= take care of that.
@@ -26,7 +26,6 @@ import numpy as np
 from flask import Flask, Response, jsonify, request
 
 RTL_SDR = os.environ.get("SDR_RTL_SDR_BIN", "rtl_sdr")
-RTL_POWER = os.environ.get("SDR_RTL_POWER_BIN", "rtl_power")
 # 1.0.9 dual dongle: RADIO_DEVICE (/etc/sdr/dongles.env) = serial label of the radio dongle; empty = the only dongle
 DEV_ARGS = ["-d", os.environ["RADIO_DEVICE"]] if os.environ.get("RADIO_DEVICE") else []
 STATE = Path(os.environ.get("SDR_SCOPE_STATE",
@@ -40,25 +39,9 @@ NFFTS = [512, 1024, 2048]
 GAINS = ["auto", "0", "0.9", "1.4", "2.7", "3.7", "7.7", "8.7", "12.5", "14.4", "15.7", "16.6",
          "19.7", "20.7", "22.9", "25.4", "28.0", "29.7", "32.8", "33.8", "36.4", "37.2", "38.6",
          "40.2", "42.1", "43.4", "43.9", "44.5", "48.0", "49.6"]
-IQ_DETECT_MAX_SPAN = 2.0e6 + 1e3   # narrower detect ranges use the fast IQ path
 DISPLAY_POINTS = 1600
 
-PRESETS = [
-    {"id": "full", "name": "Full range 24–1700 MHz", "start": 24e6, "stop": 1700e6},
-    {"id": "fm", "name": "FM broadcast", "start": 87.5e6, "stop": 108e6},
-    {"id": "air", "name": "Airband", "start": 118e6, "stop": 137e6},
-    {"id": "2m", "name": "2 m ham", "start": 144e6, "stop": 148e6},
-    {"id": "marine", "name": "Marine / NOAA WX", "start": 156e6, "stop": 163e6},
-    {"id": "315", "name": "315 MHz keyfobs / TPMS", "start": 314e6, "stop": 316e6},
-    {"id": "70cm", "name": "70 cm ham", "start": 420e6, "stop": 450e6},
-    {"id": "433", "name": "433 MHz ISM", "start": 433.05e6, "stop": 434.79e6},
-    {"id": "frs", "name": "FRS / GMRS", "start": 462e6, "stop": 468e6},
-    {"id": "cell700", "name": "Cell 700 MHz", "start": 698e6, "stop": 806e6},
-    {"id": "cell850", "name": "Cell 850 MHz", "start": 824e6, "stop": 894e6},
-    {"id": "915", "name": "915 MHz ISM", "start": 902e6, "stop": 928e6},
-    {"id": "adsb", "name": "ADS-B 1090", "start": 1085e6, "stop": 1095e6},
-    {"id": "aws", "name": "AWS uplink 1710 MHz", "start": 1710e6, "stop": 1760e6},
-]
+
 
 
 def fm_ppm():
@@ -74,11 +57,9 @@ def fm_ppm():
 DEFAULTS = {
     "spectrum": {"center_hz": 98.7e6, "span_hz": 2.4e6, "gain": "20.7", "nfft": 1024,
                  "fps": 8, "avg": 32, "ppm": None},
-    "detect": {"start_hz": 24e6, "stop_hz": 1700e6, "bin_hz": 0, "gain": "29.7",
-               "threshold_db": 10.0, "hold_s": 120, "ppm": None, "track_hz": 0},
 }
 # keys that can change without restarting the rtl process
-LIVE_KEYS = {"threshold_db", "hold_s", "track_hz", "fps", "avg"}
+LIVE_KEYS = {"fps", "avg"}
 
 
 def _num(v, lo, hi, default):
@@ -114,16 +95,6 @@ def validate(mode, cfg):
         d["nfft"] = int(_nearest(d["nfft"], NFFTS, 1024))
         d["fps"] = int(_num(d["fps"], 1, 20, 8))
         d["avg"] = int(_num(d["avg"], 1, 128, 32))
-    else:
-        a = _num(d["start_hz"], F_MIN, F_MAX - 0.1e6, 24e6)
-        b = _num(d["stop_hz"], F_MIN + 0.1e6, F_MAX, 1700e6)
-        if b <= a:
-            a, b = min(a, b), max(a, b) + 0.1e6
-        d["start_hz"], d["stop_hz"] = a, min(b, F_MAX)
-        d["bin_hz"] = _num(d["bin_hz"], 0, 1e6, 0)
-        d["threshold_db"] = _num(d["threshold_db"], 2, 60, 10.0)
-        d["hold_s"] = int(_num(d["hold_s"], 5, 3600, 120))
-        d["track_hz"] = _num(d["track_hz"], 0, F_MAX, 0)
     return d
 
 
@@ -134,8 +105,12 @@ def load_cfg(mode):
     try:
         data = json.loads(STATE.read_text())
         d = data.get(mode) or {}
-        if mode == "spectrum" and not BOOT_MARK.exists():   # 1.0.8: first spectrum start after boot opens at 98.7 MHz
-            d = dict(d, center_hz=98.7e6)
+        # 1.3.8: Spectrum remembers its last center, span and gain across reopen AND reboot (1.0.8 re-centered on
+        # 98.7 MHz at the first start after boot). SDR_SCOPE_BOOT_CENTER=98.7 in the unit environment brings that back.
+        boot_c = os.environ.get("SDR_SCOPE_BOOT_CENTER", "").strip()
+        if mode == "spectrum" and boot_c and not BOOT_MARK.exists():
+            try: d = dict(d, center_hz=float(boot_c) * 1e6)
+            except ValueError: pass
             try: BOOT_MARK.touch()
             except OSError: pass
         return validate(mode, d)
@@ -156,13 +131,6 @@ def save_cfg(mode, cfg):
         tmp.replace(STATE)
     except OSError as exc:
         print(f"could not save {STATE}: {exc}", flush=True)
-
-
-def auto_bin(span):
-    for b in (1e3, 2e3, 5e3, 10e3, 12.5e3, 25e3, 50e3, 100e3, 125e3, 250e3, 500e3, 1e6):
-        if span / b <= 4000:
-            return b
-    return 1e6
 
 
 def encode(arr, lo=None, step=None):
@@ -286,119 +254,6 @@ class IQSpectrum:
         return (10.0 * np.log10(p + 1e-20)).astype(np.float32)
 
 
-def local_floor(db):
-    """Noise floor per bin: 25th percentile in blocks, interpolated. Robust to signals."""
-    n = len(db)
-    block = int(max(8, min(256, n // 48)))
-    nb = int(math.ceil(n / block))
-    pad = nb * block - n
-    a = np.concatenate([db, np.full(pad, db[-1], dtype=np.float32)]) if pad else db
-    q = np.percentile(a.reshape(nb, block), 25, axis=1)
-    centers = np.arange(nb) * block + (block - 1) / 2.0
-    return np.interp(np.arange(n), centers, q).astype(np.float32)
-
-
-class Detector:
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.reset()
-
-    def reset(self):
-        with getattr(self, "lock", threading.Lock()):
-            self.floor = None
-            self.sweeps = 0
-            self.hits = []
-
-    def process(self, freqs, db, cfg, bin_hz):
-        with self.lock:
-            return self._process(freqs, db, cfg, bin_hz)
-
-    def _process(self, freqs, db, cfg, bin_hz):
-        now = time.time()
-        db = np.asarray(db, dtype=np.float32)
-        fin = np.isfinite(db)
-        if not fin.all():
-            db = np.where(fin, db, np.min(db[fin]) if fin.any() else -100.0).astype(np.float32)
-        lf = local_floor(db)
-        if self.floor is None or len(self.floor) != len(db):
-            self.floor = lf
-            self.sweeps = 0
-        else:
-            a = 0.5 if self.sweeps < 3 else 0.15
-            self.floor = ((1 - a) * self.floor + a * lf).astype(np.float32)
-        self.sweeps += 1
-        floor = self.floor
-        excess = db - floor
-        thr = float(cfg["threshold_db"])
-
-        peaks = []
-        mask = excess >= thr
-        if mask.any():
-            edges = np.diff(np.concatenate([[0], mask.view(np.int8), [0]]))
-            starts = np.flatnonzero(edges == 1)
-            ends = np.flatnonzero(edges == -1)
-            runs = []
-            for s, e in zip(starts[:600], ends[:600]):
-                if runs and s - runs[-1][1] <= 2:      # close tiny gaps inside one signal
-                    runs[-1][1] = e
-                else:
-                    runs.append([s, e])
-            for s, e in runs[:400]:
-                i = s + int(np.argmax(excess[s:e]))
-                peaks.append({"f": float(freqs[i]), "db": round(float(db[i]), 1),
-                              "ex": round(float(excess[i]), 1), "w": float((e - s) * bin_hz)})
-            peaks.sort(key=lambda p: p["ex"], reverse=True)
-            peaks = peaks[:40]
-
-        tol = max(2 * bin_hz, 10e3)
-        for p in peaks:
-            for h in self.hits:
-                if abs(h["f"] - p["f"]) <= max(tol, (h["w"] + p["w"]) / 2):
-                    h.update(f=p["f"] if p["ex"] >= h["ex"] else h["f"], db=p["db"], ex=p["ex"], last=now,
-                             w=max(h["w"], p["w"]))
-                    h["hits"] += 1
-                    h["max_ex"] = max(h["max_ex"], p["ex"])
-                    break
-            else:
-                self.hits.append({"f": p["f"], "db": p["db"], "ex": p["ex"], "max_ex": p["ex"], "w": p["w"],
-                                  "hits": 1, "first": now, "last": now})
-        hold = float(cfg["hold_s"])
-        self.hits = [h for h in self.hits if now - h["last"] <= hold]
-        self.hits.sort(key=lambda h: (-(now - h["last"] < 3), -h["max_ex"]))
-        self.hits = self.hits[:200]
-        hits = [{"f": h["f"], "db": h["db"], "ex": h["ex"], "max_ex": h["max_ex"], "hits": h["hits"],
-                 "age": round(now - h["last"], 1), "since": round(now - h["first"], 1)} for h in self.hits[:60]]
-
-        if peaks:
-            strongest = dict(peaks[0])
-        else:
-            i = int(np.argmax(excess))
-            strongest = {"f": float(freqs[i]), "db": round(float(db[i]), 1), "ex": round(float(excess[i]), 1), "w": 0}
-
-        track = None
-        th = float(cfg.get("track_hz") or 0)
-        if th and freqs[0] - tol <= th <= freqs[-1] + tol:
-            sel = np.abs(freqs - th) <= max(tol / 2, bin_hz)
-            if sel.any():
-                j = np.flatnonzero(sel)[int(np.argmax(excess[sel]))]
-                track = {"f": float(th), "db": round(float(db[j]), 1), "ex": round(float(excess[j]), 1)}
-
-        disp, k = maxpool(db, DISPLAY_POINTS)
-        fdisp, _ = maxpool(floor, DISPLAY_POINTS)
-        lo, step, b64 = encode(np.concatenate([disp, fdisp]))
-        q = base64.b64decode(b64)
-        half = len(disp)
-        return {
-            "f0": float(freqs[0]), "df": float(bin_hz * k), "n": half,
-            "lo": lo, "step": step,
-            "b64": base64.b64encode(q[:half]).decode("ascii"),
-            "floor_b64": base64.b64encode(q[half:]).decode("ascii"),
-            "floor_db": round(float(np.median(floor)), 1),
-            "learning": self.sweeps < 4, "sweeps": self.sweeps, "threshold": thr,
-            "peaks": peaks, "hits": hits, "strongest": strongest, "track": track,
-        }
-
-
 class Scope:
     def __init__(self, mode):
         self.mode = mode
@@ -406,7 +261,6 @@ class Scope:
         self.gen = 0
         self.lock = threading.Lock()
         self.hub = Hub()
-        self.det = Detector()
         self.proc = None
         self.status = {"running": False, "error": "", "source": "", "frames": 0, "started": 0.0, "fps": 0.0}
 
@@ -426,8 +280,6 @@ class Scope:
                 self.gen += 1
         save_cfg(self.mode, cfg)
         if restart:
-            if self.mode == "detect":
-                self.det.reset()
             self._kill()
         return cfg, restart
 
@@ -449,12 +301,7 @@ class Scope:
         while True:
             cfg, gen = self.snapshot()
             try:
-                if self.mode == "spectrum":
-                    self.run_spectrum(cfg, gen)
-                elif cfg["stop_hz"] - cfg["start_hz"] <= IQ_DETECT_MAX_SPAN:
-                    self.run_detect_iq(cfg, gen)
-                else:
-                    self.run_detect_sweep(cfg, gen)
+                self.run_spectrum(cfg, gen)
             except FileNotFoundError as exc:
                 self._err(f"missing tool: {exc.filename}. Install rtl-sdr (sudo apt-get install rtl-sdr)")
             except Exception as exc:   # keep the service alive and report
@@ -499,91 +346,6 @@ class Scope:
                               "f0": cfg["center_hz"] - rate / 2, "df": rate / n,
                               "lo": lo, "step": step, "b64": b64, "gain": cfg["gain"]})
 
-    def _publish_detect(self, cfg, freqs, db, bin_hz, source, sweep_s):
-        live = dict(self.cfg)
-        out = self.det.process(freqs, db, live, bin_hz)
-        out.update(type="sweep", mode="detect", t=time.time(), source=source,
-                   start=cfg["start_hz"], stop=cfg["stop_hz"], bin=bin_hz,
-                   sweep_s=round(sweep_s, 2), gain=cfg["gain"])
-        self.hub.publish(out)
-
-    def run_detect_iq(self, cfg, gen):
-        rate = 2.4e6
-        span = cfg["stop_hz"] - cfg["start_hz"]
-        # Tune off-center so a signal in the middle of the range is not hidden by the DC spike
-        center = (cfg["start_hz"] + cfg["stop_hz"]) / 2 + (250e3 if span <= 1.4e6 else 150e3)
-        nfft = 2048
-        fps = 5
-        self.proc = RtlProc(rtl_sdr_cmd(center, rate, cfg["gain"], cfg["ppm"], fps))
-        fft = IQSpectrum(nfft)
-        freqs_all = center - rate / 2 + np.arange(nfft) * (rate / nfft)
-        sel = (freqs_all >= cfg["start_hz"]) & (freqs_all <= cfg["stop_hz"])
-        freqs = freqs_all[sel]
-        self._started("rtl_sdr")
-        t0 = time.time()
-        last = time.time()
-        while self.gen == gen:
-            buf = self.proc.read_exact(int(rate * 2 / fps) & ~1)
-            if buf is None:
-                if self.gen == gen:
-                    self._err(self.proc.why() or "rtl_sdr stopped")
-                return
-            db = fft.row(buf, 48)[sel]
-            now = time.time()
-            self._tick(t0)
-            self._publish_detect(cfg, freqs, db, rate / nfft, "rtl_sdr", now - last)
-            last = now
-
-    def run_detect_sweep(self, cfg, gen):
-        span = cfg["stop_hz"] - cfg["start_hz"]
-        bin_hz = cfg["bin_hz"] or auto_bin(span)
-        cmd = [RTL_POWER, "-f", f"{int(cfg['start_hz'])}:{int(cfg['stop_hz'])}:{int(bin_hz)}",
-               "-i", "1", "-c", "20%", "-p", str(int(cfg["ppm"]))] + DEV_ARGS
-        if cfg["gain"] != "auto":
-            cmd += ["-g", str(cfg["gain"])]
-        cmd.append("-")
-        if shutil.which("stdbuf"):
-            cmd = ["stdbuf", "-oL"] + cmd       # rtl_power uses stdio; force line flushes
-        self.proc = RtlProc(cmd)
-        self._started("rtl_power")
-        t0 = time.time()
-        segs = []
-        last_low = None
-        last_stamp = None
-        sweep_t = time.time()
-        last_progress = 0.0
-        for raw in iter(self.proc.proc.stdout.readline, b""):
-            if self.gen != gen:
-                return
-            parts = raw.decode("ascii", "replace").strip().split(",")
-            if len(parts) < 7:
-                continue
-            try:
-                low = float(parts[2])
-                step = float(parts[4])
-                vals = np.array([float(v) for v in parts[6:]], dtype=np.float32)
-            except ValueError:
-                continue
-            stamp = (parts[0].strip(), parts[1].strip())
-            if segs and (low <= last_low or (stamp != last_stamp and low <= segs[0][0])):
-                segs.sort(key=lambda s: s[0])
-                freqs = np.concatenate([s[0] + np.arange(len(s[2])) * s[1] for s in segs])
-                db = np.concatenate([s[2] for s in segs])
-                now = time.time()
-                self._tick(t0)
-                self._publish_detect(cfg, freqs, db, segs[0][1] or bin_hz, "rtl_power", now - sweep_t)
-                sweep_t = now
-                segs = []
-            segs.append((low, step, vals))
-            last_low, last_stamp = low, stamp
-            now = time.time()
-            if now - last_progress > 1.0:
-                last_progress = now
-                pct = (low - cfg["start_hz"]) / max(span, 1) * 100
-                self.hub.publish({"type": "progress", "mode": "detect", "t": now,
-                                  "at": low, "pct": round(min(100, max(0, pct)), 1)})
-        if self.gen == gen:
-            self._err(self.proc.why() or "rtl_power stopped")
 
 
 app = Flask(__name__)
@@ -604,7 +366,7 @@ def health():
 @app.get("/api/scope/status")
 def status():
     cfg, _ = SCOPE.snapshot()
-    return jsonify(ok=True, mode=SCOPE.mode, config=cfg, status=SCOPE.status, presets=PRESETS,
+    return jsonify(ok=True, mode=SCOPE.mode, config=cfg, status=SCOPE.status, 
                    spans=SPANS, gains=GAINS, nffts=NFFTS, clients=SCOPE.hub.subs,
                    range=[F_MIN, F_MAX])
 
@@ -614,12 +376,6 @@ def config():
     data = request.get_json(silent=True) or {}
     cfg, restarted = SCOPE.update(data)
     return jsonify(ok=True, mode=SCOPE.mode, config=cfg, restarted=restarted)
-
-
-@app.post("/api/scope/relearn")
-def relearn():
-    SCOPE.det.reset()
-    return jsonify(ok=True, message="noise floor reset; learning")
 
 
 @app.get("/api/scope/stream")
@@ -652,7 +408,7 @@ def stream():
 def main():
     global SCOPE
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["spectrum", "detect"], required=True)
+    ap.add_argument("--mode", choices=["spectrum"], default="spectrum")
     ap.add_argument("--port", type=int, default=int(os.environ.get("SDR_SCOPE_PORT", "8081")))
     ap.add_argument("--host", default=os.environ.get("SDR_SCOPE_HOST", "127.0.0.1"))
     args = ap.parse_args()

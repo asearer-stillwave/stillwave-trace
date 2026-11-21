@@ -70,6 +70,7 @@ while [[ $# -gt 0 ]]; do
     --hide-cursor) CURSOR_ONLY=hide ;;
     --show-cursor) CURSOR_ONLY=show ;;
     --no-restart) NO_RESTART=1 ;;
+    --refresh-launcher) CURSOR_ONLY=launcher ;;   # 1.3.6: rewrite /usr/local/bin/fieldnote-kiosk only (used by --upgrade)
     --hdmi) HDMI=1 ;;
     --resolution) RES="${2:?}"; shift ;;
     -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
@@ -279,8 +280,10 @@ setup_config() {
   local model=""
   model="$(tr -d '\0' <"$R/proc/device-tree/model" 2>/dev/null || true)"
   [[ -n "$model" ]] && say "board: $model"
-  if [[ -n "$model" && "$model" != *"Raspberry Pi 4"* ]]; then
-    warn "this script is written for a Pi 4 (found: $model). Pi 5 needs the 22-way to 15-way cable; Compute Modules need --force-overlay."
+  if [[ "$model" == *"Raspberry Pi 5"* && $HDMI -eq 1 ]]; then
+    say "Raspberry Pi 5 on HDMI: supported (Ubuntu 24.04, cage + Chromium snap); nothing extra to set up"   # 1.2.1
+  elif [[ -n "$model" && "$model" != *"Raspberry Pi 4"* ]]; then
+    warn "this script is written for a Pi 4 (found: $model). Pi 5 needs the 22-way to 15-way cable for a DSI panel; Compute Modules need --force-overlay."
   fi
   local odir
   odir="$(dirname "$CONFIG")/overlays"
@@ -340,10 +343,23 @@ browser_bin() {
   done
 }
 
+# 1.2.1: the Chromium snap needs snapd running. A box where snapd was turned off (1.2.0 boot trim ran before Chromium
+# was installed) is switched back on and waited for here, so a retry never needs manual snapd fixes.
+ensure_snapd() {
+  command -v snap >/dev/null 2>&1 || return 0
+  if ! systemctl is-active --quiet snapd.socket 2>/dev/null || ! systemctl is-enabled --quiet snapd.service 2>/dev/null; then
+    say "turning snapd on (Chromium is a snap)"
+    systemctl unmask snapd.service snapd.socket snapd.seeded.service >/dev/null 2>&1 || true
+    systemctl enable --now snapd.socket snapd.service snapd.seeded.service >/dev/null 2>&1 || warn "could not start snapd"
+  fi
+  timeout 300 snap wait system seed.loaded >/dev/null 2>&1 || warn "snapd is not fully seeded yet (continuing)"
+}
+
 install_browser() {
   [[ -n "$(browser_bin)" ]] && return 0
   if [[ $IS_UBUNTU -eq 1 ]]; then
     say "installing Chromium (snap)"
+    ensure_snapd
     # 1.0.8: show download progress (Chromium is ~180 MB; it used to look frozen)
     say "downloading snap Chromium (~180 MB); progress below"
     if chg="$(snap install --no-wait chromium 2>/dev/null)"; then
@@ -438,12 +454,23 @@ fi
 mkdir -p "$PROFILE/Default"
 say "starting $BROWSER (snap=$SNAP) profile=$PROFILE url=$URL"
 
+# 1.3.6: exact monitor geometry (720p or 1080p from /etc/sdr/display.env RESOLUTION, or the live HDMI mode),
+# 1:1 pixels, landscape. The desktop keeps a visible pointer.
+W=1280; H=720
+r="$(awk -F= '$1=="RESOLUTION"{print $2; exit}' /etc/sdr/display.env 2>/dev/null)"
+[[ "$r" == 1080p ]] && { W=1920; H=1080; }
+m="$(for c in /sys/class/drm/card*-HDMI-*/; do [[ "$(cat "$c/status" 2>/dev/null)" == connected ]] && head -n1 "$c/modes" 2>/dev/null && break; done)"
+[[ "$m" =~ ^([0-9]+)x([0-9]+) ]] && { W=${BASH_REMATCH[1]}; H=${BASH_REMATCH[2]}; }
+(( H > W )) && { t=$W; W=$H; H=$t; }            # desktop is landscape
 # shellcheck disable=SC2054  # the comma in --disable-features is intended
 FLAGS=(--kiosk --user-data-dir="$PROFILE" --noerrdialogs --disable-infobars --no-first-run
        --disable-session-crashed-bubble --disable-features=Translate,TranslateUI
        --password-store=basic --check-for-update-interval=31536000
+       --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' --disable-component-update   # 1.3.8: no "Chromium is out of date / Update" bubble on the kiosk (OS updates come from apt)
        --overscroll-history-navigation=0 --disable-pinch
-       --autoplay-policy=no-user-gesture-required)
+       --autoplay-policy=no-user-gesture-required
+       --default-background-color=000000ff --force-dark-mode --blink-settings=preferredColorScheme=0
+       --start-fullscreen --window-position=0,0 --window-size="$W,$H" --force-device-scale-factor=1)  # 1.3.4: no white frame before the page paints
 # Desktop edition: on an HDMI monitor (DISPLAY_MODE=hdmi) do not force touch events, so Chromium only
 # reports touch (and the on-screen keyboard only appears) when a real touch screen is connected.
 DMODE="$(awk -F= '$1=="DISPLAY_MODE"{print $2; exit}' /etc/sdr/display.env 2>/dev/null)"
@@ -480,6 +507,29 @@ EOF
   else
     say "launcher already up to date"
   fi
+  write_policy
+}
+
+# 1.3.8: Chromium policy for the kiosk (Debian/Pi OS Chromium reads /etc/chromium/policies/managed, the snap reads
+# /etc/chromium-browser/policies/managed). BrowserThemeColor black: the browser's own window is black instead of the
+# dark-mode grey it shows between cage taking the screen and the first page paint (cage/wlroots itself clears to black).
+# No component updates: nothing in the kiosk asks to update Chromium (OS packages come from apt / the Trace installer).
+POLICY_NAME="stillwave-trace-kiosk.json"
+POLICY_DIRS=("$R/etc/chromium/policies/managed" "$R/etc/chromium-browser/policies/managed")
+write_policy() {
+  local d tmp
+  for d in "${POLICY_DIRS[@]}"; do
+    tmp="$(mktemp)"
+    cat >"$tmp" <<'JSON'
+{
+  "BrowserThemeColor": "#000000",
+  "ComponentUpdatesEnabled": false,
+  "TranslateEnabled": false,
+  "PromotionsEnabled": false
+}
+JSON
+    if install_if_changed "$d/$POLICY_NAME" "$tmp" 644; then say "Chromium kiosk policy installed: ${d#"$R"}/$POLICY_NAME"; fi
+  done
 }
 
 setup_desktop() {
@@ -593,6 +643,10 @@ UtmpMode=user
 Environment=XDG_SESSION_TYPE=wayland
 # 1.1.0: explicit US keyboard map; without it some Bluetooth keyboards (Logitech K830) lost Shift in cage
 Environment=XKB_DEFAULT_RULES=evdev XKB_DEFAULT_MODEL=pc105 XKB_DEFAULT_LAYOUT=us XKB_DEFAULT_OPTIONS=
+# 1.3.4: wait for the UI BEFORE cage takes the screen, so the boot splash stays up (plymouth quit --retain-splash)
+# instead of cage's gray background and a white browser page. Gives up after 120 s and starts anyway.
+ExecStartPre=-/bin/sh -c 'i=0; while [ \$\$i -lt 120 ]; do curl -sf --max-time 2 http://localhost/health >/dev/null 2>&1 && exit 0; i=\$\$((i+1)); sleep 1; done; exit 0'
+TimeoutStartSec=200
 ExecStart=$cage_bin -d -s -- /usr/local/bin/fieldnote-kiosk
 Restart=always
 RestartSec=3
@@ -787,6 +841,7 @@ undo() {
     say "cmdline.txt: removed consoleblank=0"
   fi
   rm -f "$KHOME/.config/autostart/fieldnote-kiosk.desktop"
+  rm -f "$R/etc/chromium/policies/managed/stillwave-trace-kiosk.json" "$R/etc/chromium-browser/policies/managed/stillwave-trace-kiosk.json"   # 1.3.8
   [[ -f "$KHOME/.config/labwc/autostart" ]] && sed -i '/fieldnote-kiosk/d' "$KHOME/.config/labwc/autostart"
   [[ -f "$KHOME/.config/wayfire.ini" ]] && sed -i '/fieldnote-kiosk/d' "$KHOME/.config/wayfire.ini"
   if [[ -f "$UNIT" ]]; then
@@ -827,6 +882,10 @@ banner() {
   echo "=================================================================="
 }
 
+if [[ "$CURSOR_ONLY" == launcher ]]; then
+  [[ -f "$LAUNCHER" ]] && write_launcher || say "no kiosk launcher installed; nothing to refresh"
+  exit 0
+fi
 if [[ -n "$CURSOR_ONLY" ]]; then
   # cursor only: config.txt, the kiosk unit, the launcher and everything else stay exactly as they are
   if [[ "$CURSOR_ONLY" == hide ]]; then
